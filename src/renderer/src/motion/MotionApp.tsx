@@ -1018,6 +1018,21 @@ export function MotionApp() {
       })
       return
     }
+    if (decision.type === 'clear') {
+      // Wipe MIKO's panel and stop anything still pending from it. The assistant conversation is kept
+      // ("new conversation" starts a fresh one).
+      for (const e of entriesRef.current) {
+        if (e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running')) window.miko.bridgeCancel(e.requestId)
+      }
+      window.miko.pasteCancel()
+      window.miko.listenCancel()
+      setListening(false)
+      setPasteBanner(null)
+      pasteEntryRef.current = 0
+      setDraft('')
+      setEntries([])
+      return
+    }
     if (decision.type === 'type-in-gpt') {
       if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
       const entry: Extract<PanelEntry, { kind: 'handoff' }> = {
@@ -1254,7 +1269,7 @@ export function MotionApp() {
     if (!entry || entry.kind !== 'handoff' || typeof window.miko === 'undefined') return
     const text = (await window.miko.readClipboard()).trim()
     if (!text) {
-      replaceEntry(id, { ...entry, detail: 'The clipboard is empty.' })
+      replaceEntry(id, { ...entry, detail: 'Paste reply brings ChatGPT\u2019s answer back here. In ChatGPT, select the answer and press \u2318C (or use its copy button), then press Paste reply.' })
       return
     }
     if (text === entry.prompt.trim()) {

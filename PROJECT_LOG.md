@@ -90,6 +90,13 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: "clear", and cleaner text for ChatGPT
+- **Owner confirmed auto-paste works** (screenshot: the text landed in ChatGPT's message box automatically).
+- **"clear"** ("clear chat/all/screen/everything") wipes MIKO's panel. It also cancels a pending assistant answer, an armed paste and listening. The assistant conversation itself is kept ("new conversation" resets it). Verified in the app: 4 entries → 0.
+- **"type in gpt asking it to <request>"** (also "type in chatgpt to …", "write in gpt and ask it to …", "type in gpt <request>") now sends only the request. The owner's example had pasted the whole sentence; it now gives "generate me a text file of a wrd saying cat".
+- **Paste reply with an empty clipboard** now explains: select ChatGPT's answer, ⌘C, then Paste reply.
+- typecheck passes, 129/129 tests pass, build passes.
+
 ### 2026-11-15: Auto-paste into ChatGPT
 - **Owner confirmed** the click + ⌃⌥V route lands text in ChatGPT, and asked for it to happen automatically.
 - **Now** ("type … in GPT", "hi gpt", Ask in ChatGPT, or Continue for mail requests):

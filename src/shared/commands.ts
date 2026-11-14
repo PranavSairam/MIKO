@@ -36,6 +36,7 @@ export type CommandResult =
   | { type: 'mail'; intent: MailIntent }
   | { type: 'mail-or-app'; query: string }
   | { type: 'bridge-test' }
+  | { type: 'clear' }
   | { type: 'type-in-gpt'; text: string }
   | { type: 'bridge-new' }
   | { type: 'unknown'; text: string }
@@ -85,6 +86,7 @@ export function routeCommand(
   const bridge = normalize(original)
   if (/^(?:reply with\s+)?miko bridge test$/.test(bridge)) return { type: 'bridge-test' }
   if (/^(?:bridge\s+|start\s+(?:a\s+)?)?new\s+(?:conversation|chat|thread)$/.test(bridge)) return { type: 'bridge-new' }
+  if (/^clear(?:\s+(?:the\s+)?(?:chat|all|screen|everything|panel|log|messages))?[.!]?$/i.test(original)) return { type: 'clear' }
   const typed = matchTypeInGpt(original)
   if (typed) return typed
   const asked = matchAskGpt(original)
@@ -177,6 +179,12 @@ function matchTypeInGpt(original: string): CommandResult | null {
   if (new RegExp(`^${verb}\\s+(?:this\\s+|something\\s+)?${target}[.!]?$`, 'i').test(original)) {
     return { type: 'unknown', text: 'What should I type in ChatGPT? Say \u201ctype \u2026 in GPT\u201d.' }
   }
+  // "type in gpt asking it to <request>" / "type in chatgpt to <request>" / "type in gpt <request>"
+  const lead = new RegExp(
+    `^${verb}\\s+${target}\\s+(?:(?:and\\s+)?(?:ask(?:ing)?|tell(?:ing)?)\\s+(?:it|him|her|gpt|chatgpt)\\s+(?:to\\s+)?|to\\s+|saying\\s+|that\\s+)?(.+)$`,
+    'is'
+  ).exec(original)
+  if (lead?.[1]) return { type: 'type-in-gpt', text: unquote(lead[1]) }
   const inline = new RegExp(`^${verb}\\s+(.+?)\\s+${target}[.!]?$`, 'is').exec(original)
   if (inline?.[1]) return { type: 'type-in-gpt', text: unquote(inline[1]) }
   // Messages addressed to GPT: "hi gpt", "hey ChatGPT, …" (typed as-is), "gpt: …", "tell gpt to …".
@@ -366,6 +374,7 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'open-chatgpt':
     case 'open-chat':
     case 'list-chats':
+    case 'clear':
     case 'type-in-gpt':
     case 'mail':
     case 'bridge-test':

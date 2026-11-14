@@ -256,6 +256,15 @@ describe('type into ChatGPT', () => {
     assert.deepEqual(routeCommand('put this in chatgpt: Draft a polite reminder', 'typed', catalog), { type: 'type-in-gpt', text: 'Draft a polite reminder' })
     assert.deepEqual(routeCommand('type in gpt: hi', 'typed', catalog), { type: 'type-in-gpt', text: 'hi' })
   })
+  it('strips "type in gpt asking it to …" down to the request', () => {
+    assert.deepEqual(routeCommand('type in gpt asking it to generate me a text file of a wrd saying cat', 'typed', catalog), {
+      type: 'type-in-gpt',
+      text: 'generate me a text file of a wrd saying cat'
+    })
+    assert.deepEqual(routeCommand('type in chatgpt to write a haiku', 'typed', catalog), { type: 'type-in-gpt', text: 'write a haiku' })
+    assert.deepEqual(routeCommand('write in gpt and ask it to list 3 fruits', 'typed', catalog), { type: 'type-in-gpt', text: 'list 3 fruits' })
+    assert.deepEqual(routeCommand('type in gpt summarize this article', 'typed', catalog), { type: 'type-in-gpt', text: 'summarize this article' })
+  })
   it('sends messages addressed to GPT into ChatGPT', () => {
     assert.deepEqual(routeCommand('hi gpt', 'typed', catalog), { type: 'type-in-gpt', text: 'hi gpt' })
     assert.deepEqual(routeCommand('Hey ChatGPT, how are you?', 'typed', catalog), { type: 'type-in-gpt', text: 'Hey ChatGPT, how are you?' })
@@ -267,5 +276,17 @@ describe('type into ChatGPT', () => {
   it('asks for the text when none is given, and is a run for voice', () => {
     assert.equal(routeCommand('type in gpt', 'typed', catalog).type, 'unknown')
     assert.equal(planVoice(routeCommand('type hello in gpt', 'voice', catalog), true).kind, 'run')
+  })
+})
+
+describe('clear', () => {
+  it('clears the panel on "clear" and similar', () => {
+    for (const t of ['clear', 'Clear.', 'clear chat', 'clear all', 'clear the screen', 'clear everything'])
+      assert.deepEqual(routeCommand(t, 'typed', catalog, [], { assistantActive: true, mailTab: false }), { type: 'clear' }, t)
+    assert.equal(planVoice(routeCommand('clear', 'voice', catalog), true).kind, 'run')
+  })
+  it('does not swallow other uses of the word', () => {
+    assert.notEqual(routeCommand('clear my calendar for friday', 'typed', catalog).type, 'clear')
+    assert.equal(routeCommand('type clear in gpt', 'typed', catalog).type, 'type-in-gpt')
   })
 })
