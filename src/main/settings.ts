@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { parseSavedChats, type SavedChat } from '../shared/chatgpt'
+import { parsePanelSize, type PanelKind } from '../shared/layout'
 import { parseCorrections, parseRules, type ImportanceRules, type MailCorrections } from '../shared/mail'
 
 /** Small persisted preferences in userData/miko-settings.json. Unknown keys (e.g. summonShortcut) are kept. */
@@ -97,6 +98,20 @@ export function mailRules(): ImportanceRules {
 
 export function setMailRules(rules: ImportanceRules): boolean {
   return writeKey('mailRules', parseRules(rules))
+}
+
+/** Chosen Chat / Mail panel sizes (null = default size). */
+export function panelSizeSetting(kind: PanelKind): { width: number; height: number } | null {
+  const all = readAll().panelSizes
+  return parsePanelSize(kind, all && typeof all === 'object' ? (all as Record<string, unknown>)[kind] : null)
+}
+
+export function setPanelSizeSetting(kind: PanelKind, size: { width: number; height: number } | null): boolean {
+  const current = readAll().panelSizes
+  const next = { ...(current && typeof current === 'object' ? (current as Record<string, unknown>) : {}) }
+  if (size) next[kind] = parsePanelSize(kind, size)
+  else delete next[kind]
+  return writeKey('panelSizes', next)
 }
 
 /** The owner's mail category corrections. */

@@ -5,8 +5,11 @@ import {
   PANEL,
   PET_WINDOW,
   MAIL_PANEL,
+  PANEL_PRESETS,
   choosePanelSide,
   fitMailPanel,
+  fitPanel,
+  parsePanelSize,
   layoutWindow,
   placeInitially
 } from './layout.ts'
@@ -147,5 +150,37 @@ describe('mail panel size', () => {
     const placed = placeInitially(desktop)
     const opened = layoutWindow(placed.pet, true, desktop, 'left')
     assert.equal(opened.bounds.width, PET_WINDOW.width + PANEL.gap + PANEL.width)
+  })
+})
+
+describe('chosen panel sizes', () => {
+  const inside = (r: { x: number; y: number; width: number; height: number }, w: typeof desktop): boolean =>
+    r.x >= w.x && r.y >= w.y && r.x + r.width <= w.x + w.width && r.y + r.height <= w.y + w.height
+
+  it('uses the default sizes when nothing is chosen', () => {
+    const placed = placeInitially(desktop)
+    assert.deepEqual(fitPanel('chat', null, placed.pet, desktop), { ...PANEL })
+    assert.deepEqual(fitPanel('mail', null, placed.pet, desktop), fitMailPanel(placed.pet, desktop))
+  })
+
+  it('keeps a chosen size, within limits and the screen, and the window stays on screen', () => {
+    const placed = placeInitially(desktop)
+    const large = fitPanel('mail', PANEL_PRESETS.mail.large, placed.pet, desktop)
+    assert.deepEqual({ width: large.width, height: large.height }, PANEL_PRESETS.mail.large)
+    const opened = layoutWindow(placed.pet, true, desktop, choosePanelSide(placed.pet, desktop, large), large)
+    assert.ok(inside(opened.bounds, desktop))
+    assert.ok(inside({ ...opened.pet, width: PET_WINDOW.width, height: PET_WINDOW.height }, desktop), 'dog moves to stay on screen')
+    const huge = fitPanel('mail', { width: 5000, height: 5000 }, placed.pet, desktop)
+    assert.equal(huge.width, desktop.width - PET_WINDOW.width - MAIL_PANEL.gap)
+    assert.equal(huge.height, desktop.height - 2 * EDGE_MARGIN)
+    const tiny = fitPanel('chat', { width: 10, height: 10 }, placed.pet, desktop)
+    assert.deepEqual({ width: tiny.width, height: tiny.height }, { width: 240, height: 200 })
+  })
+
+  it('reads saved sizes defensively', () => {
+    assert.deepEqual(parsePanelSize('mail', { width: 820.4, height: 610 }), { width: 820, height: 610 })
+    assert.deepEqual(parsePanelSize('mail', { width: 100, height: 99999 }), { width: 360, height: 1200 })
+    assert.equal(parsePanelSize('chat', { width: '400', height: 300 }), null)
+    assert.equal(parsePanelSize('chat', null), null)
   })
 })

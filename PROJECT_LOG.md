@@ -90,6 +90,31 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14 (late): Resizable Chat and Mail panels; Gmail connected
+- **Gmail connected:** the owner's screenshot shows pranavsairamanc@gmail.com in the Mail tab and a search for "interview" returning real results. **Paste fix confirmed** (the Client ID and secret went in).
+  - The same screenshot showed macOS asking for Accessibility for "miko-keys" again. The owner should allow it in System Settings → Privacy & Security → Accessibility.
+- **New: panel size options** (owner request):
+  - **⤢ in the panel header:**
+    - Small / Medium / Large / Default
+    - Chat: 272×220, 400×340, 560×500
+    - Mail: 540×420, 700×520, 960×700
+  - **Drag corner:** on the outer bottom corner, away from the dog.
+    - Width follows the pointer.
+    - The panel stays vertically centred on the dog, so the height grows by twice the vertical move.
+    - Saved when you let go.
+  - **Each tab keeps its own size** (`panelSizes` in settings). Default removes it: Chat then uses 272×220 and Mail fits beside the dog as before.
+  - **Limits:** Chat 240×200 to 1000×1000, Mail 360×300 to 1600×1200, always within the screen. The window clamp moves the dog when a big panel needs the room.
+  - **Code:**
+    - `fitPanel` / `parsePanelSize` / `PANEL_PRESETS` in `src/shared/layout.ts`
+    - `resizePanel` / `setPanelPreset` in `pet-window.ts`
+    - IPC `panelResize`, `panelPreset`
+- **Verification:** typecheck passes, 144/144 tests pass (new: chosen sizes, limits, screen fit, defensive parsing), build passes.
+  - **Real app (Playwright):**
+    - Presets measured exactly; Mail kept its own size and Chat kept Large after switching tabs.
+    - A drag of 120 px out and 30 px down gave +120 × +60, and was saved and still there after restarting.
+    - Default cleared the saved size.
+  - **Note:** Playwright's own mouse moves with the window, so its drag ran away to the maximum. The drag was re-checked with fixed screen coordinates. **Not yet tried with a real mouse.**
+
 ### 2026-11-14 (late): Paste works in MIKO's text boxes
 - **Owner report:** couldn't paste the Client ID and secret into Connect Gmail.
 - **Cause:** MIKO's macOS menu had no Edit menu, and macOS routes ⌘C/⌘V/⌘X/⌘A/⌘Z to text fields only through one. This affected every MIKO text box.

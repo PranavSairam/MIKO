@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { SavedChat } from '../../../shared/api'
 import { SavedChats, type SavedChatsProps } from './SavedChats'
 
@@ -111,6 +111,12 @@ interface TextPanelProps {
   tab?: 'chat' | 'mail'
   onTab?: (tab: 'chat' | 'mail') => void
   mail?: ReactNode
+  /** Panel size: presets for this tab, and a drag corner on the side away from the dog. */
+  sizing?: {
+    side: 'left' | 'right'
+    onPreset: (preset: 'small' | 'medium' | 'large' | 'reset') => void
+    onResizeStart: (event: ReactPointerEvent<HTMLElement>) => void
+  }
 }
 
 export const MAIL_NOTE =
@@ -163,8 +169,10 @@ export function TextPanel({
   prefs,
   tab = 'chat',
   onTab,
-  mail
+  mail,
+  sizing
 }: TextPanelProps) {
+  const [sizeMenu, setSizeMenu] = useState(false)
   const [localDraft, setLocalDraft] = useState('')
   const [localReplies, setLocalReplies] = useState<string[]>([])
   const logRef = useRef<HTMLDivElement>(null)
@@ -233,10 +241,63 @@ export function TextPanel({
             {view === 'chats' ? 'Back' : 'Saved chats'}
           </button>
         ) : null}
+        {sizing ? (
+          <span className="size-control">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Panel size"
+              title="Panel size"
+              aria-expanded={sizeMenu}
+              onClick={() => setSizeMenu((v) => !v)}
+            >
+              ⤢
+            </button>
+            {sizeMenu ? (
+              <span className="size-menu" role="menu">
+                {(['small', 'medium', 'large'] as const).map((p) => (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    key={p}
+                    className="chip"
+                    onClick={() => {
+                      setSizeMenu(false)
+                      sizing.onPreset(p)
+                    }}
+                  >
+                    {p === 'small' ? 'Small' : p === 'medium' ? 'Medium' : 'Large'}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chip subtle"
+                  onClick={() => {
+                    setSizeMenu(false)
+                    sizing.onPreset('reset')
+                  }}
+                >
+                  Default
+                </button>
+                <span className="size-hint">Or drag the panel’s corner. {tab === 'mail' ? 'Mail' : 'Chat'} keeps its own size.</span>
+              </span>
+            ) : null}
+          </span>
+        ) : null}
         <button type="button" className="close" onClick={onClose} aria-label="Close">
           ×
         </button>
       </header>
+      {sizing ? (
+        <span
+          className={`resize-grip ${sizing.side === 'left' ? 'at-left' : 'at-right'}`}
+          role="separator"
+          aria-label="Resize panel"
+          title="Drag to resize"
+          onPointerDown={sizing.onResizeStart}
+        />
+      ) : null}
       {tab === 'mail' && mail ? (
         mail
       ) : view === 'prefs' && prefs ? (

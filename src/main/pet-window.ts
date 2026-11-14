@@ -5,7 +5,9 @@ import {
   EDGE_MARGIN,
   PET_WINDOW,
   layoutWindow,
-  fitMailPanel,
+  fitPanel,
+  PANEL_PRESETS,
+  type PanelPreset,
   PANEL,
   type PanelSize,
   placeInitially,
@@ -14,6 +16,7 @@ import {
   type Rect
 } from '../shared/layout'
 import { movementBlocked, placeAtWorkAreaRight } from '../shared/movement'
+import { panelSizeSetting, setPanelSizeSetting } from './settings'
 
 /**
  * Cursor polling interval. Click-through uses setIgnoreMouseEvents without
@@ -243,11 +246,35 @@ export function currentLayout(): PanelLayout {
 export function setPanelOpen(open: boolean, mode: PanelMode = 'chat'): PanelLayout {
   panelOpen = open
   panelMode = open ? mode : 'chat'
+  liveSize = null
   return relayout(open)
 }
 
+/** A size being dragged right now (not saved until the drag ends). */
+let liveSize: { width: number; height: number } | null = null
+
 function panelSize(work: Rectangle): PanelSize {
-  return panelMode === 'mail' ? fitMailPanel(petOrigin, work) : PANEL
+  return fitPanel(panelMode, liveSize ?? panelSizeSetting(panelMode), petOrigin, work)
+}
+
+/** Drag-resize the open panel. done = the drag ended: keep the size for this tab. */
+export function resizePanel(width: number, height: number, done: boolean): PanelLayout {
+  if (!panelOpen || !Number.isFinite(width) || !Number.isFinite(height)) return layoutResult()
+  liveSize = { width, height }
+  const result = relayout(false)
+  if (done) {
+    setPanelSizeSetting(panelMode, { width: result.panelWidth, height: result.panelHeight })
+    liveSize = null
+  }
+  return result
+}
+
+/** Small / Medium / Large, or reset to the default size, for the open tab. */
+export function setPanelPreset(preset: PanelPreset | 'reset'): PanelLayout {
+  if (!panelOpen) return layoutResult()
+  liveSize = null
+  setPanelSizeSetting(panelMode, preset === 'reset' ? null : PANEL_PRESETS[panelMode][preset])
+  return relayout(false)
 }
 
 function layoutResult(): PanelLayout {

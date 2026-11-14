@@ -20,6 +20,8 @@ import {
   setDragActive,
   setHitRects,
   setPanelOpen,
+  resizePanel,
+  setPanelPreset,
   setPointerHeld,
   setReducedMotion,
   shiftBy,
@@ -47,6 +49,17 @@ export function registerIpc(presence: {
     if (!trusted(event) || typeof open !== 'boolean') return currentLayout()
     if (mode === 'mail' || mode === 'chat') return setPanelOpen(open, mode)
     return setPanelOpen(open)
+  })
+
+  ipcMain.handle(IPC.panelResize, (event, width: unknown, height: unknown, done: unknown): PanelLayout => {
+    if (!trusted(event) || typeof width !== 'number' || typeof height !== 'number') return currentLayout()
+    return resizePanel(width, height, done === true)
+  })
+
+  ipcMain.handle(IPC.panelPreset, (event, preset: unknown): PanelLayout => {
+    if (!trusted(event)) return currentLayout()
+    if (preset === 'small' || preset === 'medium' || preset === 'large' || preset === 'reset') return setPanelPreset(preset)
+    return currentLayout()
   })
 
   ipcMain.on(IPC.setHitRects, (event, payload: unknown) => {

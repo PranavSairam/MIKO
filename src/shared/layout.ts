@@ -79,6 +79,48 @@ export function fitMailPanel(pet: Point, work: Rect): PanelSize {
   return { width: Math.min(width, MAIL_PANEL.width), height: Math.min(height, work.height), gap: MAIL_PANEL.gap }
 }
 
+export type PanelKind = 'chat' | 'mail'
+export type PanelPreset = 'small' | 'medium' | 'large'
+
+/** Size choices per tab (DIP). Medium is the original size. */
+export const PANEL_PRESETS: Record<PanelKind, Record<PanelPreset, { width: number; height: number }>> = {
+  chat: { small: { width: 272, height: 220 }, medium: { width: 400, height: 340 }, large: { width: 560, height: 500 } },
+  mail: { small: { width: 540, height: 420 }, medium: { width: 700, height: 520 }, large: { width: 960, height: 700 } }
+}
+
+export const PANEL_LIMITS: Record<PanelKind, { min: { width: number; height: number }; max: { width: number; height: number } }> = {
+  chat: { min: { width: 240, height: 200 }, max: { width: 1000, height: 1000 } },
+  mail: { min: { width: MAIL_MIN.width, height: MAIL_MIN.height }, max: { width: 1600, height: 1200 } }
+}
+
+/** A saved size, or null when the value isn't a usable size. */
+export function parsePanelSize(kind: PanelKind, value: unknown): { width: number; height: number } | null {
+  if (!value || typeof value !== 'object') return null
+  const { width, height } = value as { width?: unknown; height?: unknown }
+  if (typeof width !== 'number' || typeof height !== 'number' || !Number.isFinite(width) || !Number.isFinite(height)) return null
+  const { min, max } = PANEL_LIMITS[kind]
+  return { width: Math.round(clamp(width, min.width, max.width)), height: Math.round(clamp(height, min.height, max.height)) }
+}
+
+/**
+ * Panel size for this spot. Without a chosen size: Chat uses PANEL and Mail
+ * fits beside the dog (fitMailPanel). A chosen size is kept as asked, within
+ * the tab's limits and the screen (the window clamp then moves the dog).
+ */
+export function fitPanel(kind: PanelKind, chosen: { width: number; height: number } | null, pet: Point, work: Rect): PanelSize {
+  if (!chosen) return kind === 'mail' ? fitMailPanel(pet, work) : { ...PANEL }
+  const gap = kind === 'mail' ? MAIL_PANEL.gap : PANEL.gap
+  const size = parsePanelSize(kind, chosen) ?? PANEL_PRESETS[kind].medium
+  const { min } = PANEL_LIMITS[kind]
+  const widest = work.width - PET_WINDOW.width - gap
+  const tallest = work.height - 2 * EDGE_MARGIN
+  return {
+    width: Math.round(clamp(size.width, Math.min(min.width, widest), Math.max(Math.min(min.width, widest), widest))),
+    height: Math.round(clamp(size.height, Math.min(min.height, tallest), Math.max(Math.min(min.height, tallest), tallest))),
+    gap
+  }
+}
+
 function spaces(pet: Point, work: Rect, panel: PanelSize = PANEL): {
   spaceLeft: number
   spaceRight: number

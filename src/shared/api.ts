@@ -1,6 +1,8 @@
 export const IPC = {
   moveBy: 'miko:move-by',
   setPanelOpen: 'miko:set-panel-open',
+  panelResize: 'miko:panel-resize',
+  panelPreset: 'miko:panel-preset',
   setHitRects: 'miko:set-hit-rects',
   setDragActive: 'miko:set-drag-active',
   setReducedMotion: 'miko:set-reduced-motion',
@@ -279,6 +281,10 @@ export interface MikoApi {
   moveBy: (delta: MoveDelta) => void
   /** Resize around the pet so the note panel stays inside the work area. */
   setPanelOpen: (open: boolean, mode?: PanelMode) => Promise<PanelLayout>
+  /** Drag-resize the open panel; done saves the size for this tab. */
+  panelResize: (width: number, height: number, done: boolean) => Promise<PanelLayout>
+  /** Small / Medium / Large for the open tab, or reset to its default. */
+  panelPreset: (preset: 'small' | 'medium' | 'large' | 'reset') => Promise<PanelLayout>
   /** Window-local DIP rectangles that should receive clicks. */
   setHitRects: (rects: HitRect[]) => void
   /** Keep the window clickable for the whole Alt/Option drag, including outside the graphic. */

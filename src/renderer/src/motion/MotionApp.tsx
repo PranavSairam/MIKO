@@ -104,13 +104,7 @@ export function MotionApp() {
     window.miko.setHitRects([])
     const layout: PanelLayout = await window.miko.setPanelOpen(open, mode)
     if (request !== panelRequest.current) return
-    const size = { width: layout.panelWidth || PANEL.width, height: layout.panelHeight || PANEL.height, gap: mode === 'mail' ? MAIL_PANEL.gap : PANEL.gap }
-    panelSizeRef.current = open ? size : PANEL
-    const page = document.documentElement
-    page.style.setProperty('--panel-width', `${size.width}px`)
-    page.style.setProperty('--panel-height', `${size.height}px`)
-    page.style.setProperty('--panel-gap', `${size.gap}px`)
-    setPanelSide(layout.panelSide)
+    applyPanelSize(layout, open ? mode : 'chat')
     setPanelOpen(layout.panelOpen)
     setTab(open ? mode : 'chat')
     if (!open) {
@@ -123,6 +117,78 @@ export function MotionApp() {
         void window.miko.comeHere()
       }
     }
+  }
+
+  function applyPanelSize(layout: PanelLayout, mode: 'chat' | 'mail'): void {
+    const size = { width: layout.panelWidth || PANEL.width, height: layout.panelHeight || PANEL.height, gap: mode === 'mail' ? MAIL_PANEL.gap : PANEL.gap }
+    panelSizeRef.current = layout.panelOpen ? size : PANEL
+    const page = document.documentElement
+    page.style.setProperty('--panel-width', `${size.width}px`)
+    page.style.setProperty('--panel-height', `${size.height}px`)
+    page.style.setProperty('--panel-gap', `${size.gap}px`)
+    setPanelSide(layout.panelSide)
+  }
+
+  async function presetPanel(preset: 'small' | 'medium' | 'large' | 'reset'): Promise<void> {
+    if (!panelRef.current) return
+    const layout = await window.miko.panelPreset(preset)
+    applyPanelSize(layout, tabRef.current)
+  }
+
+  /**
+   * Drag the panel's outer corner. Width follows the pointer; the panel stays centred on the
+   * dog vertically, so height grows by twice the vertical move. Saved for this tab on release.
+   */
+  function startPanelResize(event: React.PointerEvent<HTMLElement>): void {
+    if (event.button !== 0 || !panelRef.current) return
+    event.preventDefault()
+    const grip = event.currentTarget
+    try {
+      grip.setPointerCapture(event.pointerId)
+    } catch {
+      // Not an active pointer (synthetic event): moves still arrive on the grip.
+    }
+    window.miko.setPointerHeld(true)
+    const start = { x: event.screenX, y: event.screenY, width: panelSizeRef.current.width, height: panelSizeRef.current.height }
+    const side = panelSideRef.current
+    const mode = tabRef.current
+    let wanted = { width: start.width, height: start.height }
+    let sending = false
+    let queued = false
+    const flush = async (done: boolean): Promise<void> => {
+      if (sending && !done) {
+        queued = true
+        return
+      }
+      sending = true
+      const layout = await window.miko.panelResize(wanted.width, wanted.height, done)
+      sending = false
+      applyPanelSize(layout, mode)
+      if (queued && !done) {
+        queued = false
+        void flush(false)
+      }
+    }
+    const move = (e: PointerEvent): void => {
+      const dx = e.screenX - start.x
+      const dy = e.screenY - start.y
+      wanted = { width: start.width + (side === 'right' ? dx : -dx), height: start.height + 2 * dy }
+      void flush(false)
+    }
+    const end = (): void => {
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', end)
+      grip.removeEventListener('pointercancel', end)
+      window.miko.setPointerHeld(false)
+      const finish = (): void => {
+        if (sending) window.setTimeout(finish, 30)
+        else void flush(true)
+      }
+      finish()
+    }
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', end)
+    grip.addEventListener('pointercancel', end)
   }
 
   function showMailTab(): void {
@@ -1384,6 +1450,7 @@ export function MotionApp() {
           onSubmit={() => {
             void onSubmit()
           }}
+          sizing={{ side: panelSide, onPreset: (p) => void presetPanel(p), onResizeStart: startPanelResize }}
           tab={tab}
           onTab={(next) => {
             if (next !== tabRef.current) void applyPanel(true, next)

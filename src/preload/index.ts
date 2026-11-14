@@ -42,6 +42,10 @@ const api: MikoApi = {
   moveBy: (delta: MoveDelta): void => {
     ipcRenderer.send(IPC.moveBy, delta)
   },
+  panelResize: (width: number, height: number, done: boolean): Promise<PanelLayout> =>
+    ipcRenderer.invoke(IPC.panelResize, Number(width), Number(height), done === true) as Promise<PanelLayout>,
+  panelPreset: (preset: 'small' | 'medium' | 'large' | 'reset'): Promise<PanelLayout> =>
+    ipcRenderer.invoke(IPC.panelPreset, String(preset)) as Promise<PanelLayout>,
   setPanelOpen: (open: boolean, mode?: 'chat' | 'mail'): Promise<PanelLayout> => {
     return ipcRenderer.invoke(IPC.setPanelOpen, open, mode === 'mail' ? 'mail' : 'chat') as Promise<PanelLayout>
   },

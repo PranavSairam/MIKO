@@ -155,6 +155,72 @@ textarea {
   pointer-events: auto;
 }
 
+/* Panel size: header menu and the drag corner (on the side away from the dog). */
+.panel {
+  position: relative;
+}
+
+.size-control {
+  position: relative;
+  margin-left: auto;
+  margin-right: 4px;
+}
+
+.panel-bar .size-control + .close {
+  margin-left: 0;
+}
+
+.size-menu {
+  position: absolute;
+  z-index: 20;
+  top: 26px;
+  right: 0;
+  width: 200px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #2a211b;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.size-hint {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: rgba(246, 239, 230, 0.62);
+}
+
+.resize-grip {
+  position: absolute;
+  bottom: 2px;
+  width: 16px;
+  height: 16px;
+  z-index: 10;
+  touch-action: none;
+  opacity: 0.55;
+  background:
+    linear-gradient(135deg, transparent 0 45%, rgba(231, 176, 122, 0.9) 45% 52%, transparent 52% 64%, rgba(231, 176, 122, 0.9) 64% 71%, transparent 71%);
+}
+
+.resize-grip:hover {
+  opacity: 1;
+}
+
+.resize-grip.at-right {
+  right: 2px;
+  cursor: nwse-resize;
+  border-bottom-right-radius: 16px;
+}
+
+.resize-grip.at-left {
+  left: 2px;
+  cursor: nesw-resize;
+  border-bottom-left-radius: 16px;
+  transform: scaleX(-1);
+}
+
 .panel-bar {
   display: flex;
   align-items: center;
