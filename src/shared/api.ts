@@ -15,6 +15,7 @@ export const IPC = {
   launchApp: 'miko:launch-app',
   openChatGpt: 'miko:open-chatgpt',
   chatsList: 'miko:chats-list',
+  chatgptInsert: 'miko:chatgpt-insert',
   bridgeSend: 'miko:bridge-send',
   bridgeCancel: 'miko:bridge-cancel',
   bridgeUpdate: 'miko:bridge-update',
@@ -60,6 +61,12 @@ export const IPC = {
   switcherClose: 'miko:switcher-close',
   switcherOpened: 'miko:switcher-opened'
 } as const
+
+export type InsertResult =
+  | { state: 'inserted'; mode: string }
+  | { state: 'has-text'; length: number }
+  | { state: 'unavailable'; reason: string }
+  | { state: 'failed'; reason: string }
 
 export interface OpenResult {
   ok: boolean
@@ -249,6 +256,8 @@ export interface MikoApi {
   launchApp: (request: LaunchRequest) => Promise<LaunchResult>
   /** Launch or focus the ChatGPT app; falls back to chatgpt.com in the default browser. */
   openChatGpt: () => Promise<OpenResult>
+  /** Put a prompt into ChatGPT's message box only when Accessibility can identify it (see PROJECT_LOG). */
+  chatgptInsert: (prompt: string, mode?: 'append' | 'replace') => Promise<InsertResult>
   /** Saved ChatGPT shortcuts, stored in MIKO's local settings. */
   listChats: () => Promise<SavedChat[]>
   addChat: (name: string, url: string) => Promise<ChatEditResult>

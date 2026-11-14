@@ -90,6 +90,38 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Milestone 1, automatic ChatGPT prompt insertion
+**Control:** on a ChatGPT card, **Ask in ChatGPT** (it was "Copy and open ChatGPT"). "Continue in ChatGPT" on mail requests uses the same path.
+
+**How it works** (`src/main/chatgpt.ts → insertIntoChatGpt`, helper `resources/ax-mac.swift` = `miko-ax`)
+1. Opens the ChatGPT app and waits until it's actually frontmost (bundle `com.openai.codex`/`chat`).
+2. Asks macOS Accessibility for ChatGPT's focused field.
+3. Types only if that field is an identified, editable, non-password text field.
+   - If the box already has text, the card offers **Append / Replace / Cancel**.
+   - Insertion goes through Accessibility and is confirmed by reading the value back; only then does the card say "Inserted… press Send".
+4. Otherwise it **stops and types nothing**, copies the prompt, and explains why.
+
+**Result on this Mac (live):**
+- ChatGPT 26.924 (Electron) reports **no focused element** to Accessibility, from either the app or the system-wide element, after activation.
+- So MIKO showed "ChatGPT doesn't expose its message box to macOS Accessibility, so MIKO can't tell where text would go and typed nothing. The prompt is copied: click ChatGPT's message box and press ⌘V."
+- ChatGPT was frontmost and the clipboard held exactly the prompt.
+- **No keyboard fallback is used,** because no step can verify the composer is focused (rule: never type into an unidentified field).
+
+**`miko-ax` helper** (shared with Milestone 3; compiled on first use into `userData/bin/miko-ax` and run as a child, so it uses the launching app's Accessibility grant)
+- Commands: `focus-info`, `capture` (Accessibility selection, else a deliberate ⌘C), `replace` (verifies app, field signature and selection hash first), `insert`, `paste`.
+- Password fields (`AXSecureTextField`) are never read or written.
+- Clipboard: a snapshot of every item and type is taken; it's restored **only if `changeCount` still equals MIKO's own write**.
+- **Verified directly (TextEdit scratch document):**
+  - capture via Accessibility
+  - replace, confirmed by read-back
+  - replace refused after the selection changed
+  - ⌘V paste verified, with the original clipboard restored
+  - when a new copy happened mid-operation, the restore was skipped and the user's copy kept
+  - a password dialog was refused for both capture and paste
+- `MIKO_AX_FORCE_PASTE` / `MIKO_AX_RESTORE_DELAY_MS` exist for tests only.
+
+**Limitation:** automatic insertion into ChatGPT becomes possible only if a future ChatGPT build exposes its composer (re-check with `scripts/probe-chatgpt-composer.swift`). The code path is already in place.
+
 ### 2026-11-14: Session 1, mail via ChatGPT (owner: "just use mail from my gpt")
 - **Investigated:** Codex CLI, with the apps feature on and with the owner's full config, reports **no Gmail/email tools**. ChatGPT's Gmail connector is not reachable from MIKO by any supported route, and the ChatGPT window can't be read (Accessibility plus OpenAI terms).
 - **Change:** when MIKO has no mailbox of its own, mail commands hand off to the ChatGPT app right away. They copy a read-only request (`mailRequestFor`: recent/important → MAIL_REQUEST; unread; search with the exact terms) and bring ChatGPT forward. The owner pastes and presses Send, and the results stay in ChatGPT. "open the second email" says to open it in ChatGPT. With a Gmail account connected in MIKO, the Mail panel is used as before.

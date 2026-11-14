@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { basename } from 'node:path'
 import { shell } from 'electron'
 import { CHATGPT_HOME, parseChatUrl } from '../shared/chatgpt'
+import { runAx } from './ax'
 
 /**
  * Opening ChatGPT and saved ChatGPT links.
@@ -93,4 +94,39 @@ function run(command: string, args: string[]): Promise<boolean> {
     proc.once('error', () => resolve(false))
     proc.once('close', (code) => resolve(code === 0))
   })
+}
+
+export type InsertState =
+  | { state: 'inserted'; mode: string }
+  | { state: 'has-text'; length: number }
+  | { state: 'unavailable'; reason: string }
+  | { state: 'failed'; reason: string }
+
+/**
+ * Put a prepared prompt into the ChatGPT app's message box, ready to send.
+ * Only types when macOS Accessibility identifies the focused field in
+ * ChatGPT itself; otherwise stops and reports why (nothing is typed).
+ * mode: undefined = check first (ask when the box has text), 'append' | 'replace'.
+ */
+export async function insertIntoChatGpt(prompt: string, mode?: 'append' | 'replace'): Promise<InsertState> {
+  const appPath = findChatGptApp()
+  if (!appPath) return { state: 'unavailable', reason: 'The ChatGPT app isn\u2019t installed.' }
+  if (!(await run('/usr/bin/open', ['-a', appPath]))) return { state: 'failed', reason: 'ChatGPT didn\u2019t come to the front.' }
+  let info = await runAx(['focus-info'])
+  for (let i = 0; i < 8 && !/^com\.openai\.(codex|chat)$/.test(info.bundle); i += 1) {
+    await new Promise((r) => setTimeout(r, 250))
+    info = await runAx(['focus-info'])
+  }
+  const isChatGpt = /^com\.openai\.(codex|chat)$/.test(info.bundle)
+  if (!isChatGpt) return { state: 'failed', reason: info.app ? `${info.app} is in front, not ChatGPT.` : 'ChatGPT didn\u2019t come to the front.' }
+  if (!info.ok || !info.editable) {
+    return {
+      state: 'unavailable',
+      reason: 'ChatGPT doesn\u2019t expose its message box to macOS Accessibility, so MIKO can\u2019t tell where text would go and typed nothing.'
+    }
+  }
+  if (!mode && info.valueLength > 0) return { state: 'has-text', length: info.valueLength }
+  const result = await runAx(['insert', '--pid', String(info.pid), '--sig', info.sig, '--mode', mode ?? 'selection'], prompt)
+  if (result.ok && result.verified) return { state: 'inserted', mode: mode ?? 'insert' }
+  return { state: 'failed', reason: result.reason || 'The text couldn\u2019t be inserted and verified.' }
 }

@@ -1057,7 +1057,51 @@ export function MotionApp() {
     replaceEntry(id, { id, kind: 'closing', appId, name, text })
   }
 
-  /** Copy the exact question, then bring ChatGPT (or the chosen saved chat) forward. Nothing is sent. */
+  /**
+   * Ask in ChatGPT: insert the exact prompt into ChatGPT's message box when Accessibility can
+   * identify it (Append/Replace if it has text; success only after read-back), otherwise type
+   * nothing, copy the prompt and say why. Saved-chat destinations open in the browser + copy.
+   */
+  async function handToChatGpt(entry: Extract<PanelEntry, { kind: 'handoff' }>, mode?: 'append' | 'replace'): Promise<void> {
+    const destination = entry.destination ?? ''
+    if (destination) {
+      const copied = await window.miko.copyText(entry.prompt)
+      const opened = await window.miko.openChat(destination)
+      const place = opened.target === 'app' ? 'the ChatGPT app' : opened.appName || 'your browser'
+      replaceEntry(entry.id, {
+        ...entry,
+        choose: false,
+        status: copied && opened.ok ? 'copied' : entry.status,
+        detail: opened.ok
+          ? `Opened \u201c${destination}\u201d in ${place}. ${copied ? 'Question copied \u2014 paste it there.' : 'The question wasn\u2019t copied.'}`
+          : `\u201c${destination}\u201d didn\u2019t open.`
+      })
+      return
+    }
+    replaceEntry(entry.id, { ...entry, choose: false, detail: 'Bringing ChatGPT forward\u2026' })
+    const result = await window.miko.chatgptInsert(entry.prompt, mode)
+    if (result.state === 'inserted') {
+      replaceEntry(entry.id, { ...entry, choose: false, status: 'copied', detail: 'Inserted into ChatGPT\u2019s message box and checked. Review it and press Send.' })
+      return
+    }
+    if (result.state === 'has-text') {
+      replaceEntry(entry.id, { ...entry, choose: true, detail: 'ChatGPT\u2019s message box already has text. Append to it or replace it?' })
+      return
+    }
+    const copied = await window.miko.copyText(entry.prompt)
+    replaceEntry(entry.id, {
+      ...entry,
+      choose: false,
+      status: copied ? 'copied-only' : entry.status,
+      detail: `${result.reason} ${copied ? 'The prompt is copied: click ChatGPT\u2019s message box and press \u2318V.' : 'The prompt couldn\u2019t be copied either.'}`
+    })
+  }
+
+  /** "Check mail" handoff: the read-only request goes to ChatGPT the same way. */
+  async function continueMail(entry: Extract<PanelEntry, { kind: 'handoff' }>): Promise<void> {
+    await handToChatGpt(entry)
+  }
+
   async function onUseChatGpt(id: number): Promise<void> {
     const entry = entries.find((item) => item.id === id)
     if (!entry || entry.kind !== 'handoff' || typeof window.miko === 'undefined') return
@@ -1065,40 +1109,7 @@ export function MotionApp() {
       await continueMail(entry)
       return
     }
-    const copied = await window.miko.copyText(entry.prompt)
-    const destination = entry.destination ?? ''
-    const opened = destination ? await window.miko.openChat(destination) : await window.miko.openChatGpt()
-    const where = destination ? `\u201c${destination}\u201d` : 'ChatGPT'
-    const place = !opened.ok ? '' : opened.target === 'app' ? ' (ChatGPT app)' : ` (${opened.appName || 'browser'})`
-    const status = copied && opened.ok ? 'copied' : copied ? 'copied-only' : opened.ok ? 'browser-only' : entry.status
-    const detail =
-      copied && opened.ok
-        ? `Question copied. Paste it into the ChatGPT conversation you want. Opened ${where}${place}.`
-        : copied
-          ? `Question copied, but ${where} didn\u2019t open.`
-          : opened.ok
-            ? `Opened ${where}${place}, but the question wasn\u2019t copied.`
-            : `The question wasn\u2019t copied, and ${where} didn\u2019t open.`
-    replaceEntry(id, { ...entry, status, detail })
-  }
-
-  /**
-   * "Check mail" handoff. ChatGPT's message box is not reachable through macOS
-   * Accessibility (see PROJECT_LOG), so MIKO never types into it: the request is
-   * copied and ChatGPT is brought forward for the user to paste and send.
-   */
-  async function continueMail(entry: Extract<PanelEntry, { kind: 'handoff' }>): Promise<void> {
-    const copied = await window.miko.copyText(entry.prompt)
-    const opened = await window.miko.openChatGpt()
-    const where = !opened.ok
-      ? 'ChatGPT didn\u2019t open.'
-      : opened.target === 'app'
-        ? 'The ChatGPT app is in front.'
-        : `The ChatGPT app isn\u2019t installed, so chatgpt.com opened in ${opened.appName || 'your browser'}.`
-    const detail = copied
-      ? `Request copied\u2014paste into ChatGPT and press Send. ${where}`
-      : `The request wasn\u2019t copied. ${where}`
-    replaceEntry(entry.id, { ...entry, status: copied && opened.ok ? 'copied' : copied ? 'copied-only' : entry.status, detail })
+    await handToChatGpt(entry)
   }
 
   async function onPasteReply(id: number): Promise<void> {
@@ -1257,6 +1268,12 @@ export function MotionApp() {
             }
           }}
           onBridgeCancel={(requestId) => window.miko.bridgeCancel(requestId)}
+          onInsertChoice={(id, mode) => {
+            const entry = entries.find((item) => item.id === id)
+            if (entry?.kind !== 'handoff') return
+            if (!mode) replaceEntry(id, { ...entry, choose: false, detail: 'Cancelled. Nothing was changed in ChatGPT.' })
+            else void handToChatGpt(entry, mode)
+          }}
           assistantThread={assistantThread}
           onBridgeNew={() => {
             void window.miko.bridgeNew().then(() => {

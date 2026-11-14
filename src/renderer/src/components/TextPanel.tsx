@@ -23,6 +23,8 @@ export type PanelEntry =
       destination?: string
       /** 'mail': the expanded "check mail" request (no destination picker). */
       variant?: 'mail'
+      /** ChatGPT's box already has text: ask Append or Replace. */
+      choose?: boolean
     }
   | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app'; text: string; options: PanelChoice[] }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
@@ -67,6 +69,7 @@ interface TextPanelProps {
   chats?: SavedChat[]
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
+  onInsertChoice?: (id: number, mode: 'append' | 'replace' | null) => void
   onBridgeCancel?: (requestId: string) => void
   onBridgeNew?: () => void
   onAskInChatGpt?: (prompt: string) => void
@@ -112,6 +115,7 @@ export function TextPanel({
   chatTools,
   onDestination,
   onBridgeCancel,
+  onInsertChoice,
   onBridgeNew,
   onAskInChatGpt,
   assistantThread = '',
@@ -242,8 +246,21 @@ export function TextPanel({
                   {entry.reply ? <p className="pasted">{entry.reply}</p> : null}
                   <div className="panel-inline">
                     <button type="button" className="text-button" onClick={() => onUseChatGpt?.(entry.id)}>
-                      {entry.variant === 'mail' ? 'Continue in ChatGPT' : 'Copy and open ChatGPT'}
+                      {entry.variant === 'mail' ? 'Continue in ChatGPT' : 'Ask in ChatGPT'}
                     </button>
+                    {entry.choose ? (
+                      <>
+                        <button type="button" className="text-button" onClick={() => onInsertChoice?.(entry.id, 'append')}>
+                          Append
+                        </button>
+                        <button type="button" className="text-button" onClick={() => onInsertChoice?.(entry.id, 'replace')}>
+                          Replace
+                        </button>
+                        <button type="button" className="text-button secondary" onClick={() => onInsertChoice?.(entry.id, null)}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : null}
                     <button type="button" className="text-button secondary" onClick={() => onPasteReply?.(entry.id)}>
                       Paste reply
                     </button>

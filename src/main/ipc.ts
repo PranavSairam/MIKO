@@ -2,7 +2,7 @@ import { app, clipboard, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } f
 import { IPC, type AppListing, type HitRect, type LaunchResult, type PanelLayout } from '../shared/api'
 import { parseActionId } from '../shared/commands'
 import { launchApplication, listApplications } from './apps'
-import { openChatGpt, openChatUrl } from './chatgpt'
+import { insertIntoChatGpt, openChatGpt, openChatUrl } from './chatgpt'
 import { addChat, removeChat, renameChat, type ChatEdit } from '../shared/chatgpt'
 import { comeToFront, enableFollow } from './follow'
 import { requestClose, watchClose } from './quit'
@@ -101,6 +101,10 @@ export function registerIpc(presence: {
     return openChatGpt()
   })
 
+  ipcMain.handle(IPC.chatgptInsert, (event, prompt: unknown, mode: unknown) => {
+    if (!trusted(event) || typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000) return { state: 'failed', reason: 'Not allowed.' }
+    return insertIntoChatGpt(prompt, mode === 'append' || mode === 'replace' ? mode : undefined)
+  })
   ipcMain.handle(IPC.chatsList, (event) => (trusted(event) ? savedChats() : []))
   ipcMain.handle(IPC.chatsAdd, (event, payload: unknown) => {
     if (!trusted(event)) return refused()
