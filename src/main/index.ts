@@ -154,7 +154,9 @@ if (!gotLock) {
               { type: 'separator' },
               { role: 'quit' }
             ]
-          }
+          },
+          // macOS routes ⌘C/⌘V/⌘X/⌘A/⌘Z to text fields only through an Edit menu.
+          { role: 'editMenu' }
         ])
       )
     } else {
@@ -170,7 +172,8 @@ function setPreviewMenu(): void {
         {
           label: 'MIKO',
           submenu: [{ role: 'quit' }]
-        }
+        },
+        { role: 'editMenu' }
       ])
     )
   } else {

@@ -90,6 +90,12 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14 (late): Paste works in MIKO's text boxes
+- **Owner report:** couldn't paste the Client ID and secret into Connect Gmail.
+- **Cause:** MIKO's macOS menu had no Edit menu, and macOS routes ⌘C/⌘V/⌘X/⌘A/⌘Z to text fields only through one. This affected every MIKO text box.
+- **Fix:** added the standard Edit menu (`role: 'editMenu'`) to the normal and preview menus in `src/main/index.ts`.
+- typecheck and build pass. MIKO was restarted with the fix. **The owner's live paste test is pending.**
+
 ### 2026-11-14 (late): Mail reader and reply-writing assistant
 **What it does now (Mail tab)**
 - **Tabs:** All mail, Unread, Action needed, Important FYI, Updates, Promotions.
