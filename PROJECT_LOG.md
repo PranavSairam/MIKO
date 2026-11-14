@@ -83,7 +83,7 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 - [ ] Hands-on Windows verification (smoke test in README.md)
 - [ ] Rewrite README.md intro (controls table is current; intro still says Phase 1)
 - [x] Local git history (2026-11-14), branch `main`, author PRANAV SAIRAM
-- [ ] Publish to a remote (separate step, only when the owner asks)
+- [x] Published 2026-11-14 to **private** GitHub repo https://github.com/PranavSairam/MIKO (remote `origin`, branch `main`)
 - [ ] Consider Git LFS for `art/` binaries before publishing (about 50 MB of .blend/.png/.mp4)
 
 ---
