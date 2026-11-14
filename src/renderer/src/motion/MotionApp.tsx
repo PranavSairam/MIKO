@@ -741,7 +741,9 @@ export function MotionApp() {
         pushEntry({
           id: 0,
           kind: 'note',
-          text: 'MIKO Keys needs Accessibility and Input Monitoring for Caps Lock + A and Tab + Q. System Settings \u2192 Privacy & Security \u2192 Accessibility and Input Monitoring.'
+          text:
+            'MIKO Keys needs Accessibility and Input Monitoring for Caps Lock + A and Tab + Q (System Settings \u2192 Privacy & Security). ' +
+            'If \u201cmiko-keys\u201d is already switched on there but this keeps coming back, that switch belongs to an older build: select miko-keys, click \u2212 to remove it, then quit and reopen MIKO and allow it again.'
         })
       }
     })

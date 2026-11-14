@@ -90,6 +90,21 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14 (late): miko-keys kept asking for Accessibility
+- **Owner report:** "even tho i kinda turn it on it keeps showing the access thing".
+- **Cause:**
+  - The Swift helpers are ad-hoc signed, so their designated requirement is the build's cdhash, and macOS ties each grant to that exact build.
+  - `compileHelper` rebuilt whenever `resources/*.swift` had a newer **modification date**. The sources were touched at 15:15 today with no content change, so miko-keys was rebuilt (new cdhash).
+  - The switch in System Settings stayed on for the old build, so it looked on, but the new build wasn't trusted and asked on every start.
+  - My Playwright runs this evening also started MIKO, and with it the helper, each time, so the prompt kept reappearing.
+- **Fix:**
+  - Helpers rebuild only when the source **content** changes. A SHA-256 stamp is kept in `userData/<name>.build`. Existing builds that are newer than their source are kept and stamped, so the current build and its fingerprint stay as they are (verified after a restart: cdhash `0753171…` unchanged).
+  - `MIKO_NO_HELPERS=1` (unpackaged only) skips the helpers in automated runs, so tests no longer trigger permission prompts.
+  - The in-app note now explains a stale switch: remove miko-keys with −, reopen MIKO, allow again.
+- **Owner action still needed once:** in System Settings → Privacy & Security → **Accessibility** and **Input Monitoring**, select **miko-keys** → **−**, then reopen MIKO and allow when asked.
+- **Not done:** a stable code-signing identity, such as a local self-signed certificate, would let grants survive real source changes too. It wasn't set up because it changes the Keychain, so it needs the owner's go-ahead.
+- typecheck passes, 144/144 tests pass, build passes.
+
 ### 2026-11-14 (late): Resizable Chat and Mail panels; Gmail connected
 - **Gmail connected:** the owner's screenshot shows pranavsairamanc@gmail.com in the Mail tab and a search for "interview" returning real results. **Paste fix confirmed** (the Client ID and secret went in).
   - The same screenshot showed macOS asking for Accessibility for "miko-keys" again. The owner should allow it in System Settings → Privacy & Security → Accessibility.

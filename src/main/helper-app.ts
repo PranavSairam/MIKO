@@ -12,6 +12,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -24,7 +25,17 @@ import { app } from 'electron'
  * Launched by `open`, each helper is its own responsible process.
  * Output comes back as JSON lines through a FIFO. The helper's first line
  * is `{"pid":N}`, which the launcher keeps for signals and does not forward.
+ *
+ * Privacy grants (Accessibility, Input Monitoring, Microphone) belong to the
+ * exact ad-hoc build, so a helper is rebuilt only when its source *content*
+ * changes (a SHA-256 stamp kept beside the bundle), never because a checkout
+ * or copy touched the file's date. Each rebuild needs the grant again.
  */
+
+/** Tests set MIKO_NO_HELPERS=1 (unpackaged only) so automated runs don't start helpers or trigger permission prompts. */
+export function helpersDisabled(): boolean {
+  return process.env['MIKO_NO_HELPERS'] === '1' && !app.isPackaged
+}
 
 export interface HelperSpec {
   /** File in resources/. */
@@ -43,9 +54,11 @@ export interface HelperHandle {
 }
 
 export function compileHelper(spec: HelperSpec): { root: string; binary: string } | null {
-  if (process.platform !== 'darwin') return null
+  if (process.platform !== 'darwin' || helpersDisabled()) return null
   const source = sourcePath(spec.source)
   if (!source) return null
+  const stampPath = join(app.getPath('userData'), `${spec.name}.build`)
+  const stamp = createHash('sha256').update(readFileSync(source)).update(spec.frameworks.join(',')).digest('hex')
   const root = join(app.getPath('userData'), `${spec.name}.app`)
   const macOS = join(root, 'Contents', 'MacOS')
   const binary = join(macOS, spec.name)
@@ -54,7 +67,11 @@ export function compileHelper(spec: HelperSpec): { root: string; binary: string 
   const plist = helperPlist(spec)
   const plistChanged = !existsSync(plistPath) || readFileSync(plistPath, 'utf8') !== plist
   if (plistChanged) writeFileSync(plistPath, plist)
-  if (existsSync(binary) && statSync(binary).mtimeMs >= statSync(source).mtimeMs) {
+  const stampMatches = existsSync(stampPath) && readFileSync(stampPath, 'utf8').trim() === stamp
+  // Builds from before the stamp existed: keep the binary (and its grants) when it's newer than the source.
+  const legacyCurrent = !existsSync(stampPath) && existsSync(binary) && statSync(binary).mtimeMs >= statSync(source).mtimeMs
+  if (existsSync(binary) && (stampMatches || legacyCurrent)) {
+    if (legacyCurrent) writeFileSync(stampPath, stamp)
     if (plistChanged) sign(root)
     return { root, binary }
   }
@@ -66,6 +83,7 @@ export function compileHelper(spec: HelperSpec): { root: string; binary: string 
   })
   if (compiled.status !== 0 || !existsSync(binary)) return null
   sign(root)
+  writeFileSync(stampPath, stamp)
   return { root, binary }
 }
 
