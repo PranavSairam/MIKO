@@ -90,6 +90,28 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Milestone 3 live verification (owner idle; Excel no longer interfering)
+- **Fixed in `miko-ax`:** `NSWorkspace.frontmostApplication` doesn't refresh inside a short-lived helper (no run loop). The helper now checks the target's live Accessibility `AXFrontmost`, spins a run loop while waiting, and reads the focused field from that exact pid after activating it.
+- Tests now abort if the expected app isn't frontmost before any key press.
+- **Live results** (MIKO launched via Playwright; real ⌃⌥S / ⌃⌥V presses through System Events)
+
+| Check | Result |
+|---|---|
+| A. TextEdit: Fix grammar, then click MIKO, then **Replace selection** | MIKO in front before Replace; TextEdit re-activated; text became "I had an apple, and they were happy at the park yesterday." (exact match); MIKO said "…and checked it" |
+| B. Selection changed before Replace | Refused: "The selection changed. Select the text again."; text untouched |
+| C. Document closed before Replace | Refused: "The focus moved to a different field. Choose the target again." |
+| D. Script Editor (second app): Draft reply "Reply saying I'll send it tomorrow." | Instruction shown separately; reply "I'll send it tomorrow." |
+| D. Paste where I click with Finder in front | Refused: "…isn't an editable text field" |
+| D. Esc while armed | "Paste cancelled." |
+| D. ⌃⌥V in the empty Script Editor document | "Pasted into Script Editor and checked"; content matched; the copy made while armed was kept |
+| D. Second ⌃⌥V | MIKO did not paste again; the key reached Script Editor as its own ⌃V character |
+
+- **Not exercised live:**
+  - a reply clarification question (the model drafted directly)
+  - the 30 s expiry (code path only)
+  - Chrome as a target (web fields not exposed; see the earlier entry)
+- typecheck passes, 123/123 tests pass, build passes.
+
 ### 2026-11-15: Milestone 3, selected-text assistant (built; live verification incomplete)
 **Controls**
 - Select text in any app and press **⌃⌥S**. You can change it in Chat tab → ⚙ → "Set selection shortcut"; it's checked and kept only if it registers.

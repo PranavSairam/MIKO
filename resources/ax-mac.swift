@@ -84,9 +84,11 @@ struct Target {
 }
 
 /// The frontmost app and its focused element, described. Never reads secure fields.
-func focused() -> Target {
+func focused(pid known: pid_t? = nil) -> Target {
     guard AXIsProcessTrusted() else { fail("MIKO needs Accessibility permission (System Settings → Privacy & Security → Accessibility).") }
-    guard let app = NSWorkspace.shared.frontmostApplication else { fail("No app is in front.") }
+    let found = known.flatMap { NSRunningApplication(processIdentifier: $0) } ?? NSWorkspace.shared.frontmostApplication
+    guard let app = found else { fail("No app is in front.") }
+    if let p = known, !isFrontmost(p) { fail("\(app.localizedName ?? "That app") isn’t in front any more.") }
     var out = Out(ok: true, pid: app.processIdentifier, bundle: app.bundleIdentifier ?? "", app: app.localizedName ?? "App")
     let axApp = AXUIElementCreateApplication(app.processIdentifier)
     guard let raw = attr(axApp, "AXFocusedUIElement") else {
@@ -159,20 +161,29 @@ func copySelection(pid: pid_t) -> (String?, Bool) {
     return (copied, restore(saved, ifChange: pb.changeCount))
 }
 
+/// Live check (NSWorkspace.frontmostApplication doesn't refresh in a helper without a run loop).
+func isFrontmost(_ pid: pid_t) -> Bool {
+    (attr(AXUIElementCreateApplication(pid), "AXFrontmost") as? Bool) == true
+}
+
+func spin(_ seconds: Double) {
+    RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+}
+
 func activate(_ pid: pid_t) -> Bool {
     guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
-    if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+    if isFrontmost(pid) { return true }
     // Accessibility's AXFrontmost targets this exact process and works from a background helper
     // (macOS can ignore NSRunningApplication.activate() from a process that isn't active).
     AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXFrontmost" as CFString, kCFBooleanTrue)
-    for _ in 0..<20 {
-        usleep(25_000)
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+    for _ in 0..<40 {
+        spin(0.05)
+        if isFrontmost(pid) { return true }
     }
     app.activate()
     for _ in 0..<40 {
-        usleep(25_000)
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+        spin(0.05)
+        if isFrontmost(pid) { return true }
     }
     return false
 }
@@ -246,8 +257,8 @@ case "replace":
     guard let p = flag("--pid"), let pid = Int32(p), let sig = flag("--sig"), let hash = flag("--hash") else { fail("Missing target.") }
     let text = stdinText()
     guard activate(pid) else { fail("The original app isn’t available any more.") }
-    usleep(150_000)
-    let t = focused()
+    spin(0.15)
+    let t = focused(pid: pid)
     var o = t.out
     guard let el = t.element, o.editable else { fail("The original field isn’t focused or editable any more.", o) }
     guard o.sig == sig else { fail("The focus moved to a different field. Choose the target again.", o) }
@@ -266,8 +277,8 @@ case "insert":
     guard let p = flag("--pid"), let pid = Int32(p) else { fail("Missing target.") }
     let text = stdinText()
     guard activate(pid) else { fail("Couldn’t bring that app to the front.") }
-    usleep(200_000)
-    let t = focused()
+    spin(0.2)
+    let t = focused(pid: pid)
     var o = t.out
     guard o.pid == pid else { fail("A different app came to the front.", o) }
     guard let el = t.element, o.editable else { fail(o.reason.isEmpty ? "No editable field is focused in \(o.app)." : o.reason, o) }
