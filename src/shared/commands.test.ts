@@ -256,6 +256,14 @@ describe('type into ChatGPT', () => {
     assert.deepEqual(routeCommand('put this in chatgpt: Draft a polite reminder', 'typed', catalog), { type: 'type-in-gpt', text: 'Draft a polite reminder' })
     assert.deepEqual(routeCommand('type in gpt: hi', 'typed', catalog), { type: 'type-in-gpt', text: 'hi' })
   })
+  it('sends messages addressed to GPT into ChatGPT', () => {
+    assert.deepEqual(routeCommand('hi gpt', 'typed', catalog), { type: 'type-in-gpt', text: 'hi gpt' })
+    assert.deepEqual(routeCommand('Hey ChatGPT, how are you?', 'typed', catalog), { type: 'type-in-gpt', text: 'Hey ChatGPT, how are you?' })
+    assert.deepEqual(routeCommand('gpt: summarize my week', 'typed', catalog), { type: 'type-in-gpt', text: 'summarize my week' })
+    assert.deepEqual(routeCommand('tell gpt to draft a leave letter', 'typed', catalog), { type: 'type-in-gpt', text: 'draft a leave letter' })
+    assert.equal(routeCommand('open chatgpt', 'typed', catalog).type, 'open-chatgpt')
+    assert.equal(routeCommand('ask gpt why is the sky blue', 'typed', catalog).type, 'ask-gpt')
+  })
   it('asks for the text when none is given, and is a run for voice', () => {
     assert.equal(routeCommand('type in gpt', 'typed', catalog).type, 'unknown')
     assert.equal(planVoice(routeCommand('type hello in gpt', 'voice', catalog), true).kind, 'run')

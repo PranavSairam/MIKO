@@ -26,7 +26,7 @@ export type PanelEntry =
       /** ChatGPT's box already has text: ask Append or Replace. */
       choose?: boolean
     }
-  | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app'; text: string; options: PanelChoice[] }
+  | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app' | 'free-text'; text: string; options: PanelChoice[]; payload?: string }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
   | { id: number; kind: 'closing'; appId: string; name: string; text: string }
   | {

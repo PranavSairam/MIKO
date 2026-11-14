@@ -179,6 +179,14 @@ function matchTypeInGpt(original: string): CommandResult | null {
   }
   const inline = new RegExp(`^${verb}\\s+(.+?)\\s+${target}[.!]?$`, 'is').exec(original)
   if (inline?.[1]) return { type: 'type-in-gpt', text: unquote(inline[1]) }
+  // Messages addressed to GPT: "hi gpt", "hey ChatGPT, …" (typed as-is), "gpt: …", "tell gpt to …".
+  if (new RegExp(`^(?:hi|hey|hello|yo|ok|okay)\\s+${CHATGPT_NAME}\\b`, 'i').test(original)) {
+    return { type: 'type-in-gpt', text: original.trim() }
+  }
+  const addressed = new RegExp(`^${CHATGPT_NAME}\\s*[,:]\\s*(.+)$`, 'is').exec(original)
+  if (addressed?.[1]) return { type: 'type-in-gpt', text: addressed[1].trim() }
+  const tell = new RegExp(`^tell\\s+${CHATGPT_NAME}\\s+(?:to\\s+)?(.+)$`, 'is').exec(original)
+  if (tell?.[1]) return { type: 'type-in-gpt', text: tell[1].trim() }
   return null
 }
 

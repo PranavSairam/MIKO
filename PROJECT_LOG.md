@@ -90,6 +90,15 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Messages to GPT, and free text that isn't a command
+- **Owner's screenshot:** "hi gpt" in MIKO produced the generic "I can walk, sit…" reply.
+- **Messages addressed to GPT** now go to the ChatGPT flow (arm, click the box, ⌃⌥V):
+  - "hi gpt", "hey ChatGPT, …" are typed as written
+  - "gpt: …", "tell gpt to …" type the rest
+  - "open ChatGPT" and "ask GPT …" keep their own meaning (tested)
+- **Typed text that isn't a MIKO command** now shows **Type into ChatGPT / Ask MIKO** instead of the help line.
+- typecheck passes, 126/126 tests pass, build passes. **Live: owner to try.**
+
 ### 2026-11-15: Typing into ChatGPT ("type … in GPT")
 - **Owner's report:** asking MIKO to type into ChatGPT did nothing visible. MIKO only copied the text, because ChatGPT exposes no focused field to Accessibility.
 - **New command:** "type <text> in GPT" / "write … into ChatGPT" / "put this in ChatGPT: …" (typed or voice; text kept exactly; tested). It goes straight to the ChatGPT flow.

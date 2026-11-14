@@ -870,7 +870,23 @@ export function MotionApp() {
     }
     const catalog = await loadCatalog()
     if (!catalog) return
-    await runDecision(routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: tabRef.current === 'mail', assistantActive: Boolean(assistantThreadRef.current) }))
+    const decision = routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: tabRef.current === 'mail', assistantActive: Boolean(assistantThreadRef.current) })
+    if (decision.type === 'unknown' && text.trim()) {
+      // Not a MIKO command: let the owner send it on rather than replying with a help line.
+      pushEntry({
+        id: 0,
+        kind: 'choices',
+        purpose: 'free-text',
+        text: `\u201c${text.trim()}\u201d isn\u2019t a MIKO command. Where should it go?`,
+        options: [
+          { id: 'gpt', name: 'Type into ChatGPT', familiar: true },
+          { id: 'miko', name: 'Ask MIKO', familiar: true }
+        ],
+        payload: text.trim()
+      })
+      return
+    }
+    await runDecision(decision)
   }
 
   /**
@@ -1250,6 +1266,13 @@ export function MotionApp() {
     if (!option) return
     if (entry.purpose === 'close') {
       await runClose(appId, option.name, false)
+      return
+    }
+    if (entry.purpose === 'free-text') {
+      const text = entry.payload ?? ''
+      replaceEntry(entryId, { id: entryId, kind: 'note', text: option.id === 'gpt' ? 'Sending it to ChatGPT.' : 'Asking MIKO.' })
+      if (option.id === 'gpt') await runDecision({ type: 'type-in-gpt', text })
+      else await startAssistant(text)
       return
     }
     if (entry.purpose === 'mail-or-app') {
