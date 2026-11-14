@@ -90,6 +90,21 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14 (late): miko-keys permissions fixed (owner confirmed)
+- **Debugging:** I ran the helper on its own via `open --stdout`. It printed `{"error":"permission"}` twice: Input Monitoring (`IOHIDManagerOpen`) and Accessibility (event tap).
+  - The signature was valid (cdhash `0753171…`).
+  - System Settings, read-only via System Events, showed:
+    - Accessibility: miko-keys **ON**, but tied to the pre-15:15 build.
+    - Input Monitoring: miko-keys **missing entirely**; it wasn't re-added after the old entry was removed.
+- **Fix (owner, in System Settings):**
+  - Added `~/Library/Application Support/MIKO/miko-keys.app` to Input Monitoring by hand. That left one error.
+  - Removed miko-keys from Accessibility and re-added it by hand. That left zero errors.
+- **Result:** the owner confirmed Caps Lock + A and Tab + Q both work.
+- **For next time:** if a helper is rebuilt, remove its old entries with − and re-add the `.app` by hand in each list it needs. A switch that shows on can belong to an old build.
+  - miko-keys needs Accessibility + Input Monitoring.
+  - miko-listen needs Microphone + Speech Recognition.
+  - The content-hash rebuild check (80e0b77) keeps this from happening without a real code change.
+
 ### 2026-11-14 (late): miko-keys kept asking for Accessibility
 - **Owner report:** "even tho i kinda turn it on it keeps showing the access thing".
 - **Cause:**
