@@ -101,7 +101,7 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 - **Verified live** (window list by MIKO's pid, since titles need Screen Recording):
   - on screen right after `npm start` (bottom-right, layer 3)
   - still on screen with ChatGPT in front (ChatGPT was windowed, not full screen), and after switching back
-- **Not verified:** over a real full-screen app or on another Space. Automation couldn't put TextEdit into full screen (AXFullScreen and ⌃⌘F both left it windowed). Owner to confirm with ChatGPT in full screen (green button, or ⌃⌘F).
+- **Owner-verified 2026-11-15:** MIKO stays visible over ChatGPT in full screen. (Automation couldn't put TextEdit into full screen, so this check was manual.)
 
 ### 2026-11-15: Milestone 3 live verification (owner idle; Excel no longer interfering)
 - **Fixed in `miko-ax`:** `NSWorkspace.frontmostApplication` doesn't refresh inside a short-lived helper (no run loop). The helper now checks the target's live Accessibility `AXFrontmost`, spins a run loop while waiting, and reads the focused field from that exact pid after activating it.
