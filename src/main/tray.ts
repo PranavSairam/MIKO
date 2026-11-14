@@ -13,6 +13,8 @@ export interface TrayActions {
   setVoiceAuto: (enabled: boolean) => void
   bridge: () => boolean
   setBridge: (enabled: boolean) => void
+  autoPaste: () => boolean
+  setAutoPaste: (enabled: boolean) => void
 }
 
 let tray: Tray | null = null
@@ -26,7 +28,9 @@ let actions: TrayActions = {
   voiceAuto: () => true,
   setVoiceAuto: () => undefined,
   bridge: () => false,
-  setBridge: () => undefined
+  setBridge: () => undefined,
+  autoPaste: () => true,
+  setAutoPaste: () => undefined
 }
 
 export function createTray(next: TrayActions): { refresh: () => void } {
@@ -89,6 +93,15 @@ function buildMenu(): Menu {
       checked: actions.voiceAuto(),
       click: (item) => {
         actions.setVoiceAuto(item.checked)
+        refreshTrayMenu()
+      }
+    },
+    {
+      label: 'Auto-paste into ChatGPT',
+      type: 'checkbox',
+      checked: actions.autoPaste(),
+      click: (item) => {
+        actions.setAutoPaste(item.checked)
         refreshTrayMenu()
       }
     },

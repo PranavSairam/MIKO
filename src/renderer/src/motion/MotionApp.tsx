@@ -1198,6 +1198,16 @@ export function MotionApp() {
       replaceEntry(entry.id, { ...entry, choose: false, status: 'copied', detail: 'Inserted into ChatGPT\u2019s message box and checked. Review it and press Send.' })
       return
     }
+    if (result.state === 'pasted') {
+      replaceEntry(entry.id, {
+        ...entry,
+        choose: false,
+        status: 'copied',
+        pasteAgain: true,
+        detail: 'Pasted into ChatGPT. MIKO can\u2019t read ChatGPT\u2019s box to double-check, so glance at it, then press Send. If it isn\u2019t there, use Paste again.'
+      })
+      return
+    }
     if (result.state === 'has-text') {
       replaceEntry(entry.id, { ...entry, choose: true, detail: 'ChatGPT\u2019s message box already has text. Append to it or replace it?' })
       return
@@ -1441,6 +1451,18 @@ export function MotionApp() {
           }}
           pasteBanner={pasteBanner}
           onPasteCancel={() => window.miko.pasteCancel()}
+          onPasteAgain={(id) => {
+            const entry = entries.find((item) => item.id === id)
+            if (entry?.kind !== 'handoff') return
+            pasteEntryRef.current = id
+            void window.miko.pasteArm(entry.prompt, 'chatgpt').then((r) =>
+              replaceEntry(id, {
+                ...entry,
+                pasteAgain: false,
+                detail: r.ok ? 'Click ChatGPT\u2019s message box, then press \u2303\u2325V.' : r.reason
+              })
+            )
+          }}
           onInsertChoice={(id, mode) => {
             const entry = entries.find((item) => item.id === id)
             if (entry?.kind !== 'handoff') return

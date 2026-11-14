@@ -4,6 +4,7 @@ import { basename } from 'node:path'
 import { shell } from 'electron'
 import { CHATGPT_HOME, parseChatUrl } from '../shared/chatgpt'
 import { runAx } from './ax'
+import { chatgptAutoPaste } from './settings'
 
 /**
  * Opening ChatGPT and saved ChatGPT links.
@@ -98,6 +99,7 @@ function run(command: string, args: string[]): Promise<boolean> {
 
 export type InsertState =
   | { state: 'inserted'; mode: string }
+  | { state: 'pasted'; reason: string }
   | { state: 'has-text'; length: number }
   | { state: 'unavailable'; reason: string }
   | { state: 'failed'; reason: string }
@@ -119,6 +121,17 @@ export async function insertIntoChatGpt(prompt: string, mode?: 'append' | 'repla
   }
   const isChatGpt = /^com\.openai\.(codex|chat)$/.test(info.bundle)
   if (!isChatGpt) return { state: 'failed', reason: info.app ? `${info.app} is in front, not ChatGPT.` : 'ChatGPT didn\u2019t come to the front.' }
+  if ((!info.ok || !info.editable) && chatgptAutoPaste()) {
+    // ChatGPT hides its message box from Accessibility, but focuses it when it comes forward.
+    // With ChatGPT verified as the front app, paste once (never sends); clipboard restored if untouched.
+    const pasted = await runAx(
+      ['paste', '--exclude-pid', String(process.pid), '--allow-unexposed', '--expect-bundles', 'com.openai.codex,com.openai.chat', '--settle-ms', '350'],
+      prompt,
+      10000
+    )
+    if (pasted.ok) return { state: 'pasted', reason: '' }
+    return { state: 'failed', reason: pasted.reason || 'The paste into ChatGPT didn\u2019t go through.' }
+  }
   if (!info.ok || !info.editable) {
     return {
       state: 'unavailable',

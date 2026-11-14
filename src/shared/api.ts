@@ -72,6 +72,7 @@ export const IPC = {
 
 export type InsertResult =
   | { state: 'inserted'; mode: string }
+  | { state: 'pasted'; reason: string }
   | { state: 'has-text'; length: number }
   | { state: 'unavailable'; reason: string }
   | { state: 'failed'; reason: string }

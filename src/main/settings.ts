@@ -70,6 +70,15 @@ export function setMikoPreferences(text: string): boolean {
   return writeKey('mikoPreferences', text.replace(/\r/g, '').slice(0, 2000))
 }
 
+/** Paste prompts into ChatGPT automatically after bringing it forward (owner asked for this). */
+export function chatgptAutoPaste(): boolean {
+  return readAll().chatgptAutoPaste !== false
+}
+
+export function setChatgptAutoPaste(enabled: boolean): void {
+  writeKey('chatgptAutoPaste', enabled)
+}
+
 /** Selected-text assistant shortcut (Electron accelerator). */
 export const DEFAULT_SELECTION_SHORTCUT = 'Control+Option+S'
 export function selectionShortcut(): string {

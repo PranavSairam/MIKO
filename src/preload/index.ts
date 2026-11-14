@@ -72,7 +72,7 @@ const api: MikoApi = {
   openChatGpt: async (): Promise<OpenResult> => parseOpen(await ipcRenderer.invoke(IPC.openChatGpt)),
   chatgptInsert: async (prompt: string, mode?: 'append' | 'replace'): Promise<InsertResult> => {
     const r = (await ipcRenderer.invoke(IPC.chatgptInsert, String(prompt).slice(0, 8000), mode === 'append' || mode === 'replace' ? mode : undefined)) as InsertResult | null
-    if (r && (r.state === 'inserted' || r.state === 'has-text' || r.state === 'unavailable' || r.state === 'failed')) return r
+    if (r && (r.state === 'inserted' || r.state === 'pasted' || r.state === 'has-text' || r.state === 'unavailable' || r.state === 'failed')) return r
     return { state: 'failed', reason: 'No response.' }
   },
   listChats: async (): Promise<SavedChat[]> => parseChats(await ipcRenderer.invoke(IPC.chatsList)),

@@ -290,6 +290,8 @@ case "insert":
 
 case "paste":
     let text = stdinText()
+    // --settle-ms: give an app that was just activated time to focus its own input before pasting.
+    if let ms = flag("--settle-ms"), let wait = Double(ms) { spin(min(wait, 2000) / 1000) }
     let t = focused()
     var o = t.out
     if let ex = flag("--exclude-pid"), Int32(ex) == o.pid { fail("MIKO is in front. Click into the field you want first.", o) }

@@ -25,6 +25,8 @@ export type PanelEntry =
       variant?: 'mail'
       /** ChatGPT's box already has text: ask Append or Replace. */
       choose?: boolean
+      /** Auto-paste happened unchecked: offer the click + ⌃⌥V route. */
+      pasteAgain?: boolean
     }
   | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app' | 'free-text'; text: string; options: PanelChoice[]; payload?: string }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
@@ -85,6 +87,7 @@ interface TextPanelProps {
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
   onInsertChoice?: (id: number, mode: 'append' | 'replace' | null) => void
+  onPasteAgain?: (id: number) => void
   onSelectionAction?: (id: number, action: string, instruction: string) => void
   onUseClipboard?: () => void
   onResultCopy?: (id: number) => void
@@ -145,6 +148,7 @@ export function TextPanel({
   onDestination,
   onBridgeCancel,
   onInsertChoice,
+  onPasteAgain,
   onSelectionAction,
   onUseClipboard,
   onResultCopy,
@@ -295,6 +299,11 @@ export function TextPanel({
                     <button type="button" className="text-button" onClick={() => onUseChatGpt?.(entry.id)}>
                       {entry.variant === 'mail' ? 'Continue in ChatGPT' : 'Ask in ChatGPT'}
                     </button>
+                    {entry.pasteAgain ? (
+                      <button type="button" className="text-button secondary" onClick={() => onPasteAgain?.(entry.id)}>
+                        Paste again
+                      </button>
+                    ) : null}
                     {entry.choose ? (
                       <>
                         <button type="button" className="text-button" onClick={() => onInsertChoice?.(entry.id, 'append')}>

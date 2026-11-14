@@ -13,7 +13,7 @@ import { startKeys } from './keys'
 import { postToPet } from './pet-window'
 import { startListening, stopListening } from './speech'
 import { toggleSwitcher, warmSwitcher } from './switcher-window'
-import { assistantEnabled, setAssistantEnabled, setVoiceAutoExecute, voiceAutoExecute } from './settings'
+import { assistantEnabled, chatgptAutoPaste, setAssistantEnabled, setChatgptAutoPaste, setVoiceAutoExecute, voiceAutoExecute } from './settings'
 import { stopAllBridges } from './bridge'
 import { startSelectionShortcut } from './selection-shortcut'
 import { disarmPaste } from './selection'
@@ -105,6 +105,8 @@ if (!gotLock) {
         refresh()
         return result
       },
+      autoPaste: chatgptAutoPaste,
+      setAutoPaste: setChatgptAutoPaste,
       bridge: assistantEnabled,
       setBridge: (enabled) => {
         setAssistantEnabled(enabled)

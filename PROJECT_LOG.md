@@ -90,6 +90,18 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Auto-paste into ChatGPT
+- **Owner confirmed** the click + ⌃⌥V route lands text in ChatGPT, and asked for it to happen automatically.
+- **Now** ("type … in GPT", "hi gpt", Ask in ChatGPT, or Continue for mail requests):
+  - MIKO brings ChatGPT forward
+  - the helper checks ChatGPT (`com.openai.codex`/`chat`) is the front app
+  - waits 350 ms for ChatGPT to focus its own message box
+  - pastes once with ⌘V; never sends; clipboard restored only if untouched
+- **Status shown:** "Pasted into ChatGPT. MIKO can't read ChatGPT's box to double-check, so glance at it, then press Send." Plus **Paste again**, which arms the click + ⌃⌥V route if the text didn't land.
+- **No focus keys are sent:** in ChatGPT's Work/Codex mode, Esc-type keys can stop a running task.
+- **Turn it off:** paw menu → "Auto-paste into ChatGPT" (`chatgptAutoPaste`, default on). Off restores the armed click + ⌃⌥V flow.
+- typecheck passes, 126/126 tests pass, build passes. **Live: owner to try.**
+
 ### 2026-11-15: Messages to GPT, and free text that isn't a command
 - **Owner's screenshot:** "hi gpt" in MIKO produced the generic "I can walk, sit…" reply.
 - **Messages addressed to GPT** now go to the ChatGPT flow (arm, click the box, ⌃⌥V):
