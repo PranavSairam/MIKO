@@ -104,15 +104,48 @@ export function parseMailCommand(raw: string): MailIntent | null {
   }
 
   const search = new RegExp(`^(?:search|find)\\s+(?:my\\s+)?${MAIL}\\s+(?:for\\s+)?(.+)$`, 'i').exec(original)
-  if (search?.[1]) return { kind: 'search', query: cleanQuery(search[1]) }
+  if (search?.[1]) return { kind: 'search', query: withDate(search[1], (rest) => cleanQuery(rest)) }
+  const subject = new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?${MAIL}\\s+with\\s+(?:the\\s+)?subject\\s+(.+)$`, 'i').exec(original)
+  if (subject?.[1]) return { kind: 'search', query: withDate(subject[1], (rest) => operator('subject', rest)) }
   const from = new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?${MAIL}\\s+from\\s+(.+)$`, 'i').exec(original)
-  if (from?.[1]) {
-    const who = cleanQuery(from[1]).replace(/"/g, '')
-    return { kind: 'search', query: /\s/.test(who) ? `from:"${who}"` : `from:${who}` }
-  }
+  if (from?.[1]) return { kind: 'search', query: withDate(from[1], (rest) => operator('from', rest)) }
   const about = new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?${MAIL}\\s+(?:about|regarding|on)\\s+(.+)$`, 'i').exec(original)
-  if (about?.[1]) return { kind: 'search', query: cleanQuery(about[1]) }
+  if (about?.[1]) return { kind: 'search', query: withDate(about[1], (rest) => cleanQuery(rest)) }
   return null
+}
+
+function operator(name: string, raw: string): string {
+  const value = cleanQuery(raw).replace(/"/g, '')
+  if (!value) return ''
+  return /\s/.test(value) ? `${name}:"${value}"` : `${name}:${value}`
+}
+
+const RELATIVE: Record<string, string> = {
+  today: 'newer_than:1d',
+  yesterday: 'newer_than:2d older_than:1d',
+  'this week': 'newer_than:7d',
+  'last week': 'newer_than:7d',
+  'past week': 'newer_than:7d',
+  'this month': 'newer_than:30d',
+  'last month': 'newer_than:30d',
+  'past month': 'newer_than:30d'
+}
+
+/** Splits a trailing date phrase ("last week", "before 2026-01-31") into a Gmail date clause. */
+function withDate(raw: string, build: (rest: string) => string): string {
+  const text = raw.trim()
+  const relative = /(?:^|\s+)(?:from\s+|in\s+|on\s+)?(today|yesterday|(?:this|last|past)\s+(?:week|month))$/i.exec(text)
+  const absolute = /(?:^|\s+)(before|after)\s+(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/i.exec(text)
+  let clause = ''
+  let rest = text
+  if (relative) {
+    clause = RELATIVE[relative[1].toLowerCase().replace(/\s+/g, ' ')] ?? ''
+    rest = text.slice(0, relative.index)
+  } else if (absolute) {
+    clause = `${absolute[1].toLowerCase()}:${absolute[2]}/${absolute[3].padStart(2, '0')}/${absolute[4].padStart(2, '0')}`
+    rest = text.slice(0, absolute.index)
+  }
+  return [build(rest), clause].filter(Boolean).join(' ')
 }
 
 export function cleanQuery(raw: string): string {

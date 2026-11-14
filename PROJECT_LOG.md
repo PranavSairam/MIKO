@@ -90,6 +90,35 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Milestone 2, MIKO mailbox
+**Provider:** Gmail, through the existing official OAuth provider (`gmail.readonly`, PKCE loopback). Tokens and client secret are encrypted with safeStorage/Keychain in userData. Nothing is stored in Git. The setup form is in the Mail tab; steps are under "Gmail setup" below.
+
+**Added this milestone**
+- **Searches by sender, subject and date**, typed or spoken (`parseMailCommand`, tested):
+  - "mail with subject quarterly report" → `subject:"quarterly report"`
+  - "emails from Imran last week" → `from:Imran newer_than:7d`
+  - "mail about interview today", "search mail invoice this month"
+  - "search mail receipts before 2026-01-31" → `before:2026/01/31`; "… after 2026/03/01"
+  - "mail from yesterday"
+  - The search box hint shows `from:`, `subject:` and `after:`; Gmail operators typed there pass straight through to Gmail.
+- **Partial results:** when one account fails and others load, rows stay visible under a "Partial results. …" banner. With no rows, the error stands alone.
+- **Email content is untrusted data:** HTML is sanitised and shown in a sandboxed, CSP-locked iframe; scripts, remote images and links are blocked. "Important" is classified by Gmail's own flag plus local rules, **never by a model**, so instructions inside a message can't change classification.
+
+**Browser-session provider: investigated, not built**
+- Google has blocked Google-account sign-in from embedded browser frameworks (CEF/Electron) since 2021-01-04 ("can't differentiate a legitimate sign-in from a MITM attack"); its guidance is browser-based OAuth. A MIKO-embedded Gmail session would hit that block.
+- Automating the Gmail web UI would also be fragile and is unsupported. Official OAuth stays the path.
+- Outlook personal accounts could use Microsoft Graph delegated `Mail.Read` (public client, no secret), but that needs an app registration. It's only worth building if the owner uses Outlook.
+
+**Verification**
+- **Mocked** (dev preview mailbox in the real app):
+  - "emails from Imran last week" → 7 rows, all from Imran, within 7 days
+  - "mail with subject invoice" → 4 rows, all invoice subjects
+  - "… receipt before 2026-11-12" → only earlier mail
+  - Earlier mocked checks (latest 10, Load more, Unread, Important reasons, deep search, rapid search, reader sanitising, Back, "open the second email", expired sign-in) still apply.
+- typecheck passes, 117/117 tests pass, build passes.
+- **Real-account checks: PENDING.** No Gmail account is connected in MIKO; Google Cloud registration is waiting on the owner.
+- **Known:** while no mailbox is connected, mail commands hand off to the ChatGPT app (owner's choice: "just use mail from my gpt"). The Mail tab still shows the setup form.
+
 ### 2026-11-15: Milestone 1, automatic ChatGPT prompt insertion
 **Control:** on a ChatGPT card, **Ask in ChatGPT** (it was "Copy and open ChatGPT"). "Continue in ChatGPT" on mail requests uses the same path.
 

@@ -45,6 +45,16 @@ describe('parseMailCommand', () => {
     assert.deepEqual(parseMailCommand('Show mail from Imran Khan.'), { kind: 'search', query: 'from:"Imran Khan"' })
     assert.deepEqual(parseMailCommand('mail about interview'), { kind: 'search', query: 'interview' })
   })
+  it('reads subject and date searches', () => {
+    assert.deepEqual(parseMailCommand('mail with subject quarterly report'), { kind: 'search', query: 'subject:"quarterly report"' })
+    assert.deepEqual(parseMailCommand('emails with subject invoice'), { kind: 'search', query: 'subject:invoice' })
+    assert.deepEqual(parseMailCommand('emails from Imran last week'), { kind: 'search', query: 'from:Imran newer_than:7d' })
+    assert.deepEqual(parseMailCommand('mail about interview today'), { kind: 'search', query: 'interview newer_than:1d' })
+    assert.deepEqual(parseMailCommand('search mail invoice this month'), { kind: 'search', query: 'invoice newer_than:30d' })
+    assert.deepEqual(parseMailCommand('search mail receipts before 2026-01-31'), { kind: 'search', query: 'receipts before:2026/01/31' })
+    assert.deepEqual(parseMailCommand('emails from Asha after 2026/03/01'), { kind: 'search', query: 'from:Asha after:2026/03/01' })
+    assert.deepEqual(parseMailCommand('mail from yesterday'), { kind: 'search', query: 'newer_than:2d older_than:1d' })
+  })
   it('reads references to displayed results', () => {
     assert.deepEqual(parseMailCommand('open the second email'), { kind: 'open', index: 2 })
     assert.deepEqual(parseMailCommand('read email 3'), { kind: 'open', index: 3 })

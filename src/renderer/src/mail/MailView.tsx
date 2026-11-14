@@ -76,7 +76,7 @@ export function MailView({ state, actions, onAskChatGpt, onCommand }: MailViewPr
         <div className="mail-search">
           <input
             value={state.query}
-            placeholder="Search all mail"
+            placeholder="Search all mail — words, from:name, subject:word, after:2026/01/31"
             aria-label="Search mail"
             spellCheck={false}
             onChange={(event) => actions.setQuery(event.target.value)}
@@ -167,8 +167,8 @@ export function MailView({ state, actions, onAskChatGpt, onCommand }: MailViewPr
       ) : (
         <div className="mail-list" ref={listRef} onScroll={(event) => actions.rememberScroll(event.currentTarget.scrollTop)}>
           {state.error ? (
-            <div className="mail-state small">
-              <p>{state.error}</p>
+            <div className={state.items.length ? 'mail-banner' : 'mail-state small'} role="alert">
+              <p>{state.items.length ? `Partial results. ${state.error}` : state.error}</p>
               <button type="button" className="glass-button" onClick={actions.refresh}>
                 Try again
               </button>

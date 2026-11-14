@@ -86,6 +86,18 @@ export function previewMatches(message: MailMessage, query: string): boolean {
     if (lower === 'in:inbox') return message.labels.includes('INBOX')
     if (lower === 'is:unread') return message.unread
     if (lower === '-in:spam' || lower === '-in:trash') return true
+    const now = Date.UTC(2026, 10, 14, 9, 0)
+    const days = /^(newer_than|older_than):(\d+)d$/.exec(lower)
+    if (days) {
+      const age = now - message.date
+      return days[1] === 'newer_than' ? age <= Number(days[2]) * 86_400_000 : age > Number(days[2]) * 86_400_000
+    }
+    const on = /^(after|before):(\d{4})\/(\d{2})\/(\d{2})$/.exec(lower)
+    if (on) {
+      const t = Date.UTC(Number(on[2]), Number(on[3]) - 1, Number(on[4]))
+      return on[1] === 'after' ? message.date >= t : message.date < t
+    }
+    if (lower.startsWith('subject:')) return message.subject.toLowerCase().includes(lower.slice(8).replace(/"/g, ''))
     if (lower.startsWith('from:')) {
       const who = lower.slice(5).replace(/"/g, '')
       return `${message.from} ${message.fromEmail}`.toLowerCase().includes(who)
