@@ -97,7 +97,8 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 - **Connected account** is now shown in the filter row ("Connected: <email>").
 - Refresh, Load more, Disconnect (Accounts menu), Reconnect banner, empty states and stale-search handling come from the mail panel work (32ecac6).
 - **Verified:** the setup form appears in the real app; an invalid Client ID is refused with a message and nothing is written. typecheck passes, 113/113 tests pass, build passes.
-- **Live Gmail checks: waiting for the owner** to do the Google Cloud setup and sign in (steps under "Gmail setup" below).
+- **Live Gmail checks: waiting for the owner** to do the Google Cloud setup and sign in (steps under "Gmail setup" below). The owner's screenshot showed the setup form still empty.
+- **Fix from that screenshot:** the glass panel let the window behind show through (ChatGPT text overlapped the form). The glass surface is now 97% opaque (was 86%).
 
 ### 2026-11-14: Session 1, MIKO assistant (generalised Codex bridge)
 **Commit-hash correction:** git history shows the bridge proof of concept is **`a68f0dc`** ("Add opt-in ChatGPT bridge proof of concept (Codex CLI)"). The `9b54e46` given in that turn's summary was wrong and doesn't exist. The mail panel is `32ecac6`.
