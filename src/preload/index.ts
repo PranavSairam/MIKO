@@ -212,6 +212,13 @@ const api: MikoApi = {
   mailList: async (request: MailListRequest) => (await ipcRenderer.invoke(IPC.mailList, request)) as MailListResult | null,
   mailRead: async (key: string) => (await ipcRenderer.invoke(IPC.mailRead, String(key))) as MailReadResult,
   mailOpenOriginal: async (key: string) => (await ipcRenderer.invoke(IPC.mailOpenOriginal, String(key))) === true,
+  mailSetup: async (clientId: string, clientSecret: string) => {
+    const r = (await ipcRenderer.invoke(IPC.mailSetup, { clientId: String(clientId), clientSecret: String(clientSecret) })) as {
+      ok?: unknown
+      reason?: unknown
+    } | null
+    return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '' }
+  },
   mailRules: async () => (await ipcRenderer.invoke(IPC.mailRules)) as ImportanceRules | null,
   mailSetRules: async (rules: ImportanceRules) => (await ipcRenderer.invoke(IPC.mailSetRules, rules)) as ImportanceRules | null,
   openSwitcher: (): void => {

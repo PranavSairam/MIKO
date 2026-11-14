@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
 import {
   DEFAULT_RULES,
+  checkGoogleClient,
   classifyImportance,
   gmailQuery,
   mergeNewest,
@@ -143,5 +144,21 @@ describe('Gmail parsing', () => {
     assert.equal(m.html, '<b>Hi</b>')
     assert.equal(m.cc, 'boss@x.com')
     assert.equal(m.date, 1700000000000)
+  })
+})
+
+describe('checkGoogleClient', () => {
+  it('accepts a Desktop app client id and secret', () => {
+    assert.deepEqual(checkGoogleClient(' 123456789012-abc123def456.apps.googleusercontent.com ', ' GOCSPX-AbC_12-xyz '), {
+      ok: true,
+      clientId: '123456789012-abc123def456.apps.googleusercontent.com',
+      clientSecret: 'GOCSPX-AbC_12-xyz'
+    })
+  })
+  it('rejects anything that is not a Google OAuth client', () => {
+    assert.equal(checkGoogleClient('my-client', 'GOCSPX-x').ok, false)
+    assert.equal(checkGoogleClient('123-abc.apps.googleusercontent.com.evil.com', 'GOCSPX-x').ok, false)
+    assert.equal(checkGoogleClient('123-abc.apps.googleusercontent.com', '').ok, false)
+    assert.equal(checkGoogleClient('123-abc.apps.googleusercontent.com', 'has spaces inside').ok, false)
   })
 })

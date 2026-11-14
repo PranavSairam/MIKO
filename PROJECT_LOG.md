@@ -90,6 +90,15 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, Gmail connection setup made in-app
+- **New:** the Mail tab's Connect mail screen has a **Gmail setup** form (Client ID + Client secret).
+  - Values are checked (`checkGoogleClient`: `…apps.googleusercontent.com` and a token-shaped secret).
+  - Main stores them encrypted with safeStorage in `userData/mail-oauth.enc` (0600). Nothing is stored if Keychain encryption is unavailable.
+- **Connected account** is now shown in the filter row ("Connected: <email>").
+- Refresh, Load more, Disconnect (Accounts menu), Reconnect banner, empty states and stale-search handling come from the mail panel work (32ecac6).
+- **Verified:** the setup form appears in the real app; an invalid Client ID is refused with a message and nothing is written. typecheck passes, 113/113 tests pass, build passes.
+- **Live Gmail checks: waiting for the owner** to do the Google Cloud setup and sign in (steps under "Gmail setup" below).
+
 ### 2026-11-14: Session 1, MIKO assistant (generalised Codex bridge)
 **Commit-hash correction:** git history shows the bridge proof of concept is **`a68f0dc`** ("Add opt-in ChatGPT bridge proof of concept (Codex CLI)"). The `9b54e46` given in that turn's summary was wrong and doesn't exist. The mail panel is `32ecac6`.
 
@@ -217,10 +226,8 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 4. Audience → **Test users** → add every Gmail you'll connect (e.g. pranavsairamanc@gmail.com).
 5. Data access → Add or remove scopes → add `https://www.googleapis.com/auth/gmail.readonly` → Update → Save.
 6. Clients → **Create client** → type **Desktop app**, name "MIKO desktop" → Create, then copy the Client ID and Client secret.
-7. Create `~/Library/Application Support/MIKO/mail-oauth.json`:
-   `{"google": {"clientId": "<…>.apps.googleusercontent.com", "clientSecret": "<…>"}}`
-   then run `chmod 600` on it.
-8. Restart MIKO → Mail tab → **Connect account**. In the browser, pick the account → "Google hasn't verified this app" → Continue (it's your own app in Testing) → allow. The tab says "MIKO is connected".
+7. In MIKO: Mail tab → paste the **Client ID** and **Client secret** → **Save Gmail setup**. It's stored encrypted with safeStorage/Keychain as `userData/mail-oauth.enc`. (The older `mail-oauth.json` file and `MIKO_GOOGLE_CLIENT_*` env vars still work.)
+8. Mail tab → **Connect account**. In the browser, pick the account → "Google hasn't verified this app" → Continue (it's your own app in Testing) → allow. The tab says "MIKO is connected".
 - **Limitation:** while the Google app is in *Testing*, Google expires refresh tokens for this scope after about 7 days, so MIKO will show **Reconnect**. Publishing it needs Google's restricted-scope verification.
 
 **What was built**

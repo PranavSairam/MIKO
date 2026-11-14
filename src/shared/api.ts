@@ -29,6 +29,7 @@ export const IPC = {
   mailRead: 'miko:mail-read',
   mailOpenOriginal: 'miko:mail-open-original',
   mailRules: 'miko:mail-rules',
+  mailSetup: 'miko:mail-setup',
   mailSetRules: 'miko:mail-set-rules',
   chatsAdd: 'miko:chats-add',
   chatsRename: 'miko:chats-rename',
@@ -298,6 +299,8 @@ export interface MikoApi {
   mailList: (request: MailListRequest) => Promise<MailListResult | null>
   mailRead: (key: string) => Promise<MailReadResult>
   mailOpenOriginal: (key: string) => Promise<boolean>
+  /** Save the owner's Google OAuth Desktop client (encrypted in the main process). */
+  mailSetup: (clientId: string, clientSecret: string) => Promise<{ ok: boolean; reason: string }>
   mailRules: () => Promise<ImportanceRules | null>
   mailSetRules: (rules: ImportanceRules) => Promise<ImportanceRules | null>
   /** Show the running-apps switcher above MIKO. */

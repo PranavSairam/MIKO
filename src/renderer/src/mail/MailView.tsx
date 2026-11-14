@@ -58,10 +58,7 @@ export function MailView({ state, actions, onAskChatGpt, onCommand }: MailViewPr
             </button>
           </>
         ) : (
-          <>
-            <p>Gmail isn’t set up on this Mac yet. It needs a one-time Google Cloud setup (see PROJECT_LOG.md, “Gmail setup”).</p>
-            <p className="mail-muted">Then put the client file at {status.setupPath} and come back here.</p>
-          </>
+          <GoogleSetup onSaved={() => void actions.refreshStatus()} />
         )}
         {!status.secureStorage ? <p className="mail-warn">Secure storage isn’t available, so MIKO won’t keep a sign-in.</p> : null}
         <p className="mail-muted">Or let ChatGPT check it: MIKO copies a read-only request for the ChatGPT app. MIKO won’t see the mail that way.</p>
@@ -126,7 +123,10 @@ export function MailView({ state, actions, onAskChatGpt, onCommand }: MailViewPr
             Rules
           </button>
         ) : null}
-        <span className="mail-scope">{state.activeQuery ? `Search: ${state.activeQuery}` : state.filter === 'recent' ? 'Inbox · newest first' : 'Inbox'}</span>
+        <span className="mail-scope">
+          {status.accounts.length === 1 ? `Connected: ${status.accounts[0].email} · ` : `${status.accounts.length} accounts · `}
+          {state.activeQuery ? `Search: ${state.activeQuery}` : state.filter === 'recent' ? 'Inbox · newest first' : 'Inbox'}
+        </span>
       </div>
       {showAccounts ? (
         <div className="mail-pop">
@@ -304,6 +304,55 @@ function RulesEditor({ rules, onSave }: { rules: ImportanceRules; onSave: (rules
       >
         Save rules
       </button>
+    </div>
+  )
+}
+
+function GoogleSetup({ onSaved }: { onSaved: () => void }) {
+  const [clientId, setClientId] = useState('')
+  const [secret, setSecret] = useState('')
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+  return (
+    <div className="mail-setup">
+      <p>Gmail needs a one-time Google Cloud setup (steps in PROJECT_LOG.md, “Gmail setup”). Then paste your Desktop app client here.</p>
+      <input
+        value={clientId}
+        placeholder="Client ID (….apps.googleusercontent.com)"
+        aria-label="Google Client ID"
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => setClientId(e.target.value)}
+      />
+      <input
+        value={secret}
+        type="password"
+        placeholder="Client secret (GOCSPX-…)"
+        aria-label="Google Client secret"
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => setSecret(e.target.value)}
+      />
+      <button
+        type="button"
+        className="glass-button primary"
+        disabled={saving || !clientId.trim() || !secret.trim()}
+        onClick={() => {
+          setSaving(true)
+          void window.miko.mailSetup(clientId, secret).then((r) => {
+            setSaving(false)
+            setMessage(r.ok ? 'Saved securely in your Keychain.' : r.reason)
+            if (r.ok) {
+              setSecret('')
+              onSaved()
+            }
+          })
+        }}
+      >
+        Save Gmail setup
+      </button>
+      <p className="mail-muted">Stored encrypted on this Mac (Keychain). MIKO only asks Google for read-only Gmail access.</p>
+      {message ? <p className="mail-notice" role="status">{message}</p> : null}
     </div>
   )
 }

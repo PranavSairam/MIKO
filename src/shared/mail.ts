@@ -221,3 +221,19 @@ export function mergeNewest(
   }
   return { take, rest }
 }
+
+/** Validates a Google OAuth "Desktop app" client pasted by the owner. */
+export function checkGoogleClient(
+  rawId: string,
+  rawSecret: string
+): { ok: true; clientId: string; clientSecret: string } | { ok: false; reason: string } {
+  const clientId = rawId.trim()
+  const clientSecret = rawSecret.trim()
+  if (!/^[0-9]{6,20}-[a-z0-9]{8,64}\.apps\.googleusercontent\.com$/.test(clientId)) {
+    return { ok: false, reason: 'That doesn’t look like a Google Client ID (it ends in .apps.googleusercontent.com).' }
+  }
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(clientSecret)) {
+    return { ok: false, reason: 'Paste the Client secret shown next to the Client ID (it usually starts with GOCSPX-).' }
+  }
+  return { ok: true, clientId, clientSecret }
+}

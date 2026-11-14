@@ -67,6 +67,17 @@ export function googleClient(): OAuthClient | null {
   const envId = process.env['MIKO_GOOGLE_CLIENT_ID']
   const envSecret = process.env['MIKO_GOOGLE_CLIENT_SECRET']
   if (envId && envSecret) return { clientId: envId, clientSecret: envSecret }
+  // Pasted in the Mail tab: encrypted with safeStorage (Keychain).
+  try {
+    if (existsSync(clientFile()) && canStoreSecurely()) {
+      const saved = JSON.parse(safeStorage.decryptString(readFileSync(clientFile()))) as Partial<OAuthClient>
+      if (typeof saved.clientId === 'string' && typeof saved.clientSecret === 'string') {
+        return { clientId: saved.clientId, clientSecret: saved.clientSecret }
+      }
+    }
+  } catch {
+    // Fall through to the plain file.
+  }
   try {
     const parsed = JSON.parse(readFileSync(join(app.getPath('userData'), 'mail-oauth.json'), 'utf8')) as {
       google?: { clientId?: unknown; clientSecret?: unknown }
@@ -80,6 +91,25 @@ export function googleClient(): OAuthClient | null {
     // Not set up yet.
   }
   return null
+}
+
+function clientFile(): string {
+  return join(app.getPath('userData'), 'mail-oauth.enc')
+}
+
+/** Store the owner's Google OAuth client, encrypted. Refuses when encryption is unavailable. */
+export function saveGoogleClient(client: OAuthClient): boolean {
+  if (!canStoreSecurely()) return false
+  try {
+    writeFileSync(clientFile(), safeStorage.encryptString(JSON.stringify(client)), { mode: 0o600 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function clearGoogleClient(): void {
+  rmSync(clientFile(), { force: true })
 }
 
 export function oauthConfigPath(): string {

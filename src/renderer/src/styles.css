@@ -980,3 +980,24 @@ pre.mail-body.text {
   min-height: 60px;
   resize: none;
 }
+
+.mail-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 440px;
+}
+
+.mail-setup p {
+  margin: 0;
+}
+
+.mail-setup input {
+  background: rgba(255, 255, 255, 0.07);
+  color: #f6efe6;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+}

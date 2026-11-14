@@ -3,7 +3,7 @@ import { IPC } from '../../shared/api'
 import { cleanQuery, parseRules } from '../../shared/mail'
 import { isTrustedSender } from '../pet-window'
 import { mailRules, setMailRules } from '../settings'
-import { connectAccount, disconnectAccount, listMail, mailStatus, openOriginal, readMail } from './service'
+import { connectAccount, disconnectAccount, listMail, mailStatus, openOriginal, readMail, setupGoogle } from './service'
 
 /** Mail IPC. Only the pet window may call; every argument is re-validated here. */
 export function registerMailIpc(): void {
@@ -39,6 +39,14 @@ export function registerMailIpc(): void {
   ipcMain.handle(IPC.mailOpenOriginal, (event, key: unknown) =>
     trusted(event) && typeof key === 'string' && key.length < 300 ? openOriginal(key) : false
   )
+  ipcMain.handle(IPC.mailSetup, (event, payload: unknown) => {
+    if (!trusted(event) || !payload || typeof payload !== 'object') return { ok: false, reason: 'Not allowed.' }
+    const { clientId, clientSecret } = payload as { clientId?: unknown; clientSecret?: unknown }
+    if (typeof clientId !== 'string' || typeof clientSecret !== 'string' || clientId.length > 200 || clientSecret.length > 200) {
+      return { ok: false, reason: 'Not allowed.' }
+    }
+    return setupGoogle(clientId, clientSecret)
+  })
   ipcMain.handle(IPC.mailRules, (event) => (trusted(event) ? mailRules() : null))
   ipcMain.handle(IPC.mailSetRules, (event, rules: unknown) => {
     if (!trusted(event)) return null

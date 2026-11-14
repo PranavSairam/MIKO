@@ -15,7 +15,8 @@ import {
 import { mailRules } from '../settings'
 import { HttpError, ReconnectError, getMessage, getSummary, listIds, refresh, revoke, signIn } from './google'
 import { PREVIEW_ACCOUNTS, previewMatches, previewMessages } from './preview'
-import { canStoreSecurely, googleClient, loadAccounts, oauthConfigPath, saveAccounts } from './store'
+import { canStoreSecurely, googleClient, loadAccounts, oauthConfigPath, saveAccounts, saveGoogleClient } from './store'
+import { checkGoogleClient } from '../../shared/mail'
 
 /** Mail for the panel: accounts, paged lists across accounts, read-only message view. */
 
@@ -71,6 +72,17 @@ export function mailStatus(): MailStatus {
     secureStorage: canStoreSecurely(),
     setupPath: oauthConfigPath()
   }
+}
+
+/** Save the Google OAuth client pasted in the Mail tab (encrypted). */
+export function setupGoogle(clientId: string, clientSecret: string): { ok: boolean; reason: string } {
+  if (PREVIEW) return { ok: false, reason: 'Preview mode uses sample mail only.' }
+  const checked = checkGoogleClient(clientId, clientSecret)
+  if (!checked.ok) return checked
+  if (!saveGoogleClient({ clientId: checked.clientId, clientSecret: checked.clientSecret })) {
+    return { ok: false, reason: 'Secure storage (Keychain) isn\u2019t available, so MIKO won\u2019t store it.' }
+  }
+  return { ok: true, reason: '' }
 }
 
 export async function connectAccount(loginHint?: string): Promise<{ ok: boolean; reason: string; email?: string }> {
