@@ -2,7 +2,11 @@ import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
 import {
   DEFAULT_RULES,
+  buildQuery,
+  categorize,
   checkGoogleClient,
+  inFilter,
+  parseCorrections,
   classifyImportance,
   gmailQuery,
   mergeNewest,
@@ -68,18 +72,85 @@ describe('parseMailCommand', () => {
     assert.deepEqual(parseMailCommand('did I get any important emails?'), { kind: 'important', unreadOnly: false })
     assert.equal(parseMailCommand('how do I write a polite email?'), null)
   })
+  it('parses tabs and reply commands', () => {
+    assert.deepEqual(parseMailCommand('show action needed'), { kind: 'category', category: 'action' })
+    assert.deepEqual(parseMailCommand('important fyi emails'), { kind: 'category', category: 'fyi' })
+    assert.deepEqual(parseMailCommand('show promotions'), { kind: 'category', category: 'promotions' })
+    assert.deepEqual(parseMailCommand('updates mail'), { kind: 'category', category: 'updates' })
+    assert.deepEqual(parseMailCommand('reply to the second email'), { kind: 'reply', index: 2, instruction: '' })
+    assert.deepEqual(parseMailCommand('Reply to email 3 saying I will send it tomorrow.'), { kind: 'reply', index: 3, instruction: 'I will send it tomorrow' })
+    assert.deepEqual(parseMailCommand('reply to the last mail'), { kind: 'reply', index: -1, instruction: '' })
+    assert.deepEqual(parseMailCommand('reply to this email'), { kind: 'reply', index: 0, instruction: '' })
+    assert.deepEqual(parseMailCommand('draft a reply to the first email'), { kind: 'reply', index: 1, instruction: '' })
+    assert.deepEqual(parseMailCommand('reply'), { kind: 'reply', index: 0, instruction: '' })
+    assert.deepEqual(parseMailCommand('reply saying thursday works'), { kind: 'reply', index: 0, instruction: 'thursday works' })
+    assert.deepEqual(parseMailCommand('cancel reply'), { kind: 'cancel-reply' })
+    assert.deepEqual(parseMailCommand('discard the draft'), { kind: 'cancel-reply' })
+    assert.equal(parseMailCommand('reply to the purple email'), null)
+  })
   it('ignores app and other commands', () => {
     for (const t of ['open mail', 'open calculator', 'move left', 'ask gpt what is mail']) assert.equal(parseMailCommand(t), null, t)
   })
 })
 
 describe('gmailQuery', () => {
-  it('limits recent and unread to the inbox; searches everywhere except spam and trash', () => {
-    assert.equal(gmailQuery('recent', ''), 'in:inbox')
+  it('limits tabs to the inbox; searches everywhere except spam and trash', () => {
+    assert.equal(gmailQuery('all', ''), 'in:inbox')
     assert.equal(gmailQuery('unread', ''), 'in:inbox is:unread')
-    assert.equal(gmailQuery('important', ''), 'in:inbox')
-    assert.equal(gmailQuery('recent', 'invoice'), 'invoice -in:spam -in:trash')
+    assert.equal(gmailQuery('action', ''), 'in:inbox')
+    assert.equal(gmailQuery('fyi', ''), 'in:inbox')
+    assert.equal(gmailQuery('updates', ''), 'in:inbox category:updates')
+    assert.equal(gmailQuery('promotions', ''), 'in:inbox category:promotions')
+    assert.equal(gmailQuery('all', 'invoice'), 'invoice -in:spam -in:trash')
     assert.equal(gmailQuery('unread', 'from:Imran'), 'from:Imran is:unread -in:spam -in:trash')
+    assert.equal(gmailQuery('promotions', 'sale'), 'sale category:promotions -in:spam -in:trash')
+  })
+})
+
+describe('buildQuery', () => {
+  it('turns Advanced search fields into Gmail operators', () => {
+    assert.equal(buildQuery({ words: 'tax refund', from: 'Imran Khan', subject: 'invoice', after: '2026-01-31', before: '2026-03-01' }), 'tax refund from:"Imran Khan" subject:invoice after:2026/01/31 before:2026/03/01')
+    assert.equal(buildQuery({ from: 'asha@example.org' }), 'from:asha@example.org')
+    assert.equal(buildQuery({ after: '31/01/2026', words: ' ' }), '')
+  })
+})
+
+describe('categorize', () => {
+  it('uses Gmail categories, action cues and the importance flag, with reasons', () => {
+    const promo = categorize(msg({ subject: 'Sale ends tonight, invoice inside', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] }), DEFAULT_RULES)
+    assert.deepEqual([promo.category, promo.certain, promo.source], ['promotions', true, 'gmail'])
+    assert.equal(categorize(msg({ labels: ['INBOX', 'CATEGORY_UPDATES'], subject: 'Your order shipped' }), DEFAULT_RULES).category, 'updates')
+    const bill = categorize(msg({ labels: ['INBOX', 'CATEGORY_UPDATES'], subject: 'Invoice #442 overdue' }), DEFAULT_RULES)
+    assert.deepEqual([bill.category, bill.certain], ['action', false])
+    const ask = categorize(msg({ subject: 'Report due Friday', snippet: 'Could you send it?' }), DEFAULT_RULES)
+    assert.deepEqual([ask.category, ask.certain], ['action', true])
+    assert.match(ask.reason, /Direct request/)
+    assert.match(ask.reason, /Deadline/)
+    const one = categorize(msg({ subject: 'Report due Friday' }), DEFAULT_RULES)
+    assert.deepEqual([one.category, one.certain], ['action', false])
+    const fyi = categorize(msg({ labels: ['INBOX', 'IMPORTANT'], subject: 'Notes from the sync' }), DEFAULT_RULES)
+    assert.deepEqual([fyi.category, fyi.certain], ['fyi', true])
+    assert.equal(categorize(msg({ subject: 'FreshNet launch' }), { ...DEFAULT_RULES, keywords: ['freshnet'] }).category, 'fyi')
+    const other = categorize(msg({ subject: 'Lunch?' }), DEFAULT_RULES)
+    assert.deepEqual([other.category, other.certain], ['other', false])
+    assert.equal(categorize(msg({ snippet: 'Could you join?', directToMe: false }), DEFAULT_RULES).category, 'other')
+  })
+  it('applies the owner’s corrections, per message before per sender', () => {
+    const m = msg({ subject: 'Lunch?' })
+    const corrections = parseCorrections({ messages: { [m.key]: 'action' }, senders: { 'imran@co.com': 'promotions' } })
+    assert.deepEqual(categorize(m, DEFAULT_RULES, corrections), { category: 'action', reason: 'You set this', certain: true, source: 'you' })
+    assert.equal(categorize(msg({ key: 'gmail:me@x.com:2' }), DEFAULT_RULES, corrections).category, 'promotions')
+  })
+  it('drops malformed corrections', () => {
+    assert.deepEqual(parseCorrections({ messages: { bad: 'action', 'gmail:me@x.com:1': 'nope' }, senders: { 'Upper@X.com': 'fyi', 'a@b.c': 'fyi' } }), {
+      messages: {},
+      senders: { 'a@b.c': 'fyi' }
+    })
+  })
+  it('keeps every message in All mail and Unread by state', () => {
+    assert.equal(inFilter('all', msg(), 'other'), true)
+    assert.equal(inFilter('unread', msg({ unread: false }), 'action'), false)
+    assert.equal(inFilter('action', msg(), 'fyi'), false)
   })
 })
 

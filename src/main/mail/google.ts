@@ -121,13 +121,19 @@ export async function getSummary(token: string, account: string, id: string): Pr
   const params = new URLSearchParams({ format: 'metadata' })
   for (const h of ['From', 'To', 'Cc', 'Subject', 'Date']) params.append('metadataHeaders', h)
   const raw = (await getJson(`${API}/messages/${encodeURIComponent(id)}?${params}`, token)) as GmailRaw
-  const { html: _h, text: _t, cc: _c, ...summary } = parseGmailMessage(raw, account)
+  const { html: _h, text: _t, cc: _c, replyTo: _r, ...summary } = parseGmailMessage(raw, account)
   return summary
 }
 
 export async function getMessage(token: string, account: string, id: string): Promise<MailMessage> {
   const raw = (await getJson(`${API}/messages/${encodeURIComponent(id)}?format=full`, token)) as GmailRaw
   return parseGmailMessage(raw, account)
+}
+
+/** Every message of a thread, oldest first (threads.get never changes labels). */
+export async function getThread(token: string, account: string, threadId: string): Promise<MailMessage[]> {
+  const raw = (await getJson(`${API}/threads/${encodeURIComponent(threadId)}?format=full`, token)) as { messages?: GmailRaw[] }
+  return (raw.messages ?? []).map((m) => parseGmailMessage(m, account)).sort((a, b) => a.date - b.date)
 }
 
 export class HttpError extends Error {

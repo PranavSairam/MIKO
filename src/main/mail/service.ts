@@ -2,19 +2,23 @@ import { app, shell } from 'electron'
 import { gmailWebUrl } from '../../shared/gmail'
 import {
   PAGE_SIZE,
-  classifyImportance,
+  categorize,
   gmailQuery,
+  inFilter,
   mergeNewest,
-  type Importance,
+  type Categorized,
   type ImportanceRules,
   type MailAccount,
+  type MailCorrections,
   type MailFilter,
   type MailMessage,
-  type MailSummary
+  type MailSummary,
+  type ThreadEntry
 } from '../../shared/mail'
-import { mailRules } from '../settings'
-import { HttpError, ReconnectError, getMessage, getSummary, listIds, refresh, revoke, signIn } from './google'
-import { PREVIEW_ACCOUNTS, previewMatches, previewMessages } from './preview'
+import { bodyText } from '../../shared/mail-reply'
+import { mailCorrections, mailRules, setMailCorrections } from '../settings'
+import { HttpError, ReconnectError, getMessage, getSummary, getThread, listIds, refresh, revoke, signIn } from './google'
+import { PREVIEW_ACCOUNTS, previewMatches, previewMessages, previewThread } from './preview'
 import { canStoreSecurely, googleClient, loadAccounts, oauthConfigPath, saveAccounts, saveGoogleClient } from './store'
 import { checkGoogleClient } from '../../shared/mail'
 
@@ -39,7 +43,7 @@ export interface ListRequest {
   unreadOnly: boolean
 }
 
-export type ListedMail = MailSummary & { importance: Importance }
+export type ListedMail = MailSummary & { category: Categorized }
 
 export interface ListResult {
   listId: string
@@ -154,12 +158,12 @@ async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promi
 }
 
 /** Fetch one more page for an account, already classified and filtered. */
-async function fetchPage(email: string, request: ListRequest, cursor: Cursor, rules: ImportanceRules): Promise<void> {
+async function fetchPage(email: string, request: ListRequest, cursor: Cursor, rules: ImportanceRules, corrections: MailCorrections): Promise<void> {
   const keep = (m: MailSummary): ListedMail | null => {
-    const importance = classifyImportance(m, rules)
-    if (request.filter === 'important' && !importance.important) return null
+    const category = categorize(m, rules, corrections)
+    if (!inFilter(request.filter, m, category.category)) return null
     if (request.unreadOnly && !m.unread) return null
-    return { ...m, importance }
+    return { ...m, category }
   }
   if (PREVIEW) {
     if (email === PREVIEW_EXPIRED) throw new ReconnectError(email)
@@ -170,7 +174,7 @@ async function fetchPage(email: string, request: ListRequest, cursor: Cursor, ru
     cursor.pageToken = String(start + PAGE_SIZE)
     cursor.done = start + PAGE_SIZE >= all.length
     for (const m of page) {
-      const { html: _h, text: _t, cc: _c, ...summary } = m
+      const { html: _h, text: _t, cc: _c, replyTo: _r, ...summary } = m
       const listed = keep(summary)
       if (listed) cursor.buffer.push(listed)
     }
@@ -196,13 +200,14 @@ export async function listMail(request: ListRequest): Promise<ListResult> {
     while (lists.size > 6) lists.delete(lists.keys().next().value as string)
   }
   const rules = mailRules()
+  const corrections = mailCorrections()
   const errors: ListResult['errors'] = []
   await Promise.all(
     Object.entries(state.cursors).map(async ([email, cursor]) => {
       let pages = 0
       try {
         while (!cursor.done && cursor.buffer.length < PAGE_SIZE && pages < MAX_PAGES_PER_CALL) {
-          await fetchPage(email, state.request, cursor, rules)
+          await fetchPage(email, state.request, cursor, rules, corrections)
           pages += 1
         }
       } catch (error) {
@@ -231,16 +236,34 @@ function splitKey(key: string): { account: string; id: string } | null {
   return known ? { account: match[1], id: match[2] } : null
 }
 
-/** Full message, read-only (messages.get does not change UNREAD). */
-export async function readMail(key: string): Promise<{ ok: true; message: MailMessage } | { ok: false; reason: string; reconnect?: string }> {
+function threadEntry(m: MailMessage): ThreadEntry {
+  return { key: m.key, from: m.from, fromEmail: m.fromEmail, date: m.date, text: bodyText(m).slice(0, 4000) }
+}
+
+/**
+ * Full message plus its thread, read-only: messages.get and threads.get never
+ * change labels, so UNREAD stays as it was.
+ */
+export async function readMail(
+  key: string
+): Promise<{ ok: true; message: MailMessage; thread: ThreadEntry[] } | { ok: false; reason: string; reconnect?: string }> {
   const parts = splitKey(key)
   if (!parts) return { ok: false, reason: 'That message isn’t available.' }
   try {
     if (PREVIEW) {
       const found = previewMessages().find((m) => m.key === key)
-      return found ? { ok: true, message: found } : { ok: false, reason: 'That message isn’t available.' }
+      return found ? { ok: true, message: found, thread: previewThread(found).map(threadEntry) } : { ok: false, reason: 'That message isn’t available.' }
     }
-    return { ok: true, message: await withToken(parts.account, (t) => getMessage(t, parts.account, parts.id)) }
+    const message = await withToken(parts.account, (t) => getMessage(t, parts.account, parts.id))
+    let thread: ThreadEntry[] = []
+    if (message.threadId) {
+      // Thread context is optional: the message still opens if this fails.
+      thread = await withToken(parts.account, (t) => getThread(t, parts.account, message.threadId)).then(
+        (all) => (all.length > 1 ? all.slice(-12).map(threadEntry) : []),
+        () => []
+      )
+    }
+    return { ok: true, message, thread }
   } catch (error) {
     if (error instanceof ReconnectError) return { ok: false, reason: `Sign-in for ${parts.account} expired.`, reconnect: parts.account }
     return { ok: false, reason: error instanceof Error ? error.message : 'Couldn’t open the message.' }
@@ -252,6 +275,42 @@ export async function openOriginal(key: string): Promise<boolean> {
   const parts = splitKey(key)
   if (!parts) return false
   const url = gmailWebUrl(parts.account, parts.id)
+  if (!url) return false
+  return shell.openExternal(url).then(
+    () => true,
+    () => false
+  )
+}
+
+/** Correct (or clear) a category for one message or for everything from its sender. */
+export function correctCategory(key: string, fromEmail: string, category: MailCorrections['messages'][string] | null, scope: 'message' | 'sender'): MailCorrections {
+  const current = mailCorrections()
+  const next: MailCorrections = { messages: { ...current.messages }, senders: { ...current.senders } }
+  if (scope === 'sender') {
+    const sender = fromEmail.trim().toLowerCase()
+    if (category) next.senders[sender] = category
+    else delete next.senders[sender]
+    // A sender rule replaces this message's own correction.
+    delete next.messages[key]
+  } else if (category) next.messages[key] = category
+  else delete next.messages[key]
+  setMailCorrections(next)
+  lists.clear()
+  return mailCorrections()
+}
+
+/** Fixed Google Cloud pages for the one-time Gmail setup. */
+const SETUP_LINKS: Record<string, string> = {
+  project: 'https://console.cloud.google.com/projectcreate',
+  'gmail-api': 'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+  branding: 'https://console.cloud.google.com/auth/branding',
+  audience: 'https://console.cloud.google.com/auth/audience',
+  'data-access': 'https://console.cloud.google.com/auth/scopes',
+  clients: 'https://console.cloud.google.com/auth/clients/create'
+}
+
+export async function openSetupLink(which: string): Promise<boolean> {
+  const url = Object.prototype.hasOwnProperty.call(SETUP_LINKS, which) ? SETUP_LINKS[which] : null
   if (!url) return false
   return shell.openExternal(url).then(
     () => true,

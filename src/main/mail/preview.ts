@@ -38,7 +38,13 @@ export function previewMessages(): MailMessage[] {
     const [fromName, fromEmail] = SENDERS[i % SENDERS.length]
     const [subject, snippet] = SUBJECTS[i % SUBJECTS.length]
     const promo = subject.startsWith('Weekend sale')
-    const labels = ['INBOX', ...(i % 2 === 0 ? ['UNREAD'] : []), ...(i % 7 === 0 ? ['IMPORTANT'] : []), ...(promo ? ['CATEGORY_PROMOTIONS'] : [])]
+    const update = subject.startsWith('Your receipt') || (subject.startsWith('Invoice') && i % 2 === 1)
+    const labels = [
+      'INBOX',
+      ...(i % 2 === 0 ? ['UNREAD'] : []),
+      ...(i % 7 === 0 ? ['IMPORTANT'] : []),
+      ...(promo ? ['CATEGORY_PROMOTIONS'] : update ? ['CATEGORY_UPDATES'] : ['CATEGORY_PERSONAL'])
+    ]
     const id = (0x18f0000000 + i * 4099).toString(16)
     out.push({
       key: `gmail:${account}:${id}`,
@@ -50,6 +56,7 @@ export function previewMessages(): MailMessage[] {
       fromEmail,
       to: i % 4 === 3 ? `team@example.org` : `Me <${account}>`,
       cc: '',
+      replyTo: fromEmail === 'billing@example.net' ? 'Billing Desk <billing-desk@example.net>' : '',
       subject: `[Sample] ${subject} (${i + 1})`,
       snippet,
       date: now - i * 3_600_000 * 5,
@@ -78,6 +85,28 @@ export function previewMessages(): MailMessage[] {
   return out
 }
 
+/** Thread for a sample message: message 1 is a reply to an earlier sample sent by "me". */
+export function previewThread(message: MailMessage): MailMessage[] {
+  const first = previewMessages()[0]
+  if (message.threadId !== first.threadId) return []
+  const earlier: MailMessage = {
+    ...first,
+    key: `gmail:${first.account}:${first.id}0`,
+    id: `${first.id}0`,
+    from: 'Me',
+    fromEmail: first.account,
+    to: `${first.from} <${first.fromEmail}>`,
+    subject: '[Sample] Interview availability',
+    snippet: 'I can do Thursday afternoon.',
+    text: 'Hi Imran,\n\nI can do Thursday afternoon, any time after 2 pm.\n\nThanks',
+    html: '',
+    date: first.date - 2 * 86_400_000,
+    unread: false,
+    labels: ['SENT']
+  }
+  return [earlier, first]
+}
+
 /** Tiny evaluator for the Gmail queries MIKO builds (terms, from:, is:unread, in:inbox, -in:spam/-in:trash). */
 export function previewMatches(message: MailMessage, query: string): boolean {
   const tokens = query.match(/-?\w+:"[^"]*"|-?\w+:\S+|"[^"]*"|\S+/g) ?? []
@@ -86,6 +115,8 @@ export function previewMatches(message: MailMessage, query: string): boolean {
     if (lower === 'in:inbox') return message.labels.includes('INBOX')
     if (lower === 'is:unread') return message.unread
     if (lower === '-in:spam' || lower === '-in:trash') return true
+    if (lower === 'category:updates') return message.labels.includes('CATEGORY_UPDATES')
+    if (lower === 'category:promotions') return message.labels.includes('CATEGORY_PROMOTIONS')
     const now = Date.UTC(2026, 10, 14, 9, 0)
     const days = /^(newer_than|older_than):(\d+)d$/.exec(lower)
     if (days) {

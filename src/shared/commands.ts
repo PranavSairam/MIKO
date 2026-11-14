@@ -144,7 +144,7 @@ const MAIL_RULES =
  * no mailbox of its own. ChatGPT reads the mail; MIKO never sees it.
  */
 export function mailRequestFor(intent: MailIntent): string {
-  if (intent.kind === 'recent' || intent.kind === 'important') return MAIL_REQUEST
+  if (intent.kind === 'recent' || intent.kind === 'important' || intent.kind === 'category') return MAIL_REQUEST
   if (intent.kind === 'unread') {
     return (
       'Show my unread email from the accounts currently connected to this ChatGPT account, newest first. ' +

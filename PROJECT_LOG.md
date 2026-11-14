@@ -90,6 +90,94 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14 (late): Mail reader and reply-writing assistant
+**What it does now (Mail tab)**
+- **Tabs:** All mail, Unread, Action needed, Important FYI, Updates, Promotions.
+  - All mail and Unread show every category.
+  - Updates and Promotions also narrow the Gmail query (`category:updates` / `category:promotions`).
+  - Action needed and Important FYI are filtered locally after fetching.
+  - Each page is 10 newest-first; "Load next 10" follows Gmail page tokens; ↻ refreshes.
+- **Categories:** transparent rules, no model (`categorize` in `src/shared/mail.ts`). Order:
+  1. The owner's corrections, per message or per sender.
+  2. Gmail Promotions → Promotions. Gmail Social/Forums → Updates (marked uncertain).
+  3. Gmail Updates → Updates, unless it is a direct request or payment to you. Then it's Action needed, marked uncertain.
+  4. Direct request, deadline, approval or payment cues → Action needed. It's certain with two or more cues or Gmail's important flag; otherwise "Maybe".
+  5. Gmail's important flag with no cue, or the owner's keyword → Important FYI.
+  6. Anything else → "Maybe: Other", which stays in All mail.
+- **Labels and corrections:**
+  - Every row shows its category chip and the account. The reason shows on category tabs and for any uncertain row; uncertain chips are dashed and say "Maybe".
+  - Clicking a chip opens Correct the category: pick one, optionally tick "Everything from <sender>", or Undo my correction.
+  - Corrections are stored as `mailCorrections` in settings (validated, capped at 1000 messages / 300 senders).
+- **Search:**
+  - The box takes words, `from:`, `subject:`, `after:`.
+  - **Advanced** has Words / From / Subject / After / Before fields → `buildQuery`.
+  - Text that starts like a command ("reply …", "open …", "cancel …") no longer live-searches while you type. Before, "reply to the second email" could replace the results it referred to.
+  - Back keeps the query and scroll position.
+- **Message view:**
+  - readable body plus "Thread: N other messages"; threads.get is read-only, at most 12 messages
+  - Reply / Copy / Open original
+  - unread state preserved (messages.get and threads.get never change labels; the scope is read-only)
+- **Reply mode:**
+  - **Binding:** Reply binds to the account, message key and thread.
+  - **Header:** shows To, using Reply-To when set, otherwise the sender, otherwise the first recipient for your own sent mail. Also shows Subject `Re: …` and the original email.
+  - **Instruction box:** typed, or dictated with Caps Lock + A. While a reply is open in the Mail tab, dictation fills the reply box, except mail commands like "cancel reply".
+  - **Before the first draft:** a blue notice explains that the email text and the instruction go to MIKO's assistant (ChatGPT via the Codex CLI). The exact context (headers, body without quoted history, the last 2 thread messages, local dates) is shown in an editable box with Reset context. Nothing is sent until **Send to MIKO and draft**.
+  - **Prompt** (`draftPrompt` in `src/shared/mail-reply.ts`):
+    - the email is fenced as untrusted data, and closing tags inside it are neutralised
+    - your instruction is separate
+    - rules: keep names, dates, times, amounts and commitments, and add none
+    - if an essential detail is missing, answer with `QUESTION: …`
+  - **Questions:** an empty instruction is asked about locally, before anything is sent. A question from the model shows with an answer box ("Answer and draft").
+  - **Draft:** editable, with Copy reply, Regenerate, Open original, the Shorter / More polite / More formal / Friendlier chips and a free-text change box. Follow-ups send the current (edited) draft plus the change.
+  - **Isolation:** drafts are one-off assistant requests (`fresh`). They never become or change the main MIKO conversation; the renderer also ignores bridge events that have no chat card.
+  - **Sending stays with the owner:** MIKO never sends. The steps are Copy reply → Open original → Reply in Gmail → paste → Send.
+  - **Cancel reply** (button or "cancel reply" / "discard the draft") stops any draft in progress and clears the target. Back to results keeps the reply bound, with a "Replying to …" banner offering Resume reply / Cancel reply.
+- **Commands:**
+  - "reply to the second email", "reply to email 3 saying …", "reply to the last mail", "draft a reply to the first email", "reply to this email" / "reply" (the open message) all resolve against the rows currently on screen.
+  - They open the selected email and show it before any drafting.
+  - "show action needed", "important fyi emails", "show promotions" and "updates mail" switch tabs.
+  - Without a mailbox connected, reply commands say to connect Gmail first.
+- **OAuth setup made clear:** the Connect Gmail screen lists the 7 steps, each with a button that opens the exact Google Cloud page:
+  - new project
+  - Gmail API
+  - Branding
+  - Audience / test users
+  - Data access
+  - create Desktop client
+  The links are a fixed list in main (`openSetupLink`). Credentials are stored encrypted with safeStorage/Keychain as before.
+
+**Verification**
+- typecheck passes, **141/141 tests** pass (new: tabs/categories/corrections/`buildQuery`/reply commands, `mail-reply.test.ts`), build passes.
+- **Mocked mailbox (dev preview in the real app, Playwright), with real drafting by MIKO's assistant:**
+  - **Tabs:**
+    - All 10
+    - Unread 10, all unread
+    - Action needed 10 with reasons ("Direct request to you ('Could you') · Gmail marked it important")
+    - Important FYI 2, Updates 4, Promotions 4, each only its own category
+  - **Correction:** "Maybe: Other" → Action needed ("You set this") → appears in the Action needed tab → Undo restores it.
+  - **Advanced search:** From Imran + Subject interview → `from:Imran subject:interview`, 1 row, matching.
+  - **Reply targeting:**
+    - typed "reply to the third email" slowly: results unchanged while typing, and it bound message 3, with the To going to its Reply-To (Billing Desk)
+    - "reply to the second email" bound message 2 (Asha Rao, Invoice #442), with the consent box shown and nothing sent (assistant not busy)
+  - **Thread:** "Thread: 1 other message"; the context includes "Earlier in this thread"; "still unread" kept.
+  - **Drafting:**
+    - first draft in 10 s
+    - "Shorter" (10 s), then "add that I'll send it tomorrow" (20 s): the result still had 3 pm, Thursday, portfolio, signed form and tomorrow
+    - the main assistant thread id was unchanged
+  - **Clarifying question:** "suggest a time that works for me" on "Lunch? Free on Tuesday?" → MIKO asked "What time on Tuesday works for you?" → answer "Tuesday 1 pm" → draft.
+  - **Cancel:** the "cancel reply" command and the Cancel reply button both cleared the composer; notice "Reply cancelled. Nothing was sent."; banner and badge gone. Back while replying restored scrollTop 300 of 20 rows and showed the banner; Resume reopened the composer.
+  - **Normal mode, nothing configured:** the setup screen shows 7 steps with their Open buttons. The links weren't clicked in the test.
+- **Bug found and fixed during the test:** the local-date formatter used `dateStyle` together with `timeZoneName`, which throws and blanked the panel.
+- **Real mailbox checks: PENDING (owner action).** No Gmail account is connected because the Google Cloud client hasn't been created yet. Steps are in the Mail tab. To do once connected:
+  - latest 10, next page, refresh
+  - each tab against real Gmail categories
+  - search by sender, subject and date
+  - open a message and confirm it's still unread in Gmail
+  - "reply to the second email" → correct recipient and thread
+  - draft, then "shorter" / follow-up
+  - cancel
+- **Not tested:** dictating into the reply box by voice (wired, but speech can't be driven by the test); Copy (would overwrite the clipboard); Open original (opens the browser).
+
 ### 2026-11-15: "clear", and cleaner text for ChatGPT
 - **Owner confirmed auto-paste works** (screenshot: the text landed in ChatGPT's message box automatically).
 - **"clear"** ("clear chat/all/screen/everything") wipes MIKO's panel. It also cancels a pending assistant answer, an armed paste and listening. The assistant conversation itself is kept ("new conversation" resets it). Verified in the app: 4 entries → 0.

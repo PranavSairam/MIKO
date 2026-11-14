@@ -671,7 +671,6 @@ textarea {
 }
 
 .mail-scope {
-  margin-left: auto;
   font-size: 11px;
   color: rgba(246, 239, 230, 0.6);
 }
@@ -932,6 +931,332 @@ pre.mail-body.text {
   font: 13px/1.5 -apple-system, "Segoe UI", sans-serif;
 }
 
+/* Rows with a category line (the chip is its own button, outside the row button). */
+.mail-item {
+  border-radius: 12px;
+  padding-bottom: 4px;
+}
+
+.mail-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mail-num {
+  flex: 0 0 14px;
+  font-size: 10px;
+  margin-top: 3px;
+  text-align: right;
+  color: rgba(246, 239, 230, 0.45);
+}
+
+.mail-catline {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 0 10px 0 48px;
+}
+
+.mail-catline .mail-reason {
+  flex: 1;
+  min-width: 0;
+}
+
+.mail-account {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: rgba(246, 239, 230, 0.5);
+}
+
+.mail-cat {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.mail-cat-chip {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(246, 239, 230, 0.88);
+  cursor: pointer;
+}
+
+.mail-cat-chip.cat-action {
+  background: rgba(255, 140, 100, 0.28);
+}
+
+.mail-cat-chip.cat-fyi {
+  background: rgba(255, 210, 120, 0.25);
+}
+
+.mail-cat-chip.cat-updates {
+  background: rgba(127, 180, 255, 0.22);
+}
+
+.mail-cat-chip.cat-promotions {
+  background: rgba(170, 140, 255, 0.22);
+}
+
+.mail-cat-chip.is-maybe {
+  border-style: dashed;
+  border-color: rgba(246, 239, 230, 0.45);
+}
+
+.mail-cat-menu {
+  position: absolute;
+  z-index: 5;
+  top: 20px;
+  left: 0;
+  width: 220px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #2a211b;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.mail-cat-menu .mail-muted,
+.mail-cat-menu .rule {
+  flex-basis: 100%;
+  font-size: 11px;
+}
+
+.mail-badge.reply {
+  background: rgba(196, 132, 74, 0.55);
+  color: #1b130e;
+}
+
+.mail-banner.reply-banner {
+  background: rgba(196, 132, 74, 0.16);
+  border-color: rgba(196, 132, 74, 0.4);
+}
+
+.mail-reader-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mail-head-cat {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px !important;
+}
+
+.mail-thread {
+  font-size: 12px;
+  border-radius: 10px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.mail-thread summary {
+  cursor: pointer;
+  color: #e7b98a;
+}
+
+.mail-thread-item {
+  padding: 6px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mail-thread-text {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  color: rgba(246, 239, 230, 0.8);
+}
+
+/* Reply composer */
+.reply {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+  font-size: 12.5px;
+}
+
+.reply-target {
+  position: relative;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(196, 132, 74, 0.35);
+}
+
+.reply-target p {
+  margin: 0 110px 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.reply-target .glass-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.reply-key {
+  display: inline-block;
+  min-width: 54px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #e7b98a;
+}
+
+.reply-label {
+  font-size: 11px;
+  color: #e7b98a;
+}
+
+.reply textarea,
+.reply input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f6efe6;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 6px 9px;
+  font: 12.5px/1.45 -apple-system, 'Segoe UI', sans-serif;
+  resize: vertical;
+}
+
+.reply textarea.reply-output {
+  background: #fffaf3;
+  color: #1d1a19;
+}
+
+.reply-consent {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(127, 180, 255, 0.1);
+  border: 1px solid rgba(127, 180, 255, 0.3);
+}
+
+.reply-consent p {
+  margin: 0;
+}
+
+.reply-sent summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: rgba(246, 239, 230, 0.7);
+}
+
+.reply-actions,
+.reply-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.reply-row input {
+  flex: 1;
+  min-width: 160px;
+  width: auto;
+}
+
+.reply-question {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 210, 120, 0.12);
+  border: 1px solid rgba(255, 210, 120, 0.35);
+}
+
+.reply-question p {
+  margin: 0 0 6px;
+}
+
+.reply-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mail-loading.inline {
+  padding: 0 4px;
+}
+
+.text-link {
+  border: 0;
+  background: transparent;
+  color: #e7b98a;
+  padding: 0;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.mail-pop.adv {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.mail-pop.adv .reply-row {
+  grid-column: 1 / -1;
+}
+
+.adv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: rgba(246, 239, 230, 0.7);
+}
+
+.mail-pop.adv input {
+  padding: 5px 8px;
+  color-scheme: dark;
+}
+
+.adv-query {
+  flex: 1;
+  font-family: ui-monospace, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.mail-state.setup {
+  overflow-y: auto;
+  max-width: 560px;
+  justify-content: flex-start;
+  padding: 4px 4px 10px;
+}
+
+.setup-steps {
+  margin: 0;
+  padding-left: 20px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.setup-steps li span {
+  margin-right: 6px;
+}
+
+.setup-steps .glass-button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
 /* Compact stacked layout when the screen only allows a narrow mail panel. */
 @media (max-width: 860px) {
   .mail-toolbar {
@@ -950,6 +1275,14 @@ pre.mail-body.text {
   .mail-scope {
     flex-basis: 100%;
     margin-left: 0;
+  }
+
+  .mail-pop.adv {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mail-catline {
+    padding-left: 30px;
   }
 }
 

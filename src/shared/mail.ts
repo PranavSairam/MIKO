@@ -1,7 +1,17 @@
 /** Mail panel logic shared by main and renderer: intents, queries, importance rules, merging. Pure. */
 
 export type MailProvider = 'gmail'
-export type MailFilter = 'recent' | 'unread' | 'important'
+/** Mail tabs. 'all' = All mail (inbox, or the whole mailbox for a search). */
+export type MailFilter = 'all' | 'unread' | 'action' | 'fyi' | 'updates' | 'promotions'
+export const MAIL_FILTERS: MailFilter[] = ['all', 'unread', 'action', 'fyi', 'updates', 'promotions']
+export type MailCategory = 'action' | 'fyi' | 'updates' | 'promotions' | 'other'
+export const CATEGORY_LABELS: Record<MailCategory, string> = {
+  action: 'Action needed',
+  fyi: 'Important FYI',
+  updates: 'Updates',
+  promotions: 'Promotions',
+  other: 'Other'
+}
 
 export interface MailAccount {
   /** Mailbox address; with provider it scopes every message key. */
@@ -32,7 +42,18 @@ export interface MailSummary {
 
 export interface MailMessage extends MailSummary {
   cc: string
+  /** Reply-To header, when the sender set one. */
+  replyTo: string
   html: string
+  text: string
+}
+
+/** One message of a thread, for context under the open message (plain text, trimmed). */
+export interface ThreadEntry {
+  key: string
+  from: string
+  fromEmail: string
+  date: number
   text: string
 }
 
@@ -40,9 +61,13 @@ export type MailIntent =
   | { kind: 'recent' }
   | { kind: 'unread' }
   | { kind: 'important'; unreadOnly: boolean }
+  | { kind: 'category'; category: Exclude<MailFilter, 'all' | 'unread'> }
   | { kind: 'search'; query: string }
   /** 1-based position in the displayed results; -1 = last, 0 = unclear ("that one"). */
   | { kind: 'open'; index: number }
+  /** index as for open; 0 = the open message ("reply to this"). instruction may be empty. */
+  | { kind: 'reply'; index: number; instruction: string }
+  | { kind: 'cancel-reply' }
 
 export const PAGE_SIZE = 10
 export const MAX_QUERY = 200
@@ -94,6 +119,32 @@ export function parseMailCommand(raw: string): MailIntent | null {
   const important = new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?important\\s+(unread\\s+)?${MAIL}$`).exec(t)
   if (important) return { kind: 'important', unreadOnly: Boolean(important[1]) }
   if (new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?unread\\s+${MAIL}$`).test(t)) return { kind: 'unread' }
+
+  const category =
+    new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?(action[- ]needed|important fyi|fyi)(?:\\s+${MAIL})?$`).exec(t) ??
+    new RegExp(`^(?:(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?(updates?|promotions?|promos?)\\s+${MAIL}|show\\s+(?:me\\s+)?(?:my\\s+)?(updates|promotions))$`).exec(t)
+  if (category) {
+    const c = category[1] ?? category[2]
+    if (/^action/.test(c)) return { kind: 'category', category: 'action' }
+    if (/fyi/.test(c)) return { kind: 'category', category: 'fyi' }
+    if (/^update/.test(c)) return { kind: 'category', category: 'updates' }
+    return { kind: 'category', category: 'promotions' }
+  }
+  if (/^(?:cancel|stop|discard|close)\s+(?:the\s+|this\s+|my\s+)?(?:reply|draft)$/.test(t)) return { kind: 'cancel-reply' }
+  const reply = new RegExp(
+    `^(?:reply|respond|answer|(?:draft|write)\\s+(?:a\\s+)?reply)\\s+(?:to\\s+)?(?:the\\s+|that\\s+|this\\s+)?(?:(\\w+)\\s+)?${MAIL}(?:\\s+(\\d{1,2}))?(?:[,:]?\\s+(?:saying|and say|to say|that|with)\\s+(.+))?$`,
+    'i'
+  ).exec(original)
+  if (reply) {
+    const instruction = (reply[3] ?? '').trim()
+    const word = reply[1]?.toLowerCase()
+    if (reply[2]) return { kind: 'reply', index: Number(reply[2]), instruction }
+    if (word && word in ORDINALS) return { kind: 'reply', index: ORDINALS[word], instruction }
+    if (!word) return { kind: 'reply', index: 0, instruction }
+    return null
+  }
+  const replyHere = /^(?:reply|respond)(?:\s+(?:to\s+(?:it|this|him|her|them)))?(?:[,:]?\s+(?:saying|and say|to say|with)\s+(.+))?$/i.exec(original)
+  if (replyHere) return { kind: 'reply', index: 0, instruction: (replyHere[1] ?? '').trim() }
 
   const open = new RegExp(`^(?:open|read|show)\\s+(?:the\\s+|that\\s+|this\\s+)?(?:(\\w+)\\s+)?${MAIL}(?:\\s+(\\d{1,2}))?$`).exec(t)
   if (open && (open[1] || open[2] || /\b(?:that|this)\b/.test(t))) {
@@ -153,13 +204,30 @@ export function cleanQuery(raw: string): string {
 }
 
 /**
- * Gmail search string. Recent/Unread/Important browse the inbox; a search
- * covers the whole mailbox except Spam and Trash.
+ * Gmail search string. Without search words the tabs browse the inbox
+ * (Updates/Promotions narrow by Gmail's own category); a search covers the
+ * whole mailbox except Spam and Trash. Action needed and Important FYI are
+ * MIKO's local categories, filtered after fetching.
  */
 export function gmailQuery(filter: MailFilter, search: string): string {
   const terms = cleanQuery(search)
-  if (!terms) return filter === 'unread' ? 'in:inbox is:unread' : 'in:inbox'
-  return `${terms}${filter === 'unread' ? ' is:unread' : ''} -in:spam -in:trash`
+  const extra = filter === 'unread' ? 'is:unread' : filter === 'updates' ? 'category:updates' : filter === 'promotions' ? 'category:promotions' : ''
+  if (!terms) return ['in:inbox', extra].filter(Boolean).join(' ')
+  return [terms, extra, '-in:spam -in:trash'].filter(Boolean).join(' ')
+}
+
+/** Structured search (Advanced search fields) to a Gmail query. Dates are YYYY-MM-DD. */
+export function buildQuery(fields: { words?: string; from?: string; subject?: string; after?: string; before?: string }): string {
+  const parts: string[] = []
+  const words = cleanQuery(fields.words ?? '')
+  if (words) parts.push(words)
+  if (fields.from?.trim()) parts.push(operator('from', fields.from))
+  if (fields.subject?.trim()) parts.push(operator('subject', fields.subject))
+  for (const key of ['after', 'before'] as const) {
+    const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec((fields[key] ?? '').trim())
+    if (d) parts.push(`${key}:${d[1]}/${d[2]}/${d[3]}`)
+  }
+  return cleanQuery(parts.filter(Boolean).join(' '))
 }
 
 /** Local importance rules. Every switch is user-adjustable in the Mail tab. */
@@ -217,6 +285,86 @@ export function classifyImportance(message: MailSummary, rules: ImportanceRules)
     if (k && lower.includes(k)) reasons.push(`Matches your keyword “${keyword.trim()}”`)
   }
   return reasons.length ? { important: true, source: 'rules', reasons } : { important: false, source: null, reasons: [] }
+}
+
+/** The owner's category corrections: per message, or for everything from one sender. */
+export interface MailCorrections {
+  messages: Record<string, MailCategory>
+  senders: Record<string, MailCategory>
+}
+
+export const EMPTY_CORRECTIONS: MailCorrections = { messages: {}, senders: {} }
+const CATEGORIES: MailCategory[] = ['action', 'fyi', 'updates', 'promotions', 'other']
+
+export function parseCorrections(value: unknown): MailCorrections {
+  const v = (value && typeof value === 'object' ? value : {}) as { messages?: unknown; senders?: unknown }
+  const pick = (raw: unknown, key: (k: string) => boolean, max: number): Record<string, MailCategory> => {
+    const out: Record<string, MailCategory> = {}
+    if (!raw || typeof raw !== 'object') return out
+    const entries = Object.entries(raw as Record<string, unknown>).filter(
+      ([k, c]) => k.length < 300 && key(k) && CATEGORIES.includes(c as MailCategory)
+    )
+    for (const [k, c] of entries.slice(-max)) out[k] = c as MailCategory
+    return out
+  }
+  return {
+    messages: pick(v.messages, (k) => /^gmail:[^:\s]+@[^:\s]+:[0-9a-zA-Z]+$/.test(k), 1000),
+    senders: pick(v.senders, (k) => /^[^\s@]+@[^\s@]+$/.test(k) && k === k.toLowerCase(), 300)
+  }
+}
+
+export interface Categorized {
+  category: MailCategory
+  /** Short reason shown under the row. */
+  reason: string
+  /** false = a guess; the row says "Maybe". */
+  certain: boolean
+  source: 'you' | 'gmail' | 'rules' | 'none'
+}
+
+/**
+ * Transparent category rules (no model): the owner's corrections first, then
+ * Gmail's own category tabs, then MIKO's action cues, then Gmail's
+ * importance flag. Anything else is "Other" and stays in All mail.
+ */
+export function categorize(message: MailSummary, rules: ImportanceRules, corrections: MailCorrections = EMPTY_CORRECTIONS): Categorized {
+  const own = corrections.messages[message.key]
+  if (own) return { category: own, reason: 'You set this', certain: true, source: 'you' }
+  const sender = corrections.senders[message.fromEmail.toLowerCase()]
+  if (sender) return { category: sender, reason: `You set this for ${message.fromEmail}`, certain: true, source: 'you' }
+  const labels = message.labels
+  if (labels.includes('CATEGORY_PROMOTIONS')) return { category: 'promotions', reason: 'Gmail filed it under Promotions', certain: true, source: 'gmail' }
+  const text = `${message.subject} ${message.snippet}`
+  const cues: string[] = []
+  if (rules.directRequests && message.directToMe && REQUEST.test(text)) cues.push(`Direct request to you${quoteHit(REQUEST, text)}`)
+  if (rules.deadlines && DEADLINE.test(text)) cues.push(`Deadline${quoteHit(DEADLINE, text)}`)
+  if (rules.approvals && APPROVAL.test(text)) cues.push(`Approval${quoteHit(APPROVAL, text)}`)
+  if (rules.payments && PAYMENT.test(text)) cues.push(`Payment${quoteHit(PAYMENT, text)}`)
+  const flagged = rules.providerFlag && labels.includes('IMPORTANT')
+  const social = labels.includes('CATEGORY_SOCIAL') || labels.includes('CATEGORY_FORUMS')
+  if (social) return { category: 'updates', reason: `Gmail filed it under ${labels.includes('CATEGORY_SOCIAL') ? 'Social' : 'Forums'}`, certain: false, source: 'gmail' }
+  if (labels.includes('CATEGORY_UPDATES')) {
+    if (cues.length && (message.directToMe || flagged)) {
+      return { category: 'action', reason: `${cues.join(' · ')} (Gmail filed it under Updates)`, certain: false, source: 'rules' }
+    }
+    return { category: 'updates', reason: 'Gmail filed it under Updates', certain: true, source: 'gmail' }
+  }
+  if (cues.length) {
+    const certain = cues.length >= 2 || flagged
+    return { category: 'action', reason: `${cues.join(' · ')}${flagged ? ' · Gmail marked it important' : ''}`, certain, source: 'rules' }
+  }
+  const lower = text.toLowerCase()
+  const keyword = rules.keywords.find((k) => k.trim() && lower.includes(k.trim().toLowerCase()))
+  if (flagged) return { category: 'fyi', reason: 'Gmail marked it important; no request or deadline found', certain: true, source: 'gmail' }
+  if (keyword) return { category: 'fyi', reason: `Matches your keyword “${keyword.trim()}”`, certain: true, source: 'rules' }
+  return { category: 'other', reason: 'No category signal', certain: false, source: 'none' }
+}
+
+/** Whether a message belongs on a tab. All mail and Unread take every category. */
+export function inFilter(filter: MailFilter, message: MailSummary, category: MailCategory): boolean {
+  if (filter === 'all') return true
+  if (filter === 'unread') return message.unread
+  return category === filter
 }
 
 export function parseRules(value: unknown): ImportanceRules {

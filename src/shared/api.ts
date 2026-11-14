@@ -40,6 +40,9 @@ export const IPC = {
   mailRules: 'miko:mail-rules',
   mailSetup: 'miko:mail-setup',
   mailSetRules: 'miko:mail-set-rules',
+  mailCorrections: 'miko:mail-corrections',
+  mailCorrect: 'miko:mail-correct',
+  mailSetupLink: 'miko:mail-setup-link',
   chatsAdd: 'miko:chats-add',
   chatsRename: 'miko:chats-rename',
   chatsRemove: 'miko:chats-remove',
@@ -209,8 +212,8 @@ export interface ShiftDelta {
 
 export type { KeyEvent } from './keys'
 export type { SavedChat } from './chatgpt'
-import type { ImportanceRules, MailAccount, MailFilter, MailMessage, MailSummary, Importance } from './mail'
-export type { ImportanceRules, MailAccount, MailFilter, MailMessage, MailSummary, Importance }
+import type { Categorized, ImportanceRules, MailAccount, MailCategory, MailCorrections, MailFilter, MailMessage, MailSummary, Importance, ThreadEntry } from './mail'
+export type { Categorized, ImportanceRules, MailAccount, MailCategory, MailCorrections, MailFilter, MailMessage, MailSummary, Importance, ThreadEntry }
 
 export interface BridgeStatusInfo {
   enabled: boolean
@@ -237,7 +240,7 @@ export interface MailStatusInfo {
   setupPath: string
 }
 
-export type ListedMail = MailSummary & { importance: Importance }
+export type ListedMail = MailSummary & { category: Categorized }
 
 export interface MailListResult {
   listId: string
@@ -255,7 +258,18 @@ export interface MailListRequest {
   unreadOnly: boolean
 }
 
-export type MailReadResult = { ok: true; message: MailMessage } | { ok: false; reason: string; reconnect?: string }
+export type MailReadResult = { ok: true; message: MailMessage; thread: ThreadEntry[] } | { ok: false; reason: string; reconnect?: string }
+
+/** Google Cloud pages for the one-time Gmail setup (fixed list; main opens them). */
+export type MailSetupLink = 'project' | 'gmail-api' | 'branding' | 'audience' | 'data-access' | 'clients'
+
+export interface MailCorrectRequest {
+  key: string
+  fromEmail: string
+  /** null = remove the correction. */
+  category: MailCategory | null
+  scope: 'message' | 'sender'
+}
 import type { SavedChat } from './chatgpt'
 import type { KeyEvent } from './keys'
 
@@ -347,6 +361,11 @@ export interface MikoApi {
   mailSetup: (clientId: string, clientSecret: string) => Promise<{ ok: boolean; reason: string }>
   mailRules: () => Promise<ImportanceRules | null>
   mailSetRules: (rules: ImportanceRules) => Promise<ImportanceRules | null>
+  /** Category corrections (stored in MIKO's settings on this Mac). */
+  mailCorrections: () => Promise<MailCorrections | null>
+  mailCorrect: (request: MailCorrectRequest) => Promise<MailCorrections | null>
+  /** Open one of the fixed Google Cloud setup pages in the browser. */
+  mailSetupLink: (which: MailSetupLink) => Promise<boolean>
   /** Show the running-apps switcher above MIKO. */
   openSwitcher: () => void
   /** Reduced motion skips the exit and holds MIKO in place. */

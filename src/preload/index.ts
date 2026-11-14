@@ -9,6 +9,9 @@ import {
   type BridgeStatusInfo,
   type BridgeUpdate,
   type ImportanceRules,
+  type MailCorrectRequest,
+  type MailCorrections,
+  type MailSetupLink,
   type MailListRequest,
   type MailListResult,
   type MailReadResult,
@@ -268,6 +271,15 @@ const api: MikoApi = {
   },
   mailRules: async () => (await ipcRenderer.invoke(IPC.mailRules)) as ImportanceRules | null,
   mailSetRules: async (rules: ImportanceRules) => (await ipcRenderer.invoke(IPC.mailSetRules, rules)) as ImportanceRules | null,
+  mailCorrections: async () => (await ipcRenderer.invoke(IPC.mailCorrections)) as MailCorrections | null,
+  mailCorrect: async (request: MailCorrectRequest) =>
+    (await ipcRenderer.invoke(IPC.mailCorrect, {
+      key: String(request.key),
+      fromEmail: String(request.fromEmail),
+      category: request.category === null ? null : String(request.category),
+      scope: request.scope === 'sender' ? 'sender' : 'message'
+    })) as MailCorrections | null,
+  mailSetupLink: async (which: MailSetupLink) => (await ipcRenderer.invoke(IPC.mailSetupLink, String(which))) === true,
   openSwitcher: (): void => {
     ipcRenderer.send(IPC.openSwitcher)
   },

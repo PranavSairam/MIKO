@@ -32,6 +32,7 @@ import { DobermanRig } from './DobermanRig'
 import { MailView } from '../mail/MailView'
 import { useMail } from '../mail/useMail'
 import { MAIL_REQUEST, mailRequestFor } from '../../../shared/commands'
+import { parseMailCommand } from '../../../shared/mail'
 import { BRIDGE_TEST_PROMPT } from '../../../shared/bridge'
 import { SELECTION_LABELS, clarifyingQuestion, parseSelectionCommand, selectionPrompt, type SelectionAction } from '../../../shared/selection'
 import { MAIL_PANEL, PANEL, PET_WINDOW, type PanelSize } from '../../../shared/layout'
@@ -644,7 +645,8 @@ export function MotionApp() {
       else if (u.phase === 'done') {
         const entry = entriesRef.current.find((e) => e.kind === 'bridge' && e.requestId === u.requestId)
         const oneOff = entry?.kind === 'bridge' && entry.selection && entry.selection.action !== 'ask'
-        if (u.thread && !oneOff) setAssistantThread(u.thread)
+        // Requests without a card here (mail reply drafts) are one-offs that never become the conversation.
+        if (u.thread && entry && !oneOff) setAssistantThread(u.thread)
         const question = entry?.kind === 'bridge' && entry.selection?.action === 'reply' ? clarifyingQuestion(u.reply ?? '') : null
         updateBridge(u.requestId, { status: 'done', reply: u.reply ?? '', thread: u.thread ?? '', detail: `Answered${secs}.`, question: question ?? undefined })
       } else updateBridge(u.requestId, { status: u.phase, detail: `${u.reason ?? 'Stopped.'}${secs ? ` (${secs.trim()})` : ''}` })
@@ -904,6 +906,11 @@ export function MotionApp() {
       await runSelectionAction(sel.id, selCmd.action, selCmd.instruction)
       return
     }
+    // Reply mode in the Mail tab: dictation fills the reply box, except mail commands ("cancel reply", "reply to the third email").
+    if (tabRef.current === 'mail' && mailActions.replyActive()) {
+      const mailCommand = parseMailCommand(text)
+      if (!mailCommand && mailActions.dictate(text)) return
+    }
     if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
     const catalog = auto ? await loadCatalog() : []
     if (!catalog) {
@@ -1063,7 +1070,11 @@ export function MotionApp() {
       if (!status?.accounts.length) {
         const prompt = mailRequestFor(decision.intent)
         if (!prompt) {
-          pushEntry({ id: 0, kind: 'note', text: 'Your mail is in ChatGPT, not MIKO, so open that message there.' })
+          const text =
+            decision.intent.kind === 'reply' || decision.intent.kind === 'cancel-reply'
+              ? 'Replies are drafted from mail MIKO can read. Connect Gmail in the Mail tab first.'
+              : 'Your mail is in ChatGPT, not MIKO, so open that message there.'
+          pushEntry({ id: 0, kind: 'note', text })
           return
         }
         if (tabRef.current !== 'chat') await applyPanel(true, 'chat')

@@ -93,6 +93,7 @@ export function parseGmailMessage(raw: GmailRaw, account: string): MailMessage {
     fromEmail: from.email,
     to,
     cc: header(payload, 'Cc'),
+    replyTo: header(payload, 'Reply-To'),
     subject: header(payload, 'Subject') || '(no subject)',
     snippet: decodeEntities(raw.snippet ?? ''),
     date: Number.isFinite(date) ? date : 0,
