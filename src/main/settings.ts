@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { parseSavedChats, type SavedChat } from '../shared/chatgpt'
+import { parseRules, type ImportanceRules } from '../shared/mail'
 
 /** Small persisted preferences in userData/miko-settings.json. Unknown keys (e.g. summonShortcut) are kept. */
 
@@ -34,6 +35,15 @@ export function savedChats(): SavedChat[] {
 
 export function setSavedChats(list: SavedChat[]): boolean {
   return writeKey('savedChats', list)
+}
+
+/** Mail importance rules (adjustable in the Mail tab). */
+export function mailRules(): ImportanceRules {
+  return parseRules(readAll().mailRules)
+}
+
+export function setMailRules(rules: ImportanceRules): boolean {
+  return writeKey('mailRules', parseRules(rules))
 }
 
 function writeKey(key: string, value: unknown): boolean {

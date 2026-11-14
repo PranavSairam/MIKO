@@ -8,6 +8,7 @@ import { comeToFront, enableFollow } from './follow'
 import { requestClose, watchClose } from './quit'
 import { cancelListening, startListening, stopListening } from './speech'
 import { openSwitcher, registerSwitcherIpc } from './switcher-window'
+import { registerMailIpc } from './mail/ipc'
 import { savedChats, setSavedChats, voiceAutoExecute } from './settings'
 import {
   currentLayout,
@@ -40,8 +41,9 @@ export function registerIpc(presence: {
     movePetBy(delta.dx, delta.dy)
   })
 
-  ipcMain.handle(IPC.setPanelOpen, (event, open: unknown): PanelLayout => {
+  ipcMain.handle(IPC.setPanelOpen, (event, open: unknown, mode: unknown): PanelLayout => {
     if (!trusted(event) || typeof open !== 'boolean') return currentLayout()
+    if (mode === 'mail' || mode === 'chat') return setPanelOpen(open, mode)
     return setPanelOpen(open)
   })
 
@@ -161,6 +163,7 @@ export function registerIpc(presence: {
   })
 
   registerSwitcherIpc()
+  registerMailIpc()
 
   ipcMain.handle(IPC.getVoiceAuto, (event) => (trusted(event) ? voiceAutoExecute() : true))
 

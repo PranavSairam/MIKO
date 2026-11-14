@@ -24,12 +24,15 @@ import {
 } from '../../../shared/doberman'
 import { ARRIVE_EPS, clampTravel, guideDestination, nextGuideTarget } from '../../../shared/guide'
 import { canvasOrigin, lookTarget, pointerToViewport } from '../../../shared/look'
-import { PET_WINDOW } from '../../../shared/layout'
 import { roamFor } from '../../../shared/movement'
 import { EXIT_MS } from '../../../shared/summon'
 import { TextPanel, type PanelEntry } from '../components/TextPanel'
 import { usePetGestures, type GuidePhase } from '../hooks/usePetGestures'
 import { DobermanRig } from './DobermanRig'
+import { MailView } from '../mail/MailView'
+import { useMail } from '../mail/useMail'
+import { MAIL_REQUEST } from '../../../shared/commands'
+import { MAIL_PANEL, PANEL, PET_WINDOW, type PanelSize } from '../../../shared/layout'
 
 const HIT_SLOP_PX = 2
 
@@ -44,6 +47,11 @@ export function MotionApp() {
   const [listenDetail, setListenDetail] = useState('')
   const [canSpeak, setCanSpeak] = useState(false)
   const [panelView, setPanelView] = useState<'log' | 'chats'>('log')
+  const [tab, setTab] = useState<'chat' | 'mail'>('chat')
+  const tabRef = useRef<'chat' | 'mail'>('chat')
+  tabRef.current = tab
+  const panelSizeRef = useRef<PanelSize>(PANEL)
+  const [mail, mailActions] = useMail()
   const [chats, setChats] = useState<SavedChat[]>([])
   const [chatsMessage, setChatsMessage] = useState('')
   const entryId = useRef(1)
@@ -76,14 +84,21 @@ export function MotionApp() {
     setEntries((items) => items.map((item) => (item.id === id ? { ...entry, id } : item)))
   }
 
-  async function applyPanel(open: boolean): Promise<void> {
+  async function applyPanel(open: boolean, mode: 'chat' | 'mail' = 'chat'): Promise<void> {
     if (typeof window.miko === 'undefined') return
     const request = ++panelRequest.current
     window.miko.setHitRects([])
-    const layout: PanelLayout = await window.miko.setPanelOpen(open)
+    const layout: PanelLayout = await window.miko.setPanelOpen(open, mode)
     if (request !== panelRequest.current) return
+    const size = { width: layout.panelWidth || PANEL.width, height: layout.panelHeight || PANEL.height, gap: mode === 'mail' ? MAIL_PANEL.gap : PANEL.gap }
+    panelSizeRef.current = open ? size : PANEL
+    const page = document.documentElement
+    page.style.setProperty('--panel-width', `${size.width}px`)
+    page.style.setProperty('--panel-height', `${size.height}px`)
+    page.style.setProperty('--panel-gap', `${size.gap}px`)
     setPanelSide(layout.panelSide)
     setPanelOpen(layout.panelOpen)
+    setTab(open ? mode : 'chat')
     if (!open) {
       setPanelView('log')
       window.miko.listenCancel()
@@ -93,6 +108,10 @@ export function MotionApp() {
         void window.miko.comeHere()
       }
     }
+  }
+
+  function showMailTab(): void {
+    if (!panelRef.current || tabRef.current !== 'mail') void applyPanel(true, 'mail')
   }
 
   const gestures = usePetGestures({
@@ -214,7 +233,7 @@ export function MotionApp() {
         order = { token: order.token + 1, kind: 'walk', destination: placed.x, commitHome: false }
         return
       }
-      const origin = canvasOrigin(panelRef.current, panelSideRef.current)
+      const origin = canvasOrigin(panelRef.current, panelSideRef.current, panelSizeRef.current)
       const destination = guideDestination(screenX, pointer.windowX + origin.x, placed.x, placed.span, PET_WINDOW.width)
       if (media.matches) {
         const dx = destination - placed.x
@@ -372,7 +391,7 @@ export function MotionApp() {
       let goalYaw = 0
       let goalPitch = 0
       if (!blendingOut && head && pointer) {
-        const origin = canvasOrigin(panelRef.current, panelSideRef.current)
+        const origin = canvasOrigin(panelRef.current, panelSideRef.current, panelSizeRef.current)
         const local = pointerToViewport(pointer, origin.x, origin.y)
         const goal = lookTarget(head.x, head.y, local.x, local.y)
         goalYaw = goal.yaw
@@ -703,7 +722,7 @@ export function MotionApp() {
     setDraft('')
     const catalog = await loadCatalog()
     if (!catalog) return
-    await runDecision(routeCommand(text, 'typed', catalog, await loadChats()))
+    await runDecision(routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: tabRef.current === 'mail' }))
   }
 
   /**
@@ -720,7 +739,7 @@ export function MotionApp() {
       setDraft(text)
       return
     }
-    const decision = routeCommand(text, 'voice', catalog, await loadChats())
+    const decision = routeCommand(text, 'voice', catalog, await loadChats(), { mailTab: tabRef.current === 'mail' })
     const plan = planVoice(decision, auto)
     if (plan.kind === 'review') {
       setDraft(text)
@@ -821,6 +840,25 @@ export function MotionApp() {
         status: 'ready',
         detail: 'Ready for you to review. Nothing has been sent.',
         destination: ''
+      })
+      return
+    }
+    if (decision.type === 'mail') {
+      showMailTab()
+      const line = mailActions.applyIntent(decision.intent)
+      if (tabRef.current !== 'mail') pushEntry({ id: 0, kind: 'note', text: line })
+      return
+    }
+    if (decision.type === 'mail-or-app') {
+      pushEntry({
+        id: 0,
+        kind: 'choices',
+        purpose: 'mail-or-app',
+        text: `Search mail for \u201c${decision.query}\u201d, or was that an app command?`,
+        options: [
+          { id: `mail:${decision.query}`, name: 'Search mail', familiar: true },
+          { id: 'app', name: 'App command', familiar: true }
+        ]
       })
       return
     }
@@ -985,6 +1023,16 @@ export function MotionApp() {
       await runClose(appId, option.name, false)
       return
     }
+    if (entry.purpose === 'mail-or-app') {
+      if (option.id.startsWith('mail:')) {
+        replaceEntry(entryId, { id: entryId, kind: 'note', text: 'Searching mail.' })
+        showMailTab()
+        mailActions.applyIntent({ kind: 'search', query: option.id.slice(5) })
+      } else {
+        replaceEntry(entryId, { id: entryId, kind: 'note', text: 'For apps, say \u201copen\u201d or \u201cclose\u201d and the app name.' })
+      }
+      return
+    }
     if (entry.purpose === 'chat') {
       replaceEntry(entryId, { id: entryId, kind: 'note', text: `Opening \u201c${option.name}\u201d.` })
       await openSavedChat(option.name)
@@ -1048,6 +1096,28 @@ export function MotionApp() {
           onSubmit={() => {
             void onSubmit()
           }}
+          tab={tab}
+          onTab={(next) => {
+            if (next !== tabRef.current) void applyPanel(true, next)
+          }}
+          mail={
+            <MailView
+              state={mail}
+              actions={mailActions}
+              onCommand={(text) => {
+                void (async () => {
+                  const catalog = await loadCatalog()
+                  if (!catalog) return
+                  await runDecision(routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: true }))
+                })()
+              }}
+              onAskChatGpt={() => {
+                void applyPanel(true, 'chat').then(() =>
+                  pushEntry({ id: 0, kind: 'handoff', variant: 'mail', prompt: MAIL_REQUEST, status: 'ready', detail: 'Check mail request. Nothing has been sent.', destination: '' })
+                )
+              }}
+            />
+          }
           view={panelView}
           onView={(next) => (next === 'chats' ? showChats() : setPanelView('log'))}
           chats={chats}

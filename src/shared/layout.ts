@@ -11,7 +11,15 @@ export const PANEL = {
   gap: 12
 } as const
 
-const PANEL_NEED = PANEL.width + PANEL.gap
+/** Panel dimensions in DIP. Chat uses PANEL; Mail asks for MAIL_PANEL and is fitted to the work area. */
+export interface PanelSize {
+  width: number
+  height: number
+  gap: number
+}
+
+export const MAIL_PANEL: PanelSize = { width: 700, height: 520, gap: 12 }
+const MAIL_MIN = { width: 360, height: 300 }
 
 export interface Rect {
   x: number
@@ -36,27 +44,42 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function contentSize(panelOpen: boolean): { width: number; height: number } {
+function contentSize(panelOpen: boolean, panel: PanelSize = PANEL): { width: number; height: number } {
   if (!panelOpen) {
     return { width: PET_WINDOW.width, height: PET_WINDOW.height }
   }
   return {
-    width: PET_WINDOW.width + PANEL.gap + PANEL.width,
-    height: Math.max(PET_WINDOW.height, PANEL.height)
+    width: PET_WINDOW.width + panel.gap + panel.width,
+    height: Math.max(PET_WINDOW.height, panel.height)
   }
 }
 
-/** Pet canvas origin inside the window. A left-side panel pushes the dog right. */
-export function petViewportOffset(panelOpen: boolean, panelSide: 'left' | 'right'): Point {
+/** Pet canvas origin inside the window. A left-side panel pushes the dog right; a tall panel centres it vertically. */
+export function petViewportOffset(panelOpen: boolean, panelSide: 'left' | 'right', panel: PanelSize = PANEL): Point {
   if (!panelOpen) return { x: 0, y: 0 }
-  const size = contentSize(true)
+  const size = contentSize(true, panel)
   return {
-    x: panelSide === 'left' ? PANEL.width + PANEL.gap : 0,
+    x: panelSide === 'left' ? panel.width + panel.gap : 0,
     y: Math.round((size.height - PET_WINDOW.height) / 2)
   }
 }
 
-function spaces(pet: Point, work: Rect): {
+/**
+ * Mail panel size for this spot: up to MAIL_PANEL, shrunk to the wider free side
+ * beside the dog and to the work area height. Never below MAIL_MIN (the window clamp
+ * then shifts the dog so both stay on screen).
+ */
+export function fitMailPanel(pet: Point, work: Rect): PanelSize {
+  const spaceLeft = pet.x - work.x
+  const spaceRight = work.x + work.width - (pet.x + PET_WINDOW.width)
+  const side = Math.max(spaceLeft, spaceRight) - MAIL_PANEL.gap
+  const widest = work.width - PET_WINDOW.width - MAIL_PANEL.gap
+  const width = Math.round(clamp(Math.min(MAIL_PANEL.width, Math.max(side, MAIL_MIN.width)), MAIL_MIN.width, Math.max(MAIL_MIN.width, widest)))
+  const height = Math.round(clamp(MAIL_PANEL.height, Math.min(MAIL_MIN.height, work.height), Math.max(MAIL_MIN.height, work.height - 2 * EDGE_MARGIN)))
+  return { width: Math.min(width, MAIL_PANEL.width), height: Math.min(height, work.height), gap: MAIL_PANEL.gap }
+}
+
+function spaces(pet: Point, work: Rect, panel: PanelSize = PANEL): {
   spaceLeft: number
   spaceRight: number
   leftFits: boolean
@@ -67,13 +90,13 @@ function spaces(pet: Point, work: Rect): {
   return {
     spaceLeft,
     spaceRight,
-    leftFits: spaceLeft >= PANEL_NEED,
-    rightFits: spaceRight >= PANEL_NEED
+    leftFits: spaceLeft >= panel.width + panel.gap,
+    rightFits: spaceRight >= panel.width + panel.gap
   }
 }
 
-export function choosePanelSide(pet: Point, work: Rect): 'left' | 'right' {
-  const { leftFits, rightFits, spaceLeft, spaceRight } = spaces(pet, work)
+export function choosePanelSide(pet: Point, work: Rect, panel: PanelSize = PANEL): 'left' | 'right' {
+  const { leftFits, rightFits, spaceLeft, spaceRight } = spaces(pet, work, panel)
   if (leftFits && !rightFits) return 'left'
   if (rightFits && !leftFits) return 'right'
   return spaceRight > spaceLeft ? 'right' : 'left'
@@ -82,21 +105,23 @@ export function choosePanelSide(pet: Point, work: Rect): 'left' | 'right' {
 export function resolvePanelSide(
   pet: Point,
   work: Rect,
-  preferred: 'left' | 'right'
+  preferred: 'left' | 'right',
+  panel: PanelSize = PANEL
 ): 'left' | 'right' {
-  const { leftFits, rightFits } = spaces(pet, work)
+  const { leftFits, rightFits } = spaces(pet, work, panel)
   if (preferred === 'left' && leftFits) return 'left'
   if (preferred === 'right' && rightFits) return 'right'
-  return choosePanelSide(pet, work)
+  return choosePanelSide(pet, work, panel)
 }
 
 export function boundsFromPet(
   pet: Point,
   panelOpen: boolean,
-  panelSide: 'left' | 'right'
+  panelSide: 'left' | 'right',
+  panel: PanelSize = PANEL
 ): Rect {
-  const size = contentSize(panelOpen)
-  const offset = petViewportOffset(panelOpen, panelSide)
+  const size = contentSize(panelOpen, panel)
+  const offset = petViewportOffset(panelOpen, panelSide, panel)
   return {
     x: pet.x - offset.x,
     y: pet.y - offset.y,
@@ -108,9 +133,10 @@ export function boundsFromPet(
 export function petFromBounds(
   bounds: Rect,
   panelOpen: boolean,
-  panelSide: 'left' | 'right'
+  panelSide: 'left' | 'right',
+  panel: PanelSize = PANEL
 ): Point {
-  const offset = petViewportOffset(panelOpen, panelSide)
+  const offset = petViewportOffset(panelOpen, panelSide, panel)
   return { x: bounds.x + offset.x, y: bounds.y + offset.y }
 }
 
@@ -127,12 +153,13 @@ export function layoutWindow(
   pet: Point,
   panelOpen: boolean,
   work: Rect,
-  preferredSide: 'left' | 'right'
+  preferredSide: 'left' | 'right',
+  panel: PanelSize = PANEL
 ): Layout {
-  const panelSide = panelOpen ? resolvePanelSide(pet, work, preferredSide) : preferredSide
-  const clamped = clampBounds(boundsFromPet(pet, panelOpen, panelSide), work)
+  const panelSide = panelOpen ? resolvePanelSide(pet, work, preferredSide, panel) : preferredSide
+  const clamped = clampBounds(boundsFromPet(pet, panelOpen, panelSide, panel), work)
   return {
-    pet: petFromBounds(clamped, panelOpen, panelSide),
+    pet: petFromBounds(clamped, panelOpen, panelSide, panel),
     bounds: {
       x: Math.round(clamped.x),
       y: Math.round(clamped.y),

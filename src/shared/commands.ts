@@ -1,4 +1,5 @@
 import { resolveChat, type SavedChat } from './chatgpt.ts'
+import { cleanQuery, parseMailCommand, type MailIntent } from './mail.ts'
 import { LITTLE_DIP, MOVE_DIP } from './guide.ts'
 
 /** One router for typed text now and a speech transcript later. */
@@ -32,6 +33,8 @@ export type CommandResult =
   | { type: 'list-chats' }
   | { type: 'ask-gpt'; question: string }
   | { type: 'check-mail'; prompt: string }
+  | { type: 'mail'; intent: MailIntent }
+  | { type: 'mail-or-app'; query: string }
   | { type: 'unknown'; text: string }
 
 
@@ -71,13 +74,21 @@ export function routeCommand(
   text: string,
   _source: CommandSource,
   catalog: CatalogApp[],
-  chats: SavedChat[] = []
+  chats: SavedChat[] = [],
+  context: { mailTab?: boolean } = {}
 ): CommandResult {
   const original = text.trim().slice(0, 2000)
   if (!original) return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
   const asked = matchAskGpt(original)
   if (asked) return asked
-  if (isCheckMail(normalize(original))) return { type: 'check-mail', prompt: MAIL_REQUEST }
+  if (isCheckMailInChatGpt(normalize(original))) return { type: 'check-mail', prompt: MAIL_REQUEST }
+  const mail = parseMailCommand(original)
+  if (mail) return { type: 'mail', intent: mail }
+  const bareSearch = /^(?:search|find|look\s+for)\s+(?:for\s+)?(.+)$/i.exec(original.replace(/[.!?]+$/, ''))
+  if (bareSearch?.[1]) {
+    const query = cleanQuery(bareSearch[1])
+    return context.mailTab ? { type: 'mail', intent: { kind: 'search', query } } : { type: 'mail-or-app', query }
+  }
   if (isQuestion(original)) return { type: 'question', prompt: original }
   const spoken = normalize(original)
   const chat = matchChatGpt(spoken, chats)
@@ -90,6 +101,7 @@ export function routeCommand(
   if (closed) return closed
   const opened = matchOpen(spoken, catalog)
   if (opened) return opened
+  if (context.mailTab) return { type: 'mail', intent: { kind: 'search', query: cleanQuery(original.replace(/[.!?]+$/, '')) } }
   return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
 }
 
@@ -110,11 +122,9 @@ export const MAIL_REQUEST =
   'accounts and date range you checked, and disclose any access limits. ' +
   'Use my existing preferences when available.'
 
-function isCheckMail(spoken: string): boolean {
-  return (
-    /^(?:check|chk)\s+(?:my\s+)?(?:e-?mails?|mail|inbox)$/.test(spoken) ||
-    /^(?:show\s+(?:me\s+)?)?(?:my\s+)?important\s+unread\s+(?:e-?mails?|mails?)$/.test(spoken)
-  )
+/** "check mail in ChatGPT": the read-only request handed to the ChatGPT app (MIKO sees no mail). */
+function isCheckMailInChatGpt(spoken: string): boolean {
+  return /^(?:check|chk)\s+(?:my\s+)?(?:e-?mails?|mail|inbox)\s+(?:in|with|using)\s+(?:chat\s*-?\s*gpt|gpt)$/.test(spoken)
 }
 
 const CHATGPT_NAME = '(?:chat\\s*-?\\s*gpt|chat\\s*g\\s*p\\s*t|gpt)'
@@ -295,6 +305,7 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'open-chatgpt':
     case 'open-chat':
     case 'list-chats':
+    case 'mail':
       return { kind: 'run' }
     case 'confirm':
     case 'close':
@@ -307,6 +318,7 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
       return { kind: 'handoff' }
     case 'choices':
     case 'chat-choices':
+    case 'mail-or-app':
       return { kind: 'review', reason: 'ambiguous' }
     default:
       return { kind: 'review', reason: 'unclear' }

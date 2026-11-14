@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SavedChat } from '../../../shared/api'
 import { SavedChats, type SavedChatsProps } from './SavedChats'
 
@@ -24,7 +24,7 @@ export type PanelEntry =
       /** 'mail': the expanded "check mail" request (no destination picker). */
       variant?: 'mail'
     }
-  | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat'; text: string; options: PanelChoice[] }
+  | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app'; text: string; options: PanelChoice[] }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
   | { id: number; kind: 'closing'; appId: string; name: string; text: string }
 
@@ -53,6 +53,10 @@ interface TextPanelProps {
   chats?: SavedChat[]
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
+  /** Chat / Mail tabs. Mail content replaces the conversation. */
+  tab?: 'chat' | 'mail'
+  onTab?: (tab: 'chat' | 'mail') => void
+  mail?: ReactNode
 }
 
 export const MAIL_NOTE =
@@ -84,7 +88,10 @@ export function TextPanel({
   onView,
   chats = [],
   chatTools,
-  onDestination
+  onDestination,
+  tab = 'chat',
+  onTab,
+  mail
 }: TextPanelProps) {
   const [localDraft, setLocalDraft] = useState('')
   const [localReplies, setLocalReplies] = useState<string[]>([])
@@ -115,10 +122,26 @@ export function TextPanel({
   }
 
   return (
-    <section className="panel" data-hit="panel" aria-label="Talk to MIKO">
+    <section className={tab === 'mail' ? 'panel glass is-mail' : 'panel glass'} data-hit="panel" aria-label="Talk to MIKO">
       <header className="panel-bar">
-        <h1>{view === 'chats' ? 'Saved chats' : 'MIKO'}</h1>
-        {onView ? (
+        <h1>{view === 'chats' && tab === 'chat' ? 'Saved chats' : 'MIKO'}</h1>
+        {onTab ? (
+          <div className="tabs" role="tablist" aria-label="Panel">
+            {(['chat', 'mail'] as const).map((t) => (
+              <button
+                type="button"
+                role="tab"
+                key={t}
+                aria-selected={tab === t}
+                className={tab === t ? 'tab is-on' : 'tab'}
+                onClick={() => onTab(t)}
+              >
+                {t === 'chat' ? 'Chat' : 'Mail'}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {onView && tab === 'chat' ? (
           <button
             type="button"
             className="text-button secondary bar-button"
@@ -131,7 +154,9 @@ export function TextPanel({
           ×
         </button>
       </header>
-      {view === 'chats' && chatTools ? (
+      {tab === 'mail' && mail ? (
+        mail
+      ) : view === 'chats' && chatTools ? (
         <SavedChats chats={chats} {...chatTools} />
       ) : (
       <>

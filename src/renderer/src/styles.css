@@ -490,3 +490,465 @@ textarea {
 .panel-entry .prompt {
   white-space: pre-wrap;
 }
+
+/* ---------- Liquid glass panel ----------
+   MIKO's window is transparent, so a backdrop blur only softens what MIKO itself
+   draws; it cannot blur the desktop. The glass is therefore mostly opaque with
+   a restrained translucent edge, and goes fully opaque for reduced transparency. */
+.panel.glass {
+  --glass-bg: rgba(30, 27, 26, 0.86);
+  --glass-line: rgba(255, 255, 255, 0.16);
+  --glass-hi: rgba(255, 255, 255, 0.22);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0) 38%),
+    var(--glass-bg);
+  border: 1px solid var(--glass-line);
+  border-radius: 20px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 18px 40px rgba(0, 0, 0, 0.32);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .panel.glass {
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .panel.glass {
+    --glass-bg: #1c1918;
+    background: #1c1918;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 10px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tab {
+  border: 0;
+  background: transparent;
+  color: rgba(246, 239, 230, 0.75);
+  font-size: 11px;
+  font-weight: 650;
+  padding: 3px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.tab.is-on {
+  background: rgba(196, 132, 74, 0.9);
+  color: #1b130e;
+}
+
+.panel.is-mail .panel-bar .close {
+  margin-left: auto;
+}
+
+/* ---------- Mail ---------- */
+.mail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #f6efe6;
+}
+
+.mail-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mail-search {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.mail-search input,
+.mail select,
+.mail-pop input:not([type='checkbox']) {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f6efe6;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 6px 28px 6px 10px;
+  font-size: 13px;
+}
+
+.mail select {
+  width: auto;
+  max-width: 190px;
+  padding-right: 8px;
+}
+
+.mail-search input:focus-visible,
+.mail select:focus-visible {
+  outline: 2px solid rgba(196, 132, 74, 0.8);
+  outline-offset: 1px;
+}
+
+.mail-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: rgba(246, 239, 230, 0.7);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.glass-button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f6efe6;
+  border-radius: 10px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.glass-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.glass-button.primary {
+  background: #c4844a;
+  border-color: #c4844a;
+  color: #1b130e;
+}
+
+.glass-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mail-filters {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.chip {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: transparent;
+  color: rgba(246, 239, 230, 0.85);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip.is-on {
+  background: rgba(196, 132, 74, 0.9);
+  border-color: transparent;
+  color: #1b130e;
+  font-weight: 650;
+}
+
+.chip.subtle {
+  border-style: dashed;
+}
+
+.mail-scope {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgba(246, 239, 230, 0.6);
+}
+
+.mail-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.mail-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #f6efe6;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.mail-row:hover,
+.mail-row:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.mail-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+
+.mail-row.is-unread .mail-dot {
+  background: #7fb4ff;
+}
+
+.mail-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mail-line {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.mail-from {
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mail-row.is-unread .mail-from,
+.mail-row.is-unread .mail-subject {
+  font-weight: 700;
+}
+
+.mail-badge,
+.mail-imp {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(246, 239, 230, 0.8);
+}
+
+.mail-imp {
+  background: rgba(196, 132, 74, 0.25);
+}
+
+.mail-imp.provider {
+  background: rgba(255, 210, 120, 0.25);
+}
+
+.mail-date {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: rgba(246, 239, 230, 0.65);
+}
+
+.mail-subject,
+.mail-snippet,
+.mail-reason {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+}
+
+.mail-snippet {
+  color: rgba(246, 239, 230, 0.62);
+}
+
+.mail-reason {
+  font-size: 11px;
+  color: #e7b98a;
+}
+
+.mail-state {
+  margin: auto;
+  max-width: 440px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  color: #f6efe6;
+  font-size: 13px;
+}
+
+.mail-state h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.mail-state p {
+  margin: 0;
+}
+
+.mail-state.small {
+  margin: 18px auto;
+  color: rgba(246, 239, 230, 0.75);
+}
+
+.mail-muted {
+  color: rgba(246, 239, 230, 0.62);
+  font-size: 12px;
+  margin: 0;
+}
+
+.mail-warn {
+  color: #ffb4a0;
+}
+
+.mail-notice {
+  margin: 0;
+  font-size: 12px;
+  color: #e7b98a;
+}
+
+.mail-banner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255, 150, 120, 0.14);
+  border: 1px solid rgba(255, 150, 120, 0.3);
+}
+
+.mail-banner.preview {
+  background: rgba(127, 180, 255, 0.12);
+  border-color: rgba(127, 180, 255, 0.3);
+}
+
+.mail-loading {
+  padding: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(246, 239, 230, 0.7);
+}
+
+.glass-button.more {
+  align-self: center;
+  margin: 6px 0 10px;
+}
+
+.mail-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.mail-pop-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.mail-pop-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail-pop .rule {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.mail-reader {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mail-reader-bar {
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.mail-head h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.mail-head p {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.mail-body {
+  flex: 1;
+  min-height: 120px;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+pre.mail-body.text {
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  color: #1d1a19;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font: 13px/1.5 -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Compact stacked layout when the screen only allows a narrow mail panel. */
+@media (max-width: 860px) {
+  .mail-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .mail-search {
+    flex-basis: 100%;
+  }
+
+  .mail select {
+    flex: 1;
+    max-width: none;
+  }
+
+  .mail-scope {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}

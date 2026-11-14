@@ -38,7 +38,9 @@ npm test
 | "open ChatGPT" | Launches or focuses the ChatGPT desktop app; opens chatgpt.com in your default browser if the app isn't installed. MIKO says which happened. |
 | Saved chats | Panel → **Saved chats**: Add (name + chatgpt.com conversation, Project or custom GPT link), Open, Rename (✎), Remove (×). Say or type "open my FreshNet chat" or "show saved chats". Links open through the system's normal handler (your default browser unless that's ChatGPT). |
 | "ask GPT <question>" | Shows the exact question with **Copy and open ChatGPT** and an optional saved-chat destination. Copies the question and brings ChatGPT forward; you paste it. **Paste reply** brings an answer back. |
-| "check mail" / "chk mail" / "check my inbox" / "important unread mail" | Shows MIKO's read-only mail-check request for ChatGPT with **Continue in ChatGPT**: copies it and brings ChatGPT forward. Paste it and press Send. ChatGPT reads the mail; MIKO never sees it. |
+| Mail tab | Panel → **Mail** (about 700×520, fitted beside the dog). Gmail, read-only, after the one-time setup in PROJECT_LOG.md. Search all mail, account selector, Recent / Unread / Important (with reasons and adjustable Rules), Load more, Refresh, read inside MIKO, **Open original** in Gmail. |
+| "check mail", "recent mail", "unread mail", "important unread mail", "search mail invoice", "emails from Imran", "mail about interview", "open the second email" | Mail commands, typed or spoken. In the Mail tab bare words search mail; elsewhere "find …" asks mail or app. |
+| "check mail in ChatGPT" | Hands a read-only mail-check request to the ChatGPT app instead (MIKO sees no mail). |
 | Hold Caps Lock + A (macOS) | Push-to-talk. MIKO listens while both are held and puts the words in the chat box when you let go (not sent). Caps Lock is restored. Needs Accessibility for "MIKO Keys" once. |
 | Double-click the puppy | Opens the note panel beside MIKO. The note stays inside the display work area, flipping to the other side of the puppy when the first side does not fit. |
 | Esc | Closes the note. MIKO stays visible. The window has to be focused (click the puppy or the note first). |

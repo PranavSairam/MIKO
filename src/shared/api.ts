@@ -15,6 +15,14 @@ export const IPC = {
   launchApp: 'miko:launch-app',
   openChatGpt: 'miko:open-chatgpt',
   chatsList: 'miko:chats-list',
+  mailStatus: 'miko:mail-status',
+  mailConnect: 'miko:mail-connect',
+  mailDisconnect: 'miko:mail-disconnect',
+  mailList: 'miko:mail-list',
+  mailRead: 'miko:mail-read',
+  mailOpenOriginal: 'miko:mail-open-original',
+  mailRules: 'miko:mail-rules',
+  mailSetRules: 'miko:mail-set-rules',
   chatsAdd: 'miko:chats-add',
   chatsRename: 'miko:chats-rename',
   chatsRemove: 'miko:chats-remove',
@@ -89,9 +97,15 @@ export interface MoveDelta {
   dy: number
 }
 
+export type PanelMode = 'chat' | 'mail'
+
 export interface PanelLayout {
   panelOpen: boolean
   panelSide: 'left' | 'right'
+  mode: PanelMode
+  /** Current panel size in DIP (Mail is fitted to the work area). */
+  panelWidth: number
+  panelHeight: number
 }
 
 export interface TravelDelta {
@@ -155,6 +169,36 @@ export interface ShiftDelta {
 
 export type { KeyEvent } from './keys'
 export type { SavedChat } from './chatgpt'
+import type { ImportanceRules, MailAccount, MailFilter, MailMessage, MailSummary, Importance } from './mail'
+export type { ImportanceRules, MailAccount, MailFilter, MailMessage, MailSummary, Importance }
+
+export interface MailStatusInfo {
+  accounts: MailAccount[]
+  configured: boolean
+  preview: boolean
+  secureStorage: boolean
+  setupPath: string
+}
+
+export type ListedMail = MailSummary & { importance: Importance }
+
+export interface MailListResult {
+  listId: string
+  items: ListedMail[]
+  done: boolean
+  errors: { account: string; kind: 'reconnect' | 'error'; message: string }[]
+}
+
+export interface MailListRequest {
+  listId: string
+  more: boolean
+  filter: MailFilter
+  query: string
+  account: string
+  unreadOnly: boolean
+}
+
+export type MailReadResult = { ok: true; message: MailMessage } | { ok: false; reason: string; reconnect?: string }
 import type { SavedChat } from './chatgpt'
 import type { KeyEvent } from './keys'
 
@@ -163,7 +207,7 @@ export interface MikoApi {
   /** Move the window by a DIP delta. The main process clamps the pet to the work area. */
   moveBy: (delta: MoveDelta) => void
   /** Resize around the pet so the note panel stays inside the work area. */
-  setPanelOpen: (open: boolean) => Promise<PanelLayout>
+  setPanelOpen: (open: boolean, mode?: PanelMode) => Promise<PanelLayout>
   /** Window-local DIP rectangles that should receive clicks. */
   setHitRects: (rects: HitRect[]) => void
   /** Keep the window clickable for the whole Alt/Option drag, including outside the graphic. */
@@ -213,6 +257,15 @@ export interface MikoApi {
   /** "Execute voice commands automatically" (tray setting). */
   getVoiceAuto: () => Promise<boolean>
   onVoiceAuto: (listener: (enabled: boolean) => void) => () => void
+  /** Gmail (read-only). Tokens never reach the renderer. */
+  mailStatus: () => Promise<MailStatusInfo | null>
+  mailConnect: (loginHint?: string) => Promise<{ ok: boolean; reason: string; email?: string }>
+  mailDisconnect: (email: string) => Promise<boolean>
+  mailList: (request: MailListRequest) => Promise<MailListResult | null>
+  mailRead: (key: string) => Promise<MailReadResult>
+  mailOpenOriginal: (key: string) => Promise<boolean>
+  mailRules: () => Promise<ImportanceRules | null>
+  mailSetRules: (rules: ImportanceRules) => Promise<ImportanceRules | null>
   /** Show the running-apps switcher above MIKO. */
   openSwitcher: () => void
   /** Reduced motion skips the exit and holds MIKO in place. */

@@ -4,7 +4,9 @@ import {
   EDGE_MARGIN,
   PANEL,
   PET_WINDOW,
+  MAIL_PANEL,
   choosePanelSide,
+  fitMailPanel,
   layoutWindow,
   placeInitially
 } from './layout.ts'
@@ -111,5 +113,39 @@ describe('dragging', () => {
     assert.equal(next.pet.x, start.pet.x + 24)
     assert.equal(next.pet.y, start.pet.y - 10)
     assert.equal(next.bounds.x, next.pet.x - PANEL.width - PANEL.gap)
+  })
+})
+
+describe('mail panel size', () => {
+  const inside = (r: { x: number; y: number; width: number; height: number }, w: typeof desktop): boolean =>
+    r.x >= w.x && r.y >= w.y && r.x + r.width <= w.x + w.width && r.y + r.height <= w.y + w.height
+
+  it('uses about 700x520 where it fits, keeping the dog beside it', () => {
+    const placed = placeInitially(desktop)
+    const size = fitMailPanel(placed.pet, desktop)
+    assert.deepEqual({ width: size.width, height: size.height }, { width: MAIL_PANEL.width, height: MAIL_PANEL.height })
+    const opened = layoutWindow(placed.pet, true, desktop, choosePanelSide(placed.pet, desktop, size), size)
+    assert.equal(opened.bounds.width, PET_WINDOW.width + size.gap + size.width)
+    assert.equal(opened.bounds.height, size.height)
+    assert.ok(inside(opened.bounds, desktop))
+    const petRect = { ...opened.pet, width: PET_WINDOW.width, height: PET_WINDOW.height }
+    assert.ok(inside(petRect, desktop), 'dog stays on screen')
+  })
+
+  it('shrinks to the space beside the dog on a small screen', () => {
+    const small = { x: 0, y: 0, width: 800, height: 480 }
+    const placed = placeInitially(small)
+    const size = fitMailPanel(placed.pet, small)
+    assert.ok(size.width < MAIL_PANEL.width && size.width >= 360)
+    assert.ok(size.height <= small.height - 2 * EDGE_MARGIN && size.height >= 300)
+    const opened = layoutWindow(placed.pet, true, small, choosePanelSide(placed.pet, small, size), size)
+    assert.ok(inside(opened.bounds, small))
+    assert.ok(inside({ ...opened.pet, width: PET_WINDOW.width, height: PET_WINDOW.height }, small))
+  })
+
+  it('keeps the chat panel size unchanged by default', () => {
+    const placed = placeInitially(desktop)
+    const opened = layoutWindow(placed.pet, true, desktop, 'left')
+    assert.equal(opened.bounds.width, PET_WINDOW.width + PANEL.gap + PANEL.width)
   })
 })

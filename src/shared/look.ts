@@ -1,4 +1,4 @@
-import { petViewportOffset } from './layout.ts'
+import { PANEL, petViewportOffset, type PanelSize } from './layout.ts'
 
 /** About 30 pointer samples per second. */
 export const POINTER_INTERVAL_MS = 33
@@ -52,8 +52,12 @@ export function pointerToViewport(sample: PointerSample, canvasX: number, canvas
   }
 }
 
-export function canvasOrigin(panelOpen: boolean, panelSide: 'left' | 'right'): { x: number; y: number } {
-  return petViewportOffset(panelOpen, panelSide)
+export function canvasOrigin(
+  panelOpen: boolean,
+  panelSide: 'left' | 'right',
+  panel: PanelSize = PANEL
+): { x: number; y: number } {
+  return petViewportOffset(panelOpen, panelSide, panel)
 }
 
 export function lookTarget(

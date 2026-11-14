@@ -3,6 +3,11 @@ import {
   IPC,
   type AppListing,
   type HitRect,
+  type ImportanceRules,
+  type MailListRequest,
+  type MailListResult,
+  type MailReadResult,
+  type MailStatusInfo,
   type OpenResult,
   type SavedChat,
   type ChatEditResult,
@@ -29,8 +34,8 @@ const api: MikoApi = {
   moveBy: (delta: MoveDelta): void => {
     ipcRenderer.send(IPC.moveBy, delta)
   },
-  setPanelOpen: (open: boolean): Promise<PanelLayout> => {
-    return ipcRenderer.invoke(IPC.setPanelOpen, open) as Promise<PanelLayout>
+  setPanelOpen: (open: boolean, mode?: 'chat' | 'mail'): Promise<PanelLayout> => {
+    return ipcRenderer.invoke(IPC.setPanelOpen, open, mode === 'mail' ? 'mail' : 'chat') as Promise<PanelLayout>
   },
   setHitRects: (rects: HitRect[]): void => {
     ipcRenderer.send(IPC.setHitRects, rects)
@@ -157,6 +162,25 @@ const api: MikoApi = {
     ipcRenderer.on(IPC.voiceAuto, wrapped)
     return () => ipcRenderer.removeListener(IPC.voiceAuto, wrapped)
   },
+  mailStatus: async () => (await ipcRenderer.invoke(IPC.mailStatus)) as MailStatusInfo | null,
+  mailConnect: async (hint?: string) => {
+    const r = (await ipcRenderer.invoke(IPC.mailConnect, typeof hint === 'string' ? hint : undefined)) as {
+      ok?: unknown
+      reason?: unknown
+      email?: unknown
+    } | null
+    return {
+      ok: r?.ok === true,
+      reason: typeof r?.reason === 'string' ? r.reason : '',
+      email: typeof r?.email === 'string' ? r.email : undefined
+    }
+  },
+  mailDisconnect: async (email: string) => (await ipcRenderer.invoke(IPC.mailDisconnect, String(email))) === true,
+  mailList: async (request: MailListRequest) => (await ipcRenderer.invoke(IPC.mailList, request)) as MailListResult | null,
+  mailRead: async (key: string) => (await ipcRenderer.invoke(IPC.mailRead, String(key))) as MailReadResult,
+  mailOpenOriginal: async (key: string) => (await ipcRenderer.invoke(IPC.mailOpenOriginal, String(key))) === true,
+  mailRules: async () => (await ipcRenderer.invoke(IPC.mailRules)) as ImportanceRules | null,
+  mailSetRules: async (rules: ImportanceRules) => (await ipcRenderer.invoke(IPC.mailSetRules, rules)) as ImportanceRules | null,
   openSwitcher: (): void => {
     ipcRenderer.send(IPC.openSwitcher)
   },

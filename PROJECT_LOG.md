@@ -90,6 +90,110 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, Mail panel (Gmail, read-only)
+**Provider:** Gmail. Nothing was configured locally; the owner's addresses are Gmail.
+- **Sign-in:** Google's installed-app OAuth flow (PKCE + loopback redirect on `127.0.0.1`), scope `gmail.readonly` only.
+- **Token storage:**
+  - refresh tokens are encrypted with Electron `safeStorage` (Keychain) in `userData/mail-accounts.enc`
+  - nothing is stored if encryption isn't available
+  - access tokens are kept in memory only
+  - no token reaches the renderer
+- **Credentials file:** the OAuth client is read from `userData/mail-oauth.json` (or `MIKO_GOOGLE_CLIENT_ID` / `MIKO_GOOGLE_CLIENT_SECRET`), never from the repo.
+
+**Gmail setup (owner action, one time):**
+1. https://console.cloud.google.com/: create a project, e.g. "MIKO".
+2. APIs & Services → Library → **Gmail API** → Enable.
+3. Google Auth Platform (OAuth consent screen) → Get started:
+   - app name MIKO
+   - support email = your Gmail
+   - Audience **External**
+   - contact email
+   - Create
+4. Audience → **Test users** → add every Gmail you'll connect (e.g. pranavsairamanc@gmail.com).
+5. Data access → Add or remove scopes → add `https://www.googleapis.com/auth/gmail.readonly` → Update → Save.
+6. Clients → **Create client** → type **Desktop app**, name "MIKO desktop" → Create, then copy the Client ID and Client secret.
+7. Create `~/Library/Application Support/MIKO/mail-oauth.json`:
+   `{"google": {"clientId": "<…>.apps.googleusercontent.com", "clientSecret": "<…>"}}`
+   then run `chmod 600` on it.
+8. Restart MIKO → Mail tab → **Connect account**. In the browser, pick the account → "Google hasn't verified this app" → Continue (it's your own app in Testing) → allow. The tab says "MIKO is connected".
+- **Limitation:** while the Google app is in *Testing*, Google expires refresh tokens for this scope after about 7 days, so MIKO will show **Reconnect**. Publishing it needs Google's restricted-scope verification.
+
+**What was built**
+- **Window:**
+  - layout takes a panel size (`PanelSize`)
+  - `fitMailPanel()` asks for 700×520 and shrinks to the free side and height, minimum 360×300
+  - `setPanelOpen(open, mode)` returns the size and the renderer sets the CSS variables
+  - look-at math uses the live size
+  - Chat stays 272×220
+  - a compact stacked toolbar applies below an 860 px window width
+- **Look:** "glass" surfaces with gradient highlights, a thin edge, a 14 px backdrop blur, and an opaque fallback under `prefers-reduced-transparency`.
+  - Note: MIKO's window is transparent, so blur can't reach the desktop behind it. The surface is therefore 86% opaque to keep text readable.
+- **Mail tab:**
+  - search box (debounced 350 ms; stale responses dropped by sequence number)
+  - account selector ("All accounts" merges newest-first across accounts)
+  - clear search, Refresh, Accounts (Connect, Reconnect, Disconnect with Google token revoke)
+  - Recent / Unread / Important filters
+  - rows show unread dot, sender, subject, snippet, local date/time and account badge
+  - loading, empty, error/retry, reconnect banner and preview banner states
+  - Connect mail state, with "Ask ChatGPT instead" as a fallback
+- **Mailbox rules:**
+  - Recent = 10 newest in `in:inbox`, read and unread
+  - Unread = `in:inbox is:unread`
+  - Search = Gmail-side query over the whole mailbox with `-in:spam -in:trash`
+  - Load more follows Gmail page tokens
+  - message keys are `gmail:<account>:<messageId>`
+- **Reader:**
+  - shows sender, recipients, subject, date and "still unread"
+  - HTML runs through an allowlist sanitizer (drops scripts, forms, embeds, event handlers, styles with `url()`, and remote image sources; links made inert with the address on hover)
+  - shown in a `sandbox=""` iframe with its own CSP (no scripts, no network, `img-src data:`)
+  - plain-text fallback
+  - Back to results keeps the query and scroll position
+  - viewing uses `messages.get`, which can't change labels; the scope is read-only anyway
+- **Open original:** `https://mail.google.com/mail/u/<account>/#all/<messageId>` (hex id checked). The UI warns that Gmail may mark it read.
+- **Important:**
+  - Gmail's `IMPORTANT` label, plus heuristic rules: direct request to you, deadline, approval, payment, your own keywords
+  - Promotions, Social and Forums are skipped by the rules
+  - each row shows "Gmail: important" or "Rule", with the reason ("Heuristic: …")
+  - rules are editable via Important → Rules, stored as `mailRules` in settings
+- **Routing:**
+  - mail phrases come before app launching (`parseMailCommand`)
+  - "open the second email" uses the results on screen and asks if unclear
+  - in the Mail tab, bare words or "find X" search mail
+  - outside it, "find/search X" asks "Search mail or app command?"
+  - "check mail in ChatGPT" keeps the old ChatGPT handoff
+- **Dev preview:** `MIKO_MAIL_PREVIEW=1 npm run dev` / `npm start` (unpackaged only) uses `[Sample]` messages across two fake accounts. `MIKO_MAIL_PREVIEW_EXPIRE=<account>` simulates an expired sign-in.
+
+**Verification: mocked (dev preview in the real app, Playwright)**
+- "chk mail" switched to the Mail tab, panel 700×520 (window 932×520), dog beside it
+- 10 rows, newest first, read and unread mixed, both account badges
+- Load more gave 20 distinct rows, still newest first
+- Unread showed only unread messages
+- Important rows carry reasons ("Gmail marked it important"; "Heuristic: Mentions a deadline ("overdue") · About a payment ("Invoice")"; …)
+- search "tax refund" found the oldest message (beyond the first pages)
+- rapid typing i→invoice ended with exactly the "invoice" results (same as a single slow search)
+- reader: no `<script>`, `onclick`, remote image or `href` left; CSP present; "1 remote image blocked"; "still unread"
+- Back restored the first row and scrollTop 120
+- spoken "Open the second email." opened row 2
+- bare "interview" + Enter in the Mail tab searched
+- switching back to Chat restored 504×250
+- "find invoice" in Chat asked Search mail / App command
+- expired account: Reconnect banner, and the other account still listed
+- normal mode with nothing set up: Connect mail state and no sample rows
+- small screens: unit-tested with `fitMailPanel` on 800×480 (fits inside the work area, dog visible)
+- typecheck passes, tests pass, build passes
+
+**Verification: live (real Gmail): PENDING.** Needs the setup above. To do:
+- latest 10 and pagination
+- unread filter
+- keyword search beyond the first page
+- read a message and confirm it stays unread in Gmail
+- Open original opens that exact message
+- rapid search
+- expired sign-in (wait about 7 days or revoke at myaccount.google.com/permissions)
+- small-screen layout on a real small display
+
+**Windows:** the mail code is cross-platform except storage. `safeStorage` uses DPAPI on Windows. Untested there.
+
 ### 2026-11-14: Session 1, "check mail" handoff
 **How to use:** say or type "check mail", "chk mail", "check my inbox", "check my email" or "important unread mail(s)". MIKO shows the expanded request (`MAIL_REQUEST` in `src/shared/commands.ts`, worded exactly as the owner specified) with **Continue in ChatGPT** and **Paste reply**. Continue copies the request and brings the ChatGPT app forward; the card then reads "Request copied—paste into ChatGPT and press Send." plus where ChatGPT opened. Email retrieval and the summary stay inside ChatGPT.
 

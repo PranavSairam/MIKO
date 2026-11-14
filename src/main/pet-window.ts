@@ -1,10 +1,13 @@
 import { app, BrowserWindow, screen, type Rectangle } from 'electron'
 import { join } from 'path'
-import { IPC, type HitRect, type PanelLayout, type PresenceEvent } from '../shared/api'
+import { IPC, type HitRect, type PanelLayout, type PresenceEvent, type PanelMode } from '../shared/api'
 import {
   EDGE_MARGIN,
   PET_WINDOW,
   layoutWindow,
+  fitMailPanel,
+  PANEL,
+  type PanelSize,
   placeInitially,
   choosePanelSide,
   type Point,
@@ -24,6 +27,7 @@ const CURSOR_POLL_MS = 40
 let petWindow: BrowserWindow | null = null
 let petOrigin: Point = { x: 0, y: 0 }
 let panelOpen = false
+let panelMode: PanelMode = 'chat'
 let panelSide: 'left' | 'right' = 'left'
 let hitRects: HitRect[] = []
 let dragActive = false
@@ -231,12 +235,22 @@ export function petContentFrame(): { x: number; y: number; scaleFactor: number }
 }
 
 export function currentLayout(): PanelLayout {
-  return { panelOpen, panelSide }
+  return layoutResult()
 }
 
-export function setPanelOpen(open: boolean): PanelLayout {
+export function setPanelOpen(open: boolean, mode: PanelMode = 'chat'): PanelLayout {
   panelOpen = open
+  panelMode = open ? mode : 'chat'
   return relayout(open)
+}
+
+function panelSize(work: Rectangle): PanelSize {
+  return panelMode === 'mail' ? fitMailPanel(petOrigin, work) : PANEL
+}
+
+function layoutResult(): PanelLayout {
+  const size = petWindow && !petWindow.isDestroyed() ? panelSize(workAreaFor(petOrigin)) : PANEL
+  return { panelOpen, panelSide, mode: panelMode, panelWidth: size.width, panelHeight: size.height }
 }
 
 export function movePetBy(dx: number, dy: number): void {
@@ -325,10 +339,11 @@ function workAreaFor(pet: Point): Rectangle {
 }
 
 function relayout(pickSide: boolean): PanelLayout {
-  if (!petWindow || petWindow.isDestroyed()) return { panelOpen, panelSide }
+  if (!petWindow || petWindow.isDestroyed()) return layoutResult()
   const work = workAreaFor(petOrigin)
-  const preferred = pickSide ? choosePanelSide(petOrigin, work) : panelSide
-  const next = layoutWindow(petOrigin, panelOpen, work, preferred)
+  const size = panelSize(work)
+  const preferred = pickSide ? choosePanelSide(petOrigin, work, size) : panelSide
+  const next = layoutWindow(petOrigin, panelOpen, work, preferred, size)
   petOrigin = next.pet
   panelSide = next.panelSide
   const bounds = next.bounds
@@ -343,7 +358,7 @@ function relayout(pickSide: boolean): PanelLayout {
     petWindow.setContentBounds(bounds, false)
   }
   emitPlacement()
-  return { panelOpen, panelSide }
+  return { panelOpen, panelSide, mode: panelMode, panelWidth: size.width, panelHeight: size.height }
 }
 
 function emitPlacement(): void {

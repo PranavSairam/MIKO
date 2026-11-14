@@ -167,21 +167,28 @@ describe('ChatGPT commands', () => {
   })
 })
 
-describe('check mail', () => {
-  it('expands mail phrases into the read-only ChatGPT request', () => {
-    for (const phrase of ['check mail', 'chk mail', 'Check mail.', 'important unread mail', 'Important unread emails', 'check my inbox', 'check my email', 'chk my mail']) {
-      assert.deepEqual(routeCommand(phrase, 'voice', catalog), { type: 'check-mail', prompt: MAIL_REQUEST }, phrase)
-    }
+describe('mail routing', () => {
+  it('handles mail intent before app launching', () => {
+    assert.deepEqual(routeCommand('chk mail', 'voice', catalog), { type: 'mail', intent: { kind: 'recent' } })
+    assert.deepEqual(routeCommand('show my latest emails', 'typed', catalog), { type: 'mail', intent: { kind: 'recent' } })
+    assert.deepEqual(routeCommand('important unread mail', 'typed', catalog), { type: 'mail', intent: { kind: 'important', unreadOnly: true } })
+    assert.deepEqual(routeCommand('search mail invoice', 'typed', catalog), { type: 'mail', intent: { kind: 'search', query: 'invoice' } })
+    assert.deepEqual(routeCommand('emails from Imran', 'typed', catalog), { type: 'mail', intent: { kind: 'search', query: 'from:Imran' } })
+    assert.deepEqual(routeCommand('open the second email', 'typed', catalog), { type: 'mail', intent: { kind: 'open', index: 2 } })
+    assert.equal(planVoice(routeCommand('chk mail', 'voice', catalog), true).kind, 'run')
   })
-  it('keeps the exact request wording', () => {
-    assert.match(MAIL_REQUEST, /^Check the email accounts currently connected to this ChatGPT account\./)
+  it('keeps the ChatGPT mail handoff on request', () => {
+    assert.deepEqual(routeCommand('check mail in ChatGPT', 'typed', catalog), { type: 'check-mail', prompt: MAIL_REQUEST })
     assert.match(MAIL_REQUEST, /Keep messages unread and make this a read-only check\./)
-    assert.match(MAIL_REQUEST, /Use my existing preferences when available\.$/)
   })
-  it('is a handoff for review, not an action', () => {
-    assert.equal(planVoice(routeCommand('chk mail', 'voice', catalog), true).kind, 'handoff')
+  it('in the Mail tab, bare keywords search mail', () => {
+    assert.deepEqual(routeCommand('invoice', 'typed', catalog, [], { mailTab: true }), { type: 'mail', intent: { kind: 'search', query: 'invoice' } })
+    assert.deepEqual(routeCommand('find tax refund', 'typed', catalog, [], { mailTab: true }), { type: 'mail', intent: { kind: 'search', query: 'tax refund' } })
+    assert.equal(routeCommand('move left', 'typed', catalog, [], { mailTab: true }).type, 'move')
   })
-  it('does not swallow unrelated phrases', () => {
-    assert.notEqual(routeCommand('open mail', 'typed', catalog).type, 'check-mail')
+  it('outside it, ambiguous search phrases ask', () => {
+    assert.deepEqual(routeCommand('find invoice', 'typed', catalog), { type: 'mail-or-app', query: 'invoice' })
+    assert.deepEqual(planVoice(routeCommand('search tax refund', 'voice', catalog), true), { kind: 'review', reason: 'ambiguous' })
+    assert.equal(routeCommand('open calculator', 'typed', catalog).type !== 'mail-or-app', true)
   })
 })
