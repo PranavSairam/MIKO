@@ -162,6 +162,13 @@ func copySelection(pid: pid_t) -> (String?, Bool) {
 func activate(_ pid: pid_t) -> Bool {
     guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
     if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+    // Accessibility's AXFrontmost targets this exact process and works from a background helper
+    // (macOS can ignore NSRunningApplication.activate() from a process that isn't active).
+    AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXFrontmost" as CFString, kCFBooleanTrue)
+    for _ in 0..<20 {
+        usleep(25_000)
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid { return true }
+    }
     app.activate()
     for _ in 0..<40 {
         usleep(25_000)

@@ -10,6 +10,7 @@ import { cancelListening, startListening, stopListening } from './speech'
 import { openSwitcher, registerSwitcherIpc } from './switcher-window'
 import { registerMailIpc } from './mail/ipc'
 import { bridgeStatus, cancelBridge, newConversation, sendBridge } from './bridge'
+import { armPaste, clipboardSelection, disarmPaste, replaceSelection } from './selection'
 import { mikoPreferences, savedChats, setMikoPreferences, setSavedChats, voiceAutoExecute } from './settings'
 import {
   currentLayout,
@@ -171,12 +172,27 @@ export function registerIpc(presence: {
   registerMailIpc()
 
   ipcMain.handle(IPC.bridgeStatus, (event) => (trusted(event) ? bridgeStatus() : null))
-  ipcMain.handle(IPC.bridgeSend, (event, requestId: unknown, prompt: unknown) => {
+  ipcMain.handle(IPC.selectionClipboard, (event) => (trusted(event) ? clipboardSelection() : null))
+  ipcMain.handle(IPC.selectionReplace, (event, captureId: unknown, text: unknown) => {
+    if (!trusted(event) || typeof captureId !== 'string' || typeof text !== 'string' || !text || text.length > 20000) {
+      return { ok: false, reason: 'Not allowed.', verified: false }
+    }
+    return replaceSelection(captureId, text)
+  })
+  ipcMain.handle(IPC.pasteArm, (event, text: unknown) => {
+    if (!trusted(event) || typeof text !== 'string' || text.length > 20000) return { ok: false, reason: 'Not allowed.' }
+    return armPaste(text)
+  })
+  ipcMain.on(IPC.pasteCancel, (event) => {
+    if (trusted(event)) disarmPaste('cancelled', 'Paste cancelled.')
+  })
+  ipcMain.handle(IPC.bridgeSend, (event, requestId: unknown, prompt: unknown, opts: unknown) => {
     if (!trusted(event) || typeof requestId !== 'string' || !/^[a-z0-9-]{4,40}$/i.test(requestId)) {
       return { ok: false, reason: 'Not allowed.' }
     }
-    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000) return { ok: false, reason: 'That request is empty or too long.' }
-    return sendBridge(requestId, prompt.trim())
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000) return { ok: false, reason: 'That request is empty or too long.' }
+    const o = (opts ?? {}) as { fresh?: unknown; keep?: unknown }
+    return sendBridge(requestId, prompt.trim(), { fresh: o.fresh === true, keep: o.keep === true })
   })
   ipcMain.handle(IPC.bridgeNew, (event) => {
     if (trusted(event)) newConversation()

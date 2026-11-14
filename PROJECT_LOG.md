@@ -90,6 +90,61 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Milestone 3, selected-text assistant (built; live verification incomplete)
+**Controls**
+- Select text in any app and press **⌃⌥S**. You can change it in Chat tab → ⚙ → "Set selection shortcut"; it's checked and kept only if it registers.
+- MIKO captures **before** showing itself, then shows a **Selected text** card: source app, how it was captured, and the quoted text.
+- **Actions:**
+  - Fix grammar, Summarize, Explain
+  - Rewrite (with a tone)
+  - Draft reply (with an instruction, e.g. "Reply saying I'll send it tomorrow.")
+  - Start conversation (with an optional question)
+- Voice or typed while a selection is active: "fix grammar", "summarize this", "explain it", "rewrite this in a friendly tone", "make it more formal", "reply saying …".
+- If capture fails: **Use clipboard text**.
+
+**Results**
+- The card shows **your instruction** and the **output** separately.
+- **Copy.**
+- **Replace selection:** re-verifies the same app, the same field signature and the same selection hash, then replaces via Accessibility (read back) or a ⌘V with conditional clipboard restore.
+- **Paste where I click:**
+  - An armed banner says "Armed for 30 s: click into the field you want, then press ⌃⌥V to paste once. Esc cancels."
+  - It pastes only into a verified editable, non-password field of a non-MIKO app, exactly once.
+  - It disarms on success, failure, Esc, a 30 s timeout, a new generation, a new capture, or closing the panel. Sending stays with you.
+- **Replies may ask one short question** ("QUESTION:") when an essential detail is missing; an Answer box re-runs with your answer.
+- **Selected text is quoted data:** it sits between `<selected_text>` tags with break-out neutralised, and the model is told not to follow instructions inside it.
+- Selection actions are **one-off** assistant runs (they don't change your current conversation), except "Start conversation".
+
+**Permissions:** Accessibility for the app that launches MIKO (`miko-ax` runs as its child). Password fields are never read or written.
+
+**Verified**
+- **Helper, directly in a TextEdit scratch document:**
+  - capture
+  - verified replace
+  - changed selection refused
+  - ⌘V paste verified, clipboard restored
+  - new copy kept when the clipboard changed mid-operation
+  - password dialog refused
+- **In MIKO:**
+  - ⌃⌥S shows the Selected-text card ("Selected in TextEdit · read via Accessibility")
+  - Fix grammar returned "I had an apple, and they were happy at the park yesterday."
+  - reply drafting returned "I'll send it tomorrow." with the instruction shown separately
+  - armed paste: the banner appears; ⌃⌥V with Finder in front was refused ("isn't an editable text field"); Esc cancelled
+  - pasting once: a second ⌃⌥V did nothing
+- typecheck passes, 123/123 tests pass, build passes.
+
+**Found and fixed:** when MIKO itself is in front (after you click its button), `NSRunningApplication.activate()` from the helper was ignored, so Replace said "The original app isn't available any more". The helper now uses Accessibility `AXFrontmost` on the exact pid first. **Re-test pending.**
+
+**Problems in the last live run**
+- The owner was using the Mac during the automated run. Excel became frontmost, so one capture read a single Excel cell ("campus") and sent it to the assistant as a test. Nothing was typed into Excel and the clipboard was restored.
+- **Live UI tests must run only when the owner isn't using the keyboard or mouse.**
+
+**Pending live checks** (need an idle Mac)
+- Replace selection after clicking MIKO (activation fix)
+- changed-selection and closed-document refusals through MIKO
+- a second app
+
+**Known limitation: Google Chrome web text fields aren't exposed to Accessibility by default.** Capture there falls back to ⌘C; paste into Chrome is refused because the field can't be verified. Enabling Chrome's accessibility tree (e.g. via `AXEnhancedUserInterface`) is a possible follow-up.
+
 ### 2026-11-15: Milestone 2, MIKO mailbox
 **Provider:** Gmail, through the existing official OAuth provider (`gmail.readonly`, PKCE loopback). Tokens and client secret are encrypted with safeStorage/Keychain in userData. Nothing is stored in Git. The setup form is in the Mail tab; steps are under "Gmail setup" below.
 

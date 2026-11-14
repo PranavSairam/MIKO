@@ -42,6 +42,21 @@ export type PanelEntry =
       startedAt?: number
       /** Message number within its conversation. */
       turn?: number
+      /** Set when this is a selected-text action. */
+      selection?: { captureId: string; action: string; label: string; instruction: string; canReplace: boolean; app: string; text: string }
+      question?: string
+      after?: string
+    }
+  | {
+      id: number
+      kind: 'selection'
+      captureId: string
+      ok: boolean
+      text: string
+      app: string
+      method: string
+      canReplace: boolean
+      reason: string
     }
 
 interface TextPanelProps {
@@ -70,11 +85,25 @@ interface TextPanelProps {
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
   onInsertChoice?: (id: number, mode: 'append' | 'replace' | null) => void
+  onSelectionAction?: (id: number, action: string, instruction: string) => void
+  onUseClipboard?: () => void
+  onResultCopy?: (id: number) => void
+  onResultReplace?: (id: number) => void
+  onResultPaste?: (id: number) => void
+  onResultAnswer?: (id: number, answer: string) => void
+  pasteBanner?: { entryId: number; text: string; armed: boolean } | null
+  onPasteCancel?: () => void
   onBridgeCancel?: (requestId: string) => void
   onBridgeNew?: () => void
   onAskInChatGpt?: (prompt: string) => void
   assistantThread?: string
-  prefs?: { text: string; message: string; onSave: (text: string) => Promise<void> }
+  prefs?: {
+    text: string
+    message: string
+    onSave: (text: string) => Promise<void>
+    shortcut: string
+    onSaveShortcut: (value: string) => Promise<void>
+  }
   /** Chat / Mail tabs. Mail content replaces the conversation. */
   tab?: 'chat' | 'mail'
   onTab?: (tab: 'chat' | 'mail') => void
@@ -116,6 +145,14 @@ export function TextPanel({
   onDestination,
   onBridgeCancel,
   onInsertChoice,
+  onSelectionAction,
+  onUseClipboard,
+  onResultCopy,
+  onResultReplace,
+  onResultPaste,
+  onResultAnswer,
+  pasteBanner,
+  onPasteCancel,
   onBridgeNew,
   onAskInChatGpt,
   assistantThread = '',
@@ -267,7 +304,22 @@ export function TextPanel({
                   </div>
                 </>
               ) : null}
-              {entry.kind === 'bridge' ? (
+              {entry.kind === 'selection' ? (
+                <SelectionCard entry={entry} onAction={onSelectionAction} onUseClipboard={onUseClipboard} />
+              ) : null}
+              {entry.kind === 'bridge' && entry.selection ? (
+                <ResultCard
+                  entry={entry}
+                  onCancel={onBridgeCancel}
+                  onCopy={onResultCopy}
+                  onReplace={onResultReplace}
+                  onPaste={onResultPaste}
+                  onAnswer={onResultAnswer}
+                  paste={pasteBanner && pasteBanner.entryId === entry.id ? pasteBanner : null}
+                  onPasteCancel={onPasteCancel}
+                />
+              ) : null}
+              {entry.kind === 'bridge' && !entry.selection ? (
                 <>
                   <p className="assistant-label">
                     MIKO assistant · {entry.thread ? `conversation ${entry.thread.slice(0, 8)}` : 'new conversation'}
@@ -387,8 +439,21 @@ export function TextPanel({
   )
 }
 
-function Preferences({ text, message, onSave }: { text: string; message: string; onSave: (text: string) => Promise<void> }) {
+function Preferences({
+  text,
+  message,
+  onSave,
+  shortcut,
+  onSaveShortcut
+}: {
+  text: string
+  message: string
+  onSave: (text: string) => Promise<void>
+  shortcut: string
+  onSaveShortcut: (value: string) => Promise<void>
+}) {
   const [draft, setDraft] = useState(text)
+  const [key, setKey] = useState(shortcut)
   return (
     <div className="prefs">
       <p className="panel-detail">
@@ -410,6 +475,160 @@ function Preferences({ text, message, onSave }: { text: string; message: string;
         </button>
         <span className="panel-detail">{draft.length}/2000</span>
       </div>
+      <div className="selection-row">
+        <input value={key} aria-label="Selection assistant shortcut" placeholder="Control+Option+S" onChange={(e) => setKey(e.target.value)} />
+        <button type="button" className="text-button secondary" disabled={!key.trim() || key === shortcut} onClick={() => void onSaveShortcut(key)}>
+          Set selection shortcut
+        </button>
+      </div>
     </div>
+  )
+}
+
+type SelectionEntry = Extract<PanelEntry, { kind: 'selection' }>
+type BridgeEntry = Extract<PanelEntry, { kind: 'bridge' }>
+
+function SelectionCard({
+  entry,
+  onAction,
+  onUseClipboard
+}: {
+  entry: SelectionEntry
+  onAction?: (id: number, action: string, instruction: string) => void
+  onUseClipboard?: () => void
+}) {
+  const [tone, setTone] = useState('')
+  const [reply, setReply] = useState('')
+  const [ask, setAsk] = useState('')
+  if (!entry.ok) {
+    return (
+      <>
+        <p className="assistant-label">Selected text</p>
+        <p>{entry.reason}</p>
+        <div className="panel-inline">
+          <button type="button" className="text-button" onClick={() => onUseClipboard?.()}>
+            Use clipboard text
+          </button>
+        </div>
+      </>
+    )
+  }
+  const via = entry.method === 'ax' ? 'read via Accessibility' : entry.method === 'copy' ? 'copied with ⌘C' : 'from the clipboard'
+  return (
+    <>
+      <p className="assistant-label">
+        Selected in {entry.app} · {via}
+        {entry.canReplace ? '' : ' · replace not available'}
+      </p>
+      <blockquote className="selection-quote">{entry.text}</blockquote>
+      <div className="panel-inline wrap">
+        {(['grammar', 'summarize', 'explain'] as const).map((a) => (
+          <button type="button" key={a} className="text-button" onClick={() => onAction?.(entry.id, a, '')}>
+            {a === 'grammar' ? 'Fix grammar' : a === 'summarize' ? 'Summarize' : 'Explain'}
+          </button>
+        ))}
+      </div>
+      <div className="selection-row">
+        <input value={tone} placeholder="Tone, e.g. friendly" aria-label="Rewrite tone" onChange={(e) => setTone(e.target.value)} />
+        <button type="button" className="text-button" disabled={!tone.trim()} onClick={() => onAction?.(entry.id, 'rewrite', tone)}>
+          Rewrite
+        </button>
+      </div>
+      <div className="selection-row">
+        <input value={reply} placeholder="Reply saying…" aria-label="Reply instruction" onChange={(e) => setReply(e.target.value)} />
+        <button type="button" className="text-button" disabled={!reply.trim()} onClick={() => onAction?.(entry.id, 'reply', reply)}>
+          Draft reply
+        </button>
+      </div>
+      <div className="selection-row">
+        <input value={ask} placeholder="Ask about it (optional)" aria-label="Question about the text" onChange={(e) => setAsk(e.target.value)} />
+        <button type="button" className="text-button secondary" onClick={() => onAction?.(entry.id, 'ask', ask)}>
+          Start conversation
+        </button>
+      </div>
+    </>
+  )
+}
+
+function ResultCard({
+  entry,
+  onCancel,
+  onCopy,
+  onReplace,
+  onPaste,
+  onAnswer,
+  paste,
+  onPasteCancel
+}: {
+  entry: BridgeEntry
+  onCancel?: (requestId: string) => void
+  onCopy?: (id: number) => void
+  onReplace?: (id: number) => void
+  onPaste?: (id: number) => void
+  onAnswer?: (id: number, answer: string) => void
+  paste: { text: string; armed: boolean } | null
+  onPasteCancel?: () => void
+}) {
+  const [answer, setAnswer] = useState('')
+  const sel = entry.selection as NonNullable<BridgeEntry['selection']>
+  const pending = entry.status === 'sending' || entry.status === 'running'
+  return (
+    <>
+      <p className="assistant-label">
+        MIKO assistant · {sel.label} · text from {sel.app}
+      </p>
+      {sel.instruction ? <p className="panel-detail">Your instruction: {sel.instruction}</p> : null}
+      {pending ? (
+        <p className="panel-detail">Thinking… {entry.startedAt ? Math.floor((Date.now() - entry.startedAt) / 1000) : 0} s</p>
+      ) : null}
+      {entry.question ? (
+        <>
+          <p className="panel-detail">MIKO needs one detail first:</p>
+          <p className="assistant-reply">{entry.question}</p>
+          <div className="selection-row">
+            <input value={answer} placeholder="Your answer" aria-label="Answer" onChange={(e) => setAnswer(e.target.value)} />
+            <button type="button" className="text-button" disabled={!answer.trim()} onClick={() => onAnswer?.(entry.id, answer)}>
+              Answer
+            </button>
+          </div>
+        </>
+      ) : entry.status === 'done' ? (
+        <p className="assistant-reply result">{entry.reply}</p>
+      ) : null}
+      {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
+      {entry.after ? <p className="panel-detail" role="status">{entry.after}</p> : null}
+      {paste ? (
+        <div className="paste-banner" role="status">
+          <span>{paste.text}</span>
+          {paste.armed ? (
+            <button type="button" className="text-button secondary" onClick={() => onPasteCancel?.()}>
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="panel-inline wrap">
+        {pending ? (
+          <button type="button" className="text-button secondary" onClick={() => onCancel?.(entry.requestId)}>
+            Cancel
+          </button>
+        ) : null}
+        {entry.status === 'done' && !entry.question ? (
+          <>
+            <button type="button" className="text-button" onClick={() => onCopy?.(entry.id)}>
+              Copy
+            </button>
+            {sel.canReplace ? (
+              <button type="button" className="text-button" onClick={() => onReplace?.(entry.id)}>
+                Replace selection
+              </button>
+            ) : null}
+            <button type="button" className="text-button secondary" onClick={() => onPaste?.(entry.id)}>
+              Paste where I click
+            </button>
+          </>
+        ) : null}
+      </div>
+    </>
   )
 }

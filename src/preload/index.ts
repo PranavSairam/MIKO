@@ -3,6 +3,8 @@ import {
   IPC,
   type AppListing,
   type HitRect,
+  type SelectionEvent,
+  type PasteStateEvent,
   type InsertResult,
   type BridgeStatusInfo,
   type BridgeUpdate,
@@ -171,9 +173,45 @@ const api: MikoApi = {
     return () => ipcRenderer.removeListener(IPC.voiceAuto, wrapped)
   },
   bridgeStatus: async () => (await ipcRenderer.invoke(IPC.bridgeStatus)) as BridgeStatusInfo | null,
-  bridgeSend: async (requestId: string, prompt: string) => {
-    const r = (await ipcRenderer.invoke(IPC.bridgeSend, String(requestId), String(prompt))) as { ok?: unknown; reason?: unknown } | null
+  bridgeSend: async (requestId: string, prompt: string, opts?: { fresh?: boolean; keep?: boolean }) => {
+    const r = (await ipcRenderer.invoke(IPC.bridgeSend, String(requestId), String(prompt), {
+      fresh: opts?.fresh === true,
+      keep: opts?.keep === true
+    })) as { ok?: unknown; reason?: unknown } | null
     return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '' }
+  },
+  onSelection: (listener: (event: SelectionEvent) => void) => {
+    const wrapped = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
+      const p = payload as Partial<SelectionEvent> | null
+      if (!p || typeof p.captureId !== 'string') return
+      listener(parseSelection(p))
+    }
+    ipcRenderer.on(IPC.selection, wrapped)
+    return () => ipcRenderer.removeListener(IPC.selection, wrapped)
+  },
+  selectionClipboard: async () => parseSelection((await ipcRenderer.invoke(IPC.selectionClipboard)) as Partial<SelectionEvent>),
+  selectionReplace: async (captureId: string, text: string) => {
+    const r = (await ipcRenderer.invoke(IPC.selectionReplace, String(captureId), String(text))) as { ok?: unknown; reason?: unknown; verified?: unknown } | null
+    return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '', verified: r?.verified === true }
+  },
+  pasteArm: async (text: string) => {
+    const r = (await ipcRenderer.invoke(IPC.pasteArm, String(text))) as { ok?: unknown; reason?: unknown } | null
+    return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '' }
+  },
+  pasteCancel: () => ipcRenderer.send(IPC.pasteCancel),
+  onPasteState: (listener: (event: PasteStateEvent) => void) => {
+    const wrapped = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
+      const p = payload as Partial<PasteStateEvent> | null
+      if (!p || !['armed', 'done', 'cancelled', 'expired', 'failed'].includes(String(p.state))) return
+      listener({ state: p.state as PasteStateEvent['state'], reason: typeof p.reason === 'string' ? p.reason : '', verified: p.verified === true })
+    }
+    ipcRenderer.on(IPC.pasteState, wrapped)
+    return () => ipcRenderer.removeListener(IPC.pasteState, wrapped)
+  },
+  selectionShortcutGet: async () => String((await ipcRenderer.invoke(IPC.selectionShortcutGet)) ?? ''),
+  selectionShortcutSet: async (accelerator: string) => {
+    const r = (await ipcRenderer.invoke(IPC.selectionShortcutSet, String(accelerator))) as { ok?: unknown; reason?: unknown; shortcut?: unknown } | null
+    return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '', shortcut: typeof r?.shortcut === 'string' ? r.shortcut : '' }
   },
   bridgeCancel: (requestId: string) => ipcRenderer.send(IPC.bridgeCancel, String(requestId)),
   bridgeNew: async () => {
@@ -283,6 +321,18 @@ const api: MikoApi = {
     }
     ipcRenderer.on(IPC.pointer, wrapped)
     return () => ipcRenderer.removeListener(IPC.pointer, wrapped)
+  }
+}
+
+function parseSelection(p: Partial<SelectionEvent> | null): SelectionEvent {
+  return {
+    captureId: typeof p?.captureId === 'string' ? p.captureId : '',
+    ok: p?.ok === true,
+    text: typeof p?.text === 'string' ? p.text.slice(0, 12000) : '',
+    app: typeof p?.app === 'string' ? p.app.slice(0, 80) : '',
+    method: typeof p?.method === 'string' ? p.method : '',
+    canReplace: p?.canReplace === true,
+    reason: typeof p?.reason === 'string' ? p.reason : ''
   }
 }
 

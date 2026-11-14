@@ -15,6 +15,8 @@ import { startListening, stopListening } from './speech'
 import { toggleSwitcher, warmSwitcher } from './switcher-window'
 import { assistantEnabled, setAssistantEnabled, setVoiceAutoExecute, voiceAutoExecute } from './settings'
 import { stopAllBridges } from './bridge'
+import { startSelectionShortcut } from './selection-shortcut'
+import { disarmPaste } from './selection'
 
 app.setName('MIKO')
 if (process.platform === 'win32') {
@@ -58,6 +60,7 @@ if (!gotLock) {
   let refresh = (): void => undefined
   let unregisterShortcut = (): void => undefined
   let stopKeys = (): void => undefined
+  let stopSelection = (): void => undefined
   const presence = createPresence(() => refresh())
 
   app.on('second-instance', () => {
@@ -68,6 +71,8 @@ if (!gotLock) {
     setQuitting(true)
     unregisterShortcut()
     stopKeys()
+    stopSelection()
+    disarmPaste()
     stopAllBridges()
   })
 
@@ -119,6 +124,7 @@ if (!gotLock) {
     })
 
     warmSwitcher()
+    stopSelection = startSelectionShortcut(() => presence.show())
     stopKeys = startKeys({
       // Caps Lock + A held: show MIKO, listen until release, put the words in the chat box.
       talkStart: () => {

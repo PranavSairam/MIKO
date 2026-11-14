@@ -79,13 +79,20 @@ function codexArgs(thread: string | null, prompt: string): string[] {
 }
 
 /** One request at a time. Follow-ups continue the current conversation. */
-export function sendBridge(requestId: string, prompt: string): { ok: boolean; reason: string } {
+export function sendBridge(
+  requestId: string,
+  prompt: string,
+  opts: { fresh?: boolean; keep?: boolean } = {}
+): { ok: boolean; reason: string } {
   if (!assistantEnabled()) return { ok: false, reason: 'MIKO assistant is off. Turn it on in the paw menu.' }
   const path = codexPath()
   if (!path) return { ok: false, reason: 'ChatGPT’s bundled Codex CLI wasn’t found.' }
   if (running.has(requestId)) return { ok: false, reason: 'That request is already running.' }
   if (running.size > 0) return { ok: false, reason: 'MIKO is still answering. Wait for it, or cancel it.' }
-  const thread = assistantThread() || null
+  // fresh: a one-off request (selection actions) that neither resumes nor replaces the current conversation,
+  // unless keep is set (then it becomes the current conversation).
+  const thread = opts.fresh ? null : assistantThread() || null
+  const keep = opts.fresh ? opts.keep === true : true
   const started = Date.now()
   const proc = spawn(path, codexArgs(thread, prompt), { shell: false, cwd: assistantDir().work, stdio: ['ignore', 'pipe', 'ignore'] })
   let state: BridgeState = emptyBridge()
@@ -96,7 +103,7 @@ export function sendBridge(requestId: string, prompt: string): { ok: boolean; re
     job.settled = true
     clearTimeout(job.timer)
     running.delete(requestId)
-    if (update.phase === 'done' && update.thread) setAssistantThread(update.thread)
+    if (update.phase === 'done' && update.thread && keep) setAssistantThread(update.thread)
     postToPet(IPC.bridgeUpdate, { requestId, seconds: Math.round((Date.now() - started) / 100) / 10, ...update })
   }
   const timer = setTimeout(() => {

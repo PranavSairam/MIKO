@@ -15,7 +15,7 @@
     "preview:living": "electron-vite preview -- --living-preview",
     "start:motion": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
-    "test": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/shared/layout.test.ts src/shared/living.test.ts src/shared/walk-review.test.ts src/shared/photo-walk.test.ts src/shared/doberman.test.ts src/shared/guide.test.ts src/shared/commands.test.ts src/shared/follow.test.ts src/shared/keys.test.ts src/shared/switcher.test.ts src/shared/chatgpt.test.ts src/shared/mail.test.ts src/shared/bridge.test.ts",
+    "test": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/shared/layout.test.ts src/shared/living.test.ts src/shared/walk-review.test.ts src/shared/photo-walk.test.ts src/shared/doberman.test.ts src/shared/guide.test.ts src/shared/commands.test.ts src/shared/follow.test.ts src/shared/keys.test.ts src/shared/switcher.test.ts src/shared/chatgpt.test.ts src/shared/mail.test.ts src/shared/bridge.test.ts src/shared/selection.test.ts",
     "postinstall": "install-electron"
   },
   "devDependencies": {

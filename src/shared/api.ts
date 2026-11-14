@@ -15,6 +15,14 @@ export const IPC = {
   launchApp: 'miko:launch-app',
   openChatGpt: 'miko:open-chatgpt',
   chatsList: 'miko:chats-list',
+  selection: 'miko:selection',
+  selectionClipboard: 'miko:selection-clipboard',
+  selectionReplace: 'miko:selection-replace',
+  pasteArm: 'miko:paste-arm',
+  pasteCancel: 'miko:paste-cancel',
+  pasteState: 'miko:paste-state',
+  selectionShortcutGet: 'miko:selection-shortcut-get',
+  selectionShortcutSet: 'miko:selection-shortcut-set',
   chatgptInsert: 'miko:chatgpt-insert',
   bridgeSend: 'miko:bridge-send',
   bridgeCancel: 'miko:bridge-cancel',
@@ -67,6 +75,22 @@ export type InsertResult =
   | { state: 'has-text'; length: number }
   | { state: 'unavailable'; reason: string }
   | { state: 'failed'; reason: string }
+
+export interface SelectionEvent {
+  captureId: string
+  ok: boolean
+  text: string
+  app: string
+  method: string
+  canReplace: boolean
+  reason: string
+}
+
+export interface PasteStateEvent {
+  state: 'armed' | 'done' | 'cancelled' | 'expired' | 'failed'
+  reason: string
+  verified: boolean
+}
 
 export interface OpenResult {
   ok: boolean
@@ -293,7 +317,16 @@ export interface MikoApi {
   onVoiceAuto: (listener: (enabled: boolean) => void) => () => void
   /** ChatGPT bridge proof of concept (opt-in; Codex CLI, headless). */
   bridgeStatus: () => Promise<BridgeStatusInfo | null>
-  bridgeSend: (requestId: string, prompt: string) => Promise<{ ok: boolean; reason: string }>
+  bridgeSend: (requestId: string, prompt: string, opts?: { fresh?: boolean; keep?: boolean }) => Promise<{ ok: boolean; reason: string }>
+  /** Selected-text assistant. */
+  onSelection: (listener: (event: SelectionEvent) => void) => () => void
+  selectionClipboard: () => Promise<SelectionEvent>
+  selectionReplace: (captureId: string, text: string) => Promise<{ ok: boolean; reason: string; verified: boolean }>
+  pasteArm: (text: string) => Promise<{ ok: boolean; reason: string }>
+  pasteCancel: () => void
+  onPasteState: (listener: (event: PasteStateEvent) => void) => () => void
+  selectionShortcutGet: () => Promise<string>
+  selectionShortcutSet: (accelerator: string) => Promise<{ ok: boolean; reason: string; shortcut: string }>
   bridgeCancel: (requestId: string) => void
   /** Start a new assistant conversation (the next question opens a fresh thread). */
   bridgeNew: () => Promise<void>

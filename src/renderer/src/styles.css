@@ -1001,3 +1001,55 @@ pre.mail-body.text {
   padding: 7px 10px;
   font-size: 13px;
 }
+
+.selection-quote {
+  margin: 4px 0 6px;
+  padding: 6px 8px;
+  max-height: 96px;
+  overflow: auto;
+  border-left: 3px solid rgba(196, 132, 74, 0.8);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  user-select: text;
+}
+
+.panel-inline.wrap {
+  flex-wrap: wrap;
+}
+
+.selection-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.selection-row input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f6efe6;
+  border: 1px solid rgba(196, 138, 82, 0.45);
+  border-radius: 8px;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+.assistant-reply.result {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.paste-banner {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: rgba(127, 180, 255, 0.16);
+  border: 1px solid rgba(127, 180, 255, 0.4);
+}

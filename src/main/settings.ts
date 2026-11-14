@@ -70,6 +70,17 @@ export function setMikoPreferences(text: string): boolean {
   return writeKey('mikoPreferences', text.replace(/\r/g, '').slice(0, 2000))
 }
 
+/** Selected-text assistant shortcut (Electron accelerator). */
+export const DEFAULT_SELECTION_SHORTCUT = 'Control+Option+S'
+export function selectionShortcut(): string {
+  const value = readAll().selectionShortcut
+  return typeof value === 'string' && value ? value : DEFAULT_SELECTION_SHORTCUT
+}
+
+export function setSelectionShortcut(value: string): boolean {
+  return writeKey('selectionShortcut', value)
+}
+
 /** Mail importance rules (adjustable in the Mail tab). */
 export function mailRules(): ImportanceRules {
   return parseRules(readAll().mailRules)

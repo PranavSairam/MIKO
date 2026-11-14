@@ -33,6 +33,7 @@ import { MailView } from '../mail/MailView'
 import { useMail } from '../mail/useMail'
 import { MAIL_REQUEST, mailRequestFor } from '../../../shared/commands'
 import { BRIDGE_TEST_PROMPT } from '../../../shared/bridge'
+import { SELECTION_LABELS, clarifyingQuestion, parseSelectionCommand, selectionPrompt, type SelectionAction } from '../../../shared/selection'
 import { MAIL_PANEL, PANEL, PET_WINDOW, type PanelSize } from '../../../shared/layout'
 
 const HIT_SLOP_PX = 2
@@ -51,6 +52,9 @@ export function MotionApp() {
   assistantThreadRef.current = assistantThread
   const [, setTick] = useState(0)
   const [prefs, setPrefs] = useState('')
+  const [pasteBanner, setPasteBanner] = useState<{ entryId: number; text: string; armed: boolean } | null>(null)
+  const pasteEntryRef = useRef(0)
+  const [selectionKey, setSelectionKey] = useState('')
   const [prefsMessage, setPrefsMessage] = useState('')
   const [listening, setListening] = useState(false)
   const [listenDetail, setListenDetail] = useState('')
@@ -110,6 +114,7 @@ export function MotionApp() {
     setTab(open ? mode : 'chat')
     if (!open) {
       setPanelView('log')
+      window.miko.pasteCancel()
       window.miko.listenCancel()
       setListening(false)
       if (pendingCome.current) {
@@ -614,6 +619,22 @@ export function MotionApp() {
     if (typeof window.miko === 'undefined') return
     void window.miko.bridgeStatus().then((st) => setAssistantThread(st?.thread ?? ''))
     void window.miko.prefsGet().then(setPrefs)
+    void window.miko.selectionShortcutGet().then(setSelectionKey)
+    const stopSelection = window.miko.onSelection((event) => {
+      window.miko.pasteCancel()
+      setPanelView('log')
+      if (!panelRef.current || tabRef.current !== 'chat') void applyPanel(true, 'chat')
+      pushEntry({ id: 0, kind: 'selection', ...event })
+    })
+    const stopPaste = window.miko.onPasteState((ev) => {
+      const entryId = pasteEntryRef.current
+      if (!entryId) return
+      const text =
+        ev.state === 'armed'
+          ? 'Armed for 30 s: click into the field you want, then press \u2303\u2325V to paste once. Esc cancels.'
+          : ev.reason || (ev.state === 'expired' ? 'Paste expired.' : 'Paste cancelled.')
+      setPasteBanner({ entryId, text, armed: ev.state === 'armed' })
+    })
     const tick = window.setInterval(() => {
       if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) setTick((n) => n + 1)
     }, 1000)
@@ -621,13 +642,18 @@ export function MotionApp() {
       const secs = u.seconds !== undefined ? ` in ${u.seconds} s` : ''
       if (u.phase === 'running') updateBridge(u.requestId, { status: 'running' })
       else if (u.phase === 'done') {
-        if (u.thread) setAssistantThread(u.thread)
-        updateBridge(u.requestId, { status: 'done', reply: u.reply ?? '', thread: u.thread ?? '', detail: `Answered${secs}.` })
+        const entry = entriesRef.current.find((e) => e.kind === 'bridge' && e.requestId === u.requestId)
+        const oneOff = entry?.kind === 'bridge' && entry.selection && entry.selection.action !== 'ask'
+        if (u.thread && !oneOff) setAssistantThread(u.thread)
+        const question = entry?.kind === 'bridge' && entry.selection?.action === 'reply' ? clarifyingQuestion(u.reply ?? '') : null
+        updateBridge(u.requestId, { status: 'done', reply: u.reply ?? '', thread: u.thread ?? '', detail: `Answered${secs}.`, question: question ?? undefined })
       } else updateBridge(u.requestId, { status: u.phase, detail: `${u.reason ?? 'Stopped.'}${secs ? ` (${secs.trim()})` : ''}` })
     })
     return () => {
       window.clearInterval(tick)
       stop()
+      stopSelection()
+      stopPaste()
     }
   }, [])
 
@@ -750,7 +776,10 @@ export function MotionApp() {
    * MIKO assistant (Codex with ChatGPT sign-in). One request at a time; a card shows
    * success only when its own reply arrives. Follow-ups continue the current conversation.
    */
-  async function startAssistant(prompt: string): Promise<void> {
+  async function startAssistant(
+    prompt: string,
+    opts: { fresh?: boolean; keep?: boolean; selection?: Extract<PanelEntry, { kind: 'bridge' }>['selection'] } = {}
+  ): Promise<void> {
     if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) {
       pushEntry({ id: 0, kind: 'note', text: 'MIKO is still answering. Cancel it or wait.' })
       return
@@ -765,7 +794,9 @@ export function MotionApp() {
       return
     }
     const requestId = `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    const turn = status.thread ? entriesRef.current.filter((e) => e.kind === 'bridge' && e.status === 'done' && e.thread === status.thread).length + 1 : 1
+    window.miko.pasteCancel()
+    const turn =
+      status.thread && !opts.fresh ? entriesRef.current.filter((e) => e.kind === 'bridge' && e.status === 'done' && e.thread === status.thread).length + 1 : 1
     pushEntry({
       id: 0,
       kind: 'bridge',
@@ -773,13 +804,14 @@ export function MotionApp() {
       prompt,
       status: 'sending',
       reply: '',
-      thread: status.thread,
+      thread: opts.fresh ? '' : status.thread,
       detail: '',
       kept: false,
       startedAt: Date.now(),
-      turn
+      turn,
+      selection: opts.selection
     })
-    const sent = await window.miko.bridgeSend(requestId, prompt)
+    const sent = await window.miko.bridgeSend(requestId, prompt, { fresh: opts.fresh, keep: opts.keep })
     if (!sent.ok) updateBridge(requestId, { status: 'failed', detail: sent.reason })
   }
 
@@ -787,10 +819,55 @@ export function MotionApp() {
     setEntries((items) => items.map((item) => (item.kind === 'bridge' && item.requestId === requestId ? { ...item, ...patch } : item)))
   }
 
+  function latestSelection(): Extract<PanelEntry, { kind: 'selection' }> | null {
+    for (let i = entriesRef.current.length - 1; i >= 0; i -= 1) {
+      const e = entriesRef.current[i]
+      if (e.kind === 'selection') return e.ok ? e : null
+    }
+    return null
+  }
+
+  /** Run a selected-text action: the selection is quoted data; the instruction stays separate. */
+  async function runSelectionAction(entryId: number, action: string, instruction: string): Promise<void> {
+    const sel = entriesRef.current.find((e) => e.id === entryId)
+    if (sel?.kind !== 'selection' || !sel.ok) return
+    let prompt: string
+    try {
+      prompt = selectionPrompt(action as SelectionAction, sel.text, instruction)
+    } catch (error) {
+      pushEntry({ id: 0, kind: 'note', text: error instanceof Error ? error.message : 'Add an instruction first.' })
+      return
+    }
+    await startAssistant(prompt, {
+      fresh: true,
+      keep: action === 'ask',
+      selection: {
+        captureId: sel.captureId,
+        action,
+        label: SELECTION_LABELS[action as SelectionAction] ?? action,
+        instruction: instruction.trim(),
+        canReplace: sel.canReplace,
+        app: sel.app,
+        text: sel.text
+      }
+    })
+  }
+
+  function resultOf(id: number): Extract<PanelEntry, { kind: 'bridge' }> | null {
+    const e = entriesRef.current.find((item) => item.id === id)
+    return e?.kind === 'bridge' && e.selection && e.status === 'done' ? e : null
+  }
+
   async function onSubmit(): Promise<void> {
     const text = draft.trim()
     if (!text || typeof window.miko === 'undefined') return
     setDraft('')
+    const sel = latestSelection()
+    const selCmd = sel ? parseSelectionCommand(text) : null
+    if (sel && selCmd) {
+      await runSelectionAction(sel.id, selCmd.action, selCmd.instruction)
+      return
+    }
     const catalog = await loadCatalog()
     if (!catalog) return
     await runDecision(routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: tabRef.current === 'mail', assistantActive: Boolean(assistantThreadRef.current) }))
@@ -804,6 +881,13 @@ export function MotionApp() {
   async function onVoice(text: string): Promise<void> {
     if (typeof window.miko === 'undefined') return
     const auto = voiceAutoRef.current
+    const sel = latestSelection()
+    const selCmd = sel ? parseSelectionCommand(text) : null
+    if (sel && selCmd) {
+      pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      await runSelectionAction(sel.id, selCmd.action, selCmd.instruction)
+      return
+    }
     if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
     const catalog = auto ? await loadCatalog() : []
     if (!catalog) {
@@ -1268,6 +1352,45 @@ export function MotionApp() {
             }
           }}
           onBridgeCancel={(requestId) => window.miko.bridgeCancel(requestId)}
+          onSelectionAction={(id, action, instruction) => void runSelectionAction(id, action, instruction)}
+          onUseClipboard={() => {
+            void window.miko.selectionClipboard().then((ev) => pushEntry({ id: 0, kind: 'selection', ...ev }))
+          }}
+          onResultCopy={(id) => {
+            const e = resultOf(id)
+            if (!e) return
+            void window.miko.copyText(e.reply).then((ok) => replaceEntry(id, { ...e, after: ok ? 'Copied.' : 'Couldn\u2019t copy.' }))
+          }}
+          onResultReplace={(id) => {
+            const e = resultOf(id)
+            if (!e?.selection) return
+            replaceEntry(id, { ...e, after: `Replacing the selection in ${e.selection.app}\u2026` })
+            void window.miko.selectionReplace(e.selection.captureId, e.reply).then((r) =>
+              replaceEntry(id, {
+                ...e,
+                after: r.ok
+                  ? `Replaced the selection in ${e.selection?.app}${r.verified ? ' and checked it' : ' (couldn\u2019t read it back to check)'}.`
+                  : `${r.reason} Use Copy or Paste where I click instead.`
+              })
+            )
+          }}
+          onResultPaste={(id) => {
+            const e = resultOf(id)
+            if (!e) return
+            pasteEntryRef.current = id
+            void window.miko.pasteArm(e.reply).then((r) => {
+              if (!r.ok) setPasteBanner({ entryId: id, text: r.reason, armed: false })
+            })
+          }}
+          onResultAnswer={(id, answer) => {
+            const e = entriesRef.current.find((item) => item.id === id)
+            if (e?.kind !== 'bridge' || !e.selection) return
+            const sel = entriesRef.current.find((item) => item.kind === 'selection' && item.captureId === e.selection?.captureId)
+            if (sel?.kind !== 'selection') return
+            void runSelectionAction(sel.id, e.selection.action, `${e.selection.instruction} (My answer to "${e.question ?? ''}": ${answer.trim()})`)
+          }}
+          pasteBanner={pasteBanner}
+          onPasteCancel={() => window.miko.pasteCancel()}
           onInsertChoice={(id, mode) => {
             const entry = entries.find((item) => item.id === id)
             if (entry?.kind !== 'handoff') return
@@ -1287,6 +1410,12 @@ export function MotionApp() {
           prefs={{
             text: prefs,
             message: prefsMessage,
+            shortcut: selectionKey,
+            onSaveShortcut: async (value) => {
+              const r = await window.miko.selectionShortcutSet(value)
+              setSelectionKey(r.shortcut)
+              setPrefsMessage(r.ok ? `Selection shortcut: ${r.shortcut}` : r.reason)
+            },
             onSave: async (text) => {
               const ok = await window.miko.prefsSet(text)
               if (ok) setPrefs(text.slice(0, 2000))
