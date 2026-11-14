@@ -119,6 +119,8 @@ export function createPetWindow(options: {
     win.setWindowButtonVisibility(false)
     win.setHiddenInMissionControl(true)
   }
+  // Always present: on every desktop (Space), including over full-screen apps.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
   win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

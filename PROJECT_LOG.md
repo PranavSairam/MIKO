@@ -90,6 +90,19 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: MIKO always present
+- **Owner's report:** MIKO wasn't visible over ChatGPT (screenshot). Causes found:
+  - MIKO started **hidden** (Phase 1 design: ⌘⇧R to summon)
+  - its window wasn't set to join other Spaces or full-screen apps
+- **Change:**
+  - the pet window calls `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`, staying always-on-top at the floating level
+  - MIKO now shows itself on startup
+  - ⌘⇧R and the paw menu still hide and show it
+- **Verified live** (window list by MIKO's pid, since titles need Screen Recording):
+  - on screen right after `npm start` (bottom-right, layer 3)
+  - still on screen with ChatGPT in front (ChatGPT was windowed, not full screen), and after switching back
+- **Not verified:** over a real full-screen app or on another Space. Automation couldn't put TextEdit into full screen (AXFullScreen and ⌃⌘F both left it windowed). Owner to confirm with ChatGPT in full screen (green button, or ⌃⌘F).
+
 ### 2026-11-15: Milestone 3 live verification (owner idle; Excel no longer interfering)
 - **Fixed in `miko-ax`:** `NSWorkspace.frontmostApplication` doesn't refresh inside a short-lived helper (no run loop). The helper now checks the target's live Accessibility `AXFrontmost`, spins a run loop while waiting, and reads the focused field from that exact pid after activating it.
 - Tests now abort if the expected app isn't frontmost before any key press.

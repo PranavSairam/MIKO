@@ -122,6 +122,8 @@ if (!gotLock) {
       onReady: () => presence.markReady(),
       onClose: () => presence.hide()
     })
+    // Show MIKO as soon as it starts (⌘⇧R or the paw menu still hide it).
+    presence.show()
 
     warmSwitcher()
     stopSelection = startSelectionShortcut(() => presence.show())
