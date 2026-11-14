@@ -79,7 +79,7 @@ export async function replaceSelection(captureId: string, text: string): Promise
 
 // ---------- Paste where I click ----------
 
-let armed: { text: string; timer: NodeJS.Timeout } | null = null
+let armed: { text: string; timer: NodeJS.Timeout; bundles: string } | null = null
 
 function post(state: 'armed' | 'done' | 'cancelled' | 'expired' | 'failed', reason = '', verified = false): void {
   postToPet(IPC.pasteState, { state, reason, verified })
@@ -98,11 +98,12 @@ export function disarmPaste(state: 'cancelled' | 'expired' = 'cancelled', reason
   post(state, reason)
 }
 
-export function armPaste(text: string): { ok: boolean; reason: string } {
+/** bundles: only paste when one of these apps is in front (e.g. ChatGPT). */
+export function armPaste(text: string, bundles = ''): { ok: boolean; reason: string } {
   disarmPaste()
   if (!text.trim()) return { ok: false, reason: 'Nothing to paste.' }
   const timer = setTimeout(() => disarmPaste('expired', 'Paste expired. Arm it again if you still want it.'), ARM_MS)
-  armed = { text, timer }
+  armed = { text, timer, bundles }
   const okConfirm = globalShortcut.register(PASTE_CONFIRM, () => void confirmPaste())
   globalShortcut.register('Escape', () => disarmPaste('cancelled', 'Paste cancelled.'))
   if (!okConfirm) {
@@ -115,11 +116,15 @@ export function armPaste(text: string): { ok: boolean; reason: string } {
 
 async function confirmPaste(): Promise<void> {
   if (!armed) return
-  const { text, timer } = armed
+  const { text, timer, bundles } = armed
   clearTimeout(timer)
   armed = null
   unregister()
-  const result = await runAx(['paste', '--exclude-pid', String(process.pid)], text, 10000)
-  if (result.ok) post('done', `Pasted into ${result.app}${result.verified ? ' and checked' : ''}. Sending is up to you.`, result.verified)
+  const args = ['paste', '--exclude-pid', String(process.pid), '--allow-unexposed']
+  if (bundles) args.push('--expect-bundles', bundles)
+  const result = await runAx(args, text, 10000)
+  if (result.ok && result.method === 'paste-unverified') {
+    post('done', `Pasted into ${result.app} where you clicked. ${result.app} doesn\u2019t let MIKO read its fields, so check it there. Sending is up to you.`, false)
+  } else if (result.ok) post('done', `Pasted into ${result.app}${result.verified ? ' and checked' : ''}. Sending is up to you.`, result.verified)
   else post('failed', result.reason || 'Couldn’t paste there.')
 }

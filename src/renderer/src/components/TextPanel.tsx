@@ -279,6 +279,16 @@ export function TextPanel({
                     </label>
                   ) : null}
                   <p className="panel-detail">{entry.detail}</p>
+                  {pasteBanner && pasteBanner.entryId === entry.id ? (
+                    <div className="paste-banner" role="status">
+                      <span>{pasteBanner.text}</span>
+                      {pasteBanner.armed ? (
+                        <button type="button" className="text-button secondary" onClick={() => onPasteCancel?.()}>
+                          Cancel
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <p className="panel-detail note">{entry.variant === 'mail' ? MAIL_NOTE : HANDOFF_NOTE}</p>
                   {entry.reply ? <p className="pasted">{entry.reply}</p> : null}
                   <div className="panel-inline">

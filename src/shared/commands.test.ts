@@ -247,3 +247,17 @@ describe('mailRequestFor (ChatGPT mail handoff)', () => {
     assert.equal(mailRequestFor({ kind: 'open', index: 2 }), '')
   })
 })
+
+describe('type into ChatGPT', () => {
+  it('reads "type … in GPT" requests and keeps the exact text', () => {
+    assert.deepEqual(routeCommand('type hello there in GPT', 'typed', catalog), { type: 'type-in-gpt', text: 'hello there' })
+    assert.deepEqual(routeCommand('Type "What is a B-tree?" in ChatGPT.', 'voice', catalog), { type: 'type-in-gpt', text: 'What is a B-tree?' })
+    assert.deepEqual(routeCommand('write Summarize my week into chat gpt', 'typed', catalog), { type: 'type-in-gpt', text: 'Summarize my week' })
+    assert.deepEqual(routeCommand('put this in chatgpt: Draft a polite reminder', 'typed', catalog), { type: 'type-in-gpt', text: 'Draft a polite reminder' })
+    assert.deepEqual(routeCommand('type in gpt: hi', 'typed', catalog), { type: 'type-in-gpt', text: 'hi' })
+  })
+  it('asks for the text when none is given, and is a run for voice', () => {
+    assert.equal(routeCommand('type in gpt', 'typed', catalog).type, 'unknown')
+    assert.equal(planVoice(routeCommand('type hello in gpt', 'voice', catalog), true).kind, 'run')
+  })
+})

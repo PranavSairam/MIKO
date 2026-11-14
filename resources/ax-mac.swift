@@ -11,7 +11,8 @@ import Foundation
 //   capture                         selected text (Accessibility, else a deliberate ⌘C with clipboard restore)
 //   replace --pid P --sig S --hash H [--method ax|copy]   replace that exact selection with stdin text
 //   insert  --pid P [--sig S] [--mode append|replace|selection]  insert stdin text into a verified field
-//   paste   --exclude-pid P [--expect-pid P]   paste stdin text into the field focused now (armed paste)
+//   paste   --exclude-pid P [--expect-pid P] [--expect-bundles a,b] [--allow-unexposed]
+//           paste stdin text into the field focused now (armed paste; unexposed apps only on explicit confirm)
 //
 // Password fields (AXSecureTextField) are never read or written.
 
@@ -293,6 +294,16 @@ case "paste":
     var o = t.out
     if let ex = flag("--exclude-pid"), Int32(ex) == o.pid { fail("MIKO is in front. Click into the field you want first.", o) }
     if let want = flag("--expect-pid"), Int32(want) != o.pid { fail("\(o.app) is in front, not the app you chose.", o) }
+    if let bundles = flag("--expect-bundles"), !bundles.split(separator: ",").map(String.init).contains(o.bundle) {
+        fail("\(o.app) is in front, not the app MIKO armed for.", o)
+    }
+    if t.element == nil && args.contains("--allow-unexposed") {
+        // The app exposes no focused field to Accessibility (e.g. ChatGPT, Chrome pages). The user's own
+        // click plus the explicit confirm shortcut is the only identification, so paste once and say it's unchecked.
+        let (_, _, restored) = pasteInsert(t, text)
+        o.method = "paste-unverified"; o.verified = false; o.clipboardRestored = restored
+        emit(o)
+    }
     guard t.element != nil, o.editable else { fail(o.secure ? "That’s a password field. MIKO won’t paste there." : "The focused place in \(o.app) isn’t an editable text field.", o) }
     if let el = t.element, axInsert(el, text, mode: "selection") { o.method = "ax"; o.verified = true; emit(o) }
     let (_, verified, restored) = pasteInsert(t, text)

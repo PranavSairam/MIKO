@@ -194,8 +194,11 @@ const api: MikoApi = {
     const r = (await ipcRenderer.invoke(IPC.selectionReplace, String(captureId), String(text))) as { ok?: unknown; reason?: unknown; verified?: unknown } | null
     return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '', verified: r?.verified === true }
   },
-  pasteArm: async (text: string) => {
-    const r = (await ipcRenderer.invoke(IPC.pasteArm, String(text))) as { ok?: unknown; reason?: unknown } | null
+  pasteArm: async (text: string, target?: 'chatgpt') => {
+    const r = (await ipcRenderer.invoke(IPC.pasteArm, String(text), target === 'chatgpt' ? 'chatgpt' : undefined)) as {
+      ok?: unknown
+      reason?: unknown
+    } | null
     return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '' }
   },
   pasteCancel: () => ipcRenderer.send(IPC.pasteCancel),

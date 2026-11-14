@@ -322,7 +322,8 @@ export interface MikoApi {
   onSelection: (listener: (event: SelectionEvent) => void) => () => void
   selectionClipboard: () => Promise<SelectionEvent>
   selectionReplace: (captureId: string, text: string) => Promise<{ ok: boolean; reason: string; verified: boolean }>
-  pasteArm: (text: string) => Promise<{ ok: boolean; reason: string }>
+  /** target 'chatgpt': paste only when ChatGPT is in front. */
+  pasteArm: (text: string, target?: 'chatgpt') => Promise<{ ok: boolean; reason: string }>
   pasteCancel: () => void
   onPasteState: (listener: (event: PasteStateEvent) => void) => () => void
   selectionShortcutGet: () => Promise<string>

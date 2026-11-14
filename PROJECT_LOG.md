@@ -90,6 +90,16 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Typing into ChatGPT ("type … in GPT")
+- **Owner's report:** asking MIKO to type into ChatGPT did nothing visible. MIKO only copied the text, because ChatGPT exposes no focused field to Accessibility.
+- **New command:** "type <text> in GPT" / "write … into ChatGPT" / "put this in ChatGPT: …" (typed or voice; text kept exactly; tested). It goes straight to the ChatGPT flow.
+- **New fallback when ChatGPT's box can't be identified:** MIKO **arms a paste for ChatGPT**.
+  - The card says: click ChatGPT's message box, then press **⌃⌥V**.
+  - On ⌃⌥V the helper checks that ChatGPT (`com.openai.codex`/`chat`) is the frontmost app, then pastes once with ⌘V. The clipboard is restored only if it still holds MIKO's text.
+  - It reports honestly: "Pasted into ChatGPT where you clicked. ChatGPT doesn't let MIKO read its fields, so check it there." Nothing is sent. Esc, 30 s expiry, Cancel, and closing the panel disarm it.
+- **Rule refinement** (`miko-ax paste --allow-unexposed`): during an armed paste you confirm, an app that exposes **no** focused field (ChatGPT, Chrome pages) can be pasted into, labelled unchecked. Where Accessibility **does** report a non-text focus (e.g. Finder), paste is still refused. This also makes "Paste where I click" work in Chrome.
+- typecheck passes, 125/125 tests pass, build passes. **Live test with ChatGPT: pending.**
+
 ### 2026-11-15: MIKO always present
 - **Owner's report:** MIKO wasn't visible over ChatGPT (screenshot). Causes found:
   - MIKO started **hidden** (Phase 1 design: ⌘⇧R to summon)

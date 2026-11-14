@@ -179,9 +179,9 @@ export function registerIpc(presence: {
     }
     return replaceSelection(captureId, text)
   })
-  ipcMain.handle(IPC.pasteArm, (event, text: unknown) => {
+  ipcMain.handle(IPC.pasteArm, (event, text: unknown, target: unknown) => {
     if (!trusted(event) || typeof text !== 'string' || text.length > 20000) return { ok: false, reason: 'Not allowed.' }
-    return armPaste(text)
+    return armPaste(text, target === 'chatgpt' ? 'com.openai.codex,com.openai.chat' : '')
   })
   ipcMain.on(IPC.pasteCancel, (event) => {
     if (trusted(event)) disarmPaste('cancelled', 'Paste cancelled.')

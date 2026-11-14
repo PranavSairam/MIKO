@@ -1002,6 +1002,20 @@ export function MotionApp() {
       })
       return
     }
+    if (decision.type === 'type-in-gpt') {
+      if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
+      const entry: Extract<PanelEntry, { kind: 'handoff' }> = {
+        id: 0,
+        kind: 'handoff',
+        prompt: decision.text,
+        status: 'ready',
+        detail: 'Typing this into ChatGPT for you\u2026',
+        destination: ''
+      }
+      const id = pushEntry(entry)
+      await handToChatGpt({ ...entry, id })
+      return
+    }
     if (decision.type === 'bridge-test') {
       await startAssistant(BRIDGE_TEST_PROMPT)
       return
@@ -1171,6 +1185,19 @@ export function MotionApp() {
     if (result.state === 'has-text') {
       replaceEntry(entry.id, { ...entry, choose: true, detail: 'ChatGPT\u2019s message box already has text. Append to it or replace it?' })
       return
+    }
+    if (result.state === 'unavailable' && /expose/.test(result.reason)) {
+      // ChatGPT hides its message box from macOS: your click identifies it, ⌃⌥V confirms. Pastes once.
+      pasteEntryRef.current = entry.id
+      const armedOk = await window.miko.pasteArm(entry.prompt, 'chatgpt')
+      if (armedOk.ok) {
+        replaceEntry(entry.id, {
+          ...entry,
+          choose: false,
+          detail: 'ChatGPT doesn\u2019t show its message box to macOS, so MIKO can\u2019t find it alone. Click ChatGPT\u2019s message box, then press \u2303\u2325V.'
+        })
+        return
+      }
     }
     const copied = await window.miko.copyText(entry.prompt)
     replaceEntry(entry.id, {

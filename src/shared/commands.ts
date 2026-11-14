@@ -36,6 +36,7 @@ export type CommandResult =
   | { type: 'mail'; intent: MailIntent }
   | { type: 'mail-or-app'; query: string }
   | { type: 'bridge-test' }
+  | { type: 'type-in-gpt'; text: string }
   | { type: 'bridge-new' }
   | { type: 'unknown'; text: string }
 
@@ -84,6 +85,8 @@ export function routeCommand(
   const bridge = normalize(original)
   if (/^(?:reply with\s+)?miko bridge test$/.test(bridge)) return { type: 'bridge-test' }
   if (/^(?:bridge\s+|start\s+(?:a\s+)?)?new\s+(?:conversation|chat|thread)$/.test(bridge)) return { type: 'bridge-new' }
+  const typed = matchTypeInGpt(original)
+  if (typed) return typed
   const asked = matchAskGpt(original)
   if (asked) return asked
   if (isCheckMailInChatGpt(normalize(original))) return { type: 'check-mail', prompt: MAIL_REQUEST }
@@ -163,6 +166,21 @@ function isCheckMailInChatGpt(spoken: string): boolean {
 }
 
 const CHATGPT_NAME = '(?:chat\\s*-?\\s*gpt|chat\\s*g\\s*p\\s*t|gpt)'
+
+/** "type <text> in GPT" / "put this in ChatGPT: <text>". The text is kept exactly as written. */
+function matchTypeInGpt(original: string): CommandResult | null {
+  const verb = '(?:please\\s+)?(?:type|write|put|paste|enter)'
+  const target = `(?:in|into)\\s+(?:the\\s+)?${CHATGPT_NAME}(?:\\s+app)?`
+  const unquote = (text: string): string => text.trim().replace(/^["'\u201c\u2018](.*)["'\u201d\u2019]$/s, '$1').trim()
+  const colon = new RegExp(`^${verb}\\s+(?:this\\s+)?${target}\\s*[:,\\-]\\s*(.+)$`, 'is').exec(original)
+  if (colon?.[1]) return { type: 'type-in-gpt', text: unquote(colon[1]) }
+  if (new RegExp(`^${verb}\\s+(?:this\\s+|something\\s+)?${target}[.!]?$`, 'i').test(original)) {
+    return { type: 'unknown', text: 'What should I type in ChatGPT? Say \u201ctype \u2026 in GPT\u201d.' }
+  }
+  const inline = new RegExp(`^${verb}\\s+(.+?)\\s+${target}[.!]?$`, 'is').exec(original)
+  if (inline?.[1]) return { type: 'type-in-gpt', text: unquote(inline[1]) }
+  return null
+}
 
 /** "ask GPT <question>" / "ask ChatGPT, <question>". The question is kept exactly as written. */
 function matchAskGpt(original: string): CommandResult | null {
@@ -340,6 +358,7 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'open-chatgpt':
     case 'open-chat':
     case 'list-chats':
+    case 'type-in-gpt':
     case 'mail':
     case 'bridge-test':
     case 'bridge-new':
