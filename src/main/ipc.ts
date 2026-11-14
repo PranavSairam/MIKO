@@ -9,7 +9,9 @@ import { requestClose, watchClose } from './quit'
 import { cancelListening, startListening, stopListening } from './speech'
 import { openSwitcher, registerSwitcherIpc } from './switcher-window'
 import { registerMailIpc } from './mail/ipc'
-import { savedChats, setSavedChats, voiceAutoExecute } from './settings'
+import { bridgeStatus, cancelBridge, sendBridge } from './bridge'
+import { BRIDGE_TEST_PROMPT } from '../shared/bridge'
+import { savedChats, setBridgeThread, setSavedChats, voiceAutoExecute } from './settings'
 import {
   currentLayout,
   isTrustedSender,
@@ -164,6 +166,22 @@ export function registerIpc(presence: {
 
   registerSwitcherIpc()
   registerMailIpc()
+
+  ipcMain.handle(IPC.bridgeStatus, (event) => (trusted(event) ? bridgeStatus() : null))
+  ipcMain.handle(IPC.bridgeSend, (event, requestId: unknown) => {
+    if (!trusted(event) || typeof requestId !== 'string' || !/^[a-z0-9-]{4,40}$/i.test(requestId)) {
+      return { ok: false, reason: 'Not allowed.' }
+    }
+    return sendBridge(requestId, BRIDGE_TEST_PROMPT)
+  })
+  ipcMain.on(IPC.bridgeCancel, (event, requestId: unknown) => {
+    if (trusted(event) && typeof requestId === 'string') cancelBridge(requestId)
+  })
+  ipcMain.handle(IPC.bridgeKeep, (event, thread: unknown) => {
+    if (!trusted(event) || typeof thread !== 'string') return false
+    setBridgeThread(thread)
+    return true
+  })
 
   ipcMain.handle(IPC.getVoiceAuto, (event) => (trusted(event) ? voiceAutoExecute() : true))
 

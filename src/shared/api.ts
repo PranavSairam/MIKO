@@ -15,6 +15,11 @@ export const IPC = {
   launchApp: 'miko:launch-app',
   openChatGpt: 'miko:open-chatgpt',
   chatsList: 'miko:chats-list',
+  bridgeSend: 'miko:bridge-send',
+  bridgeCancel: 'miko:bridge-cancel',
+  bridgeUpdate: 'miko:bridge-update',
+  bridgeStatus: 'miko:bridge-status',
+  bridgeKeep: 'miko:bridge-keep',
   mailStatus: 'miko:mail-status',
   mailConnect: 'miko:mail-connect',
   mailDisconnect: 'miko:mail-disconnect',
@@ -172,6 +177,23 @@ export type { SavedChat } from './chatgpt'
 import type { ImportanceRules, MailAccount, MailFilter, MailMessage, MailSummary, Importance } from './mail'
 export type { ImportanceRules, MailAccount, MailFilter, MailMessage, MailSummary, Importance }
 
+export interface BridgeStatusInfo {
+  enabled: boolean
+  available: boolean
+  signedIn: boolean
+  thread: string
+  busy: boolean
+}
+
+export interface BridgeUpdate {
+  requestId: string
+  phase: 'running' | 'done' | 'failed' | 'cancelled' | 'timeout'
+  reply?: string
+  thread?: string
+  reason?: string
+  seconds?: number
+}
+
 export interface MailStatusInfo {
   accounts: MailAccount[]
   configured: boolean
@@ -257,6 +279,13 @@ export interface MikoApi {
   /** "Execute voice commands automatically" (tray setting). */
   getVoiceAuto: () => Promise<boolean>
   onVoiceAuto: (listener: (enabled: boolean) => void) => () => void
+  /** ChatGPT bridge proof of concept (opt-in; Codex CLI, headless). */
+  bridgeStatus: () => Promise<BridgeStatusInfo | null>
+  bridgeSend: (requestId: string) => Promise<{ ok: boolean; reason: string }>
+  bridgeCancel: (requestId: string) => void
+  /** Use this conversation for later bridge requests ('' = new conversation each time). */
+  bridgeKeep: (thread: string) => Promise<boolean>
+  onBridge: (listener: (update: BridgeUpdate) => void) => () => void
   /** Gmail (read-only). Tokens never reach the renderer. */
   mailStatus: () => Promise<MailStatusInfo | null>
   mailConnect: (loginHint?: string) => Promise<{ ok: boolean; reason: string; email?: string }>

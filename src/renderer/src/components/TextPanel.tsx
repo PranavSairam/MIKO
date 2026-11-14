@@ -27,6 +27,17 @@ export type PanelEntry =
   | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app'; text: string; options: PanelChoice[] }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
   | { id: number; kind: 'closing'; appId: string; name: string; text: string }
+  | {
+      id: number
+      kind: 'bridge'
+      requestId: string
+      prompt: string
+      status: 'sending' | 'running' | 'done' | 'failed' | 'cancelled' | 'timeout'
+      reply: string
+      thread: string
+      detail: string
+      kept: boolean
+    }
 
 interface TextPanelProps {
   onClose: () => void
@@ -53,6 +64,8 @@ interface TextPanelProps {
   chats?: SavedChat[]
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
+  onBridgeCancel?: (requestId: string) => void
+  onBridgeKeep?: (id: number) => void
   /** Chat / Mail tabs. Mail content replaces the conversation. */
   tab?: 'chat' | 'mail'
   onTab?: (tab: 'chat' | 'mail') => void
@@ -89,6 +102,8 @@ export function TextPanel({
   chats = [],
   chatTools,
   onDestination,
+  onBridgeCancel,
+  onBridgeKeep,
   tab = 'chat',
   onTab,
   mail
@@ -207,6 +222,28 @@ export function TextPanel({
                     <button type="button" className="text-button secondary" onClick={() => onPasteReply?.(entry.id)}>
                       Paste reply
                     </button>
+                  </div>
+                </>
+              ) : null}
+              {entry.kind === 'bridge' ? (
+                <>
+                  <p className="prompt">{entry.prompt}</p>
+                  <p className="panel-detail">
+                    {entry.status === 'sending' || entry.status === 'running' ? 'Waiting for ChatGPT\u2026 ' : ''}
+                    {entry.detail}
+                  </p>
+                  {entry.status === 'done' ? <p className="pasted">{entry.reply}</p> : null}
+                  <div className="panel-inline">
+                    {entry.status === 'sending' || entry.status === 'running' ? (
+                      <button type="button" className="text-button secondary" onClick={() => onBridgeCancel?.(entry.requestId)}>
+                        Cancel
+                      </button>
+                    ) : null}
+                    {entry.status === 'done' && entry.thread && !entry.kept ? (
+                      <button type="button" className="text-button" onClick={() => onBridgeKeep?.(entry.id)}>
+                        Keep using this conversation
+                      </button>
+                    ) : null}
                   </div>
                 </>
               ) : null}

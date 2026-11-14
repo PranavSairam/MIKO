@@ -3,6 +3,8 @@ import {
   IPC,
   type AppListing,
   type HitRect,
+  type BridgeStatusInfo,
+  type BridgeUpdate,
   type ImportanceRules,
   type MailListRequest,
   type MailListResult,
@@ -161,6 +163,30 @@ const api: MikoApi = {
     }
     ipcRenderer.on(IPC.voiceAuto, wrapped)
     return () => ipcRenderer.removeListener(IPC.voiceAuto, wrapped)
+  },
+  bridgeStatus: async () => (await ipcRenderer.invoke(IPC.bridgeStatus)) as BridgeStatusInfo | null,
+  bridgeSend: async (requestId: string) => {
+    const r = (await ipcRenderer.invoke(IPC.bridgeSend, String(requestId))) as { ok?: unknown; reason?: unknown } | null
+    return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '' }
+  },
+  bridgeCancel: (requestId: string) => ipcRenderer.send(IPC.bridgeCancel, String(requestId)),
+  bridgeKeep: async (thread: string) => (await ipcRenderer.invoke(IPC.bridgeKeep, String(thread))) === true,
+  onBridge: (listener: (update: BridgeUpdate) => void) => {
+    const wrapped = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
+      const u = payload as Partial<BridgeUpdate> | null
+      if (!u || typeof u.requestId !== 'string' || typeof u.phase !== 'string') return
+      if (!['running', 'done', 'failed', 'cancelled', 'timeout'].includes(u.phase)) return
+      listener({
+        requestId: u.requestId,
+        phase: u.phase as BridgeUpdate['phase'],
+        reply: typeof u.reply === 'string' ? u.reply.slice(0, 4000) : undefined,
+        thread: typeof u.thread === 'string' ? u.thread.slice(0, 64) : undefined,
+        reason: typeof u.reason === 'string' ? u.reason.slice(0, 300) : undefined,
+        seconds: typeof u.seconds === 'number' ? u.seconds : undefined
+      })
+    }
+    ipcRenderer.on(IPC.bridgeUpdate, wrapped)
+    return () => ipcRenderer.removeListener(IPC.bridgeUpdate, wrapped)
   },
   mailStatus: async () => (await ipcRenderer.invoke(IPC.mailStatus)) as MailStatusInfo | null,
   mailConnect: async (hint?: string) => {

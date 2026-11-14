@@ -13,7 +13,8 @@ import { startKeys } from './keys'
 import { postToPet } from './pet-window'
 import { startListening, stopListening } from './speech'
 import { toggleSwitcher, warmSwitcher } from './switcher-window'
-import { setVoiceAutoExecute, voiceAutoExecute } from './settings'
+import { bridgeEnabled, setBridgeEnabled, setVoiceAutoExecute, voiceAutoExecute } from './settings'
+import { stopAllBridges } from './bridge'
 
 app.setName('MIKO')
 if (process.platform === 'win32') {
@@ -67,6 +68,7 @@ if (!gotLock) {
     setQuitting(true)
     unregisterShortcut()
     stopKeys()
+    stopAllBridges()
   })
 
   app.on('window-all-closed', () => {
@@ -97,6 +99,11 @@ if (!gotLock) {
         const result = enableFollow(enabled)
         refresh()
         return result
+      },
+      bridge: bridgeEnabled,
+      setBridge: (enabled) => {
+        setBridgeEnabled(enabled)
+        if (!enabled) stopAllBridges()
       },
       voiceAuto: voiceAutoExecute,
       setVoiceAuto: (enabled) => {

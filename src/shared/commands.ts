@@ -35,6 +35,8 @@ export type CommandResult =
   | { type: 'check-mail'; prompt: string }
   | { type: 'mail'; intent: MailIntent }
   | { type: 'mail-or-app'; query: string }
+  | { type: 'bridge-test' }
+  | { type: 'bridge-new' }
   | { type: 'unknown'; text: string }
 
 
@@ -79,6 +81,9 @@ export function routeCommand(
 ): CommandResult {
   const original = text.trim().slice(0, 2000)
   if (!original) return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
+  const bridge = normalize(original)
+  if (/^(?:reply with\s+)?miko bridge test$/.test(bridge)) return { type: 'bridge-test' }
+  if (/^bridge\s+new\s+(?:conversation|chat|thread)$/.test(bridge)) return { type: 'bridge-new' }
   const asked = matchAskGpt(original)
   if (asked) return asked
   if (isCheckMailInChatGpt(normalize(original))) return { type: 'check-mail', prompt: MAIL_REQUEST }
@@ -306,6 +311,8 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'open-chat':
     case 'list-chats':
     case 'mail':
+    case 'bridge-test':
+    case 'bridge-new':
       return { kind: 'run' }
     case 'confirm':
     case 'close':

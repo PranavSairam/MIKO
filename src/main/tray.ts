@@ -11,6 +11,8 @@ export interface TrayActions {
   setFollowing: (enabled: boolean) => Promise<{ ok: boolean; reason: string }>
   voiceAuto: () => boolean
   setVoiceAuto: (enabled: boolean) => void
+  bridge: () => boolean
+  setBridge: (enabled: boolean) => void
 }
 
 let tray: Tray | null = null
@@ -22,7 +24,9 @@ let actions: TrayActions = {
   following: () => false,
   setFollowing: () => Promise.resolve({ ok: false, reason: '' }),
   voiceAuto: () => true,
-  setVoiceAuto: () => undefined
+  setVoiceAuto: () => undefined,
+  bridge: () => false,
+  setBridge: () => undefined
 }
 
 export function createTray(next: TrayActions): { refresh: () => void } {
@@ -85,6 +89,15 @@ function buildMenu(): Menu {
       checked: actions.voiceAuto(),
       click: (item) => {
         actions.setVoiceAuto(item.checked)
+        refreshTrayMenu()
+      }
+    },
+    {
+      label: 'ChatGPT bridge test (Codex CLI)',
+      type: 'checkbox',
+      checked: actions.bridge(),
+      click: (item) => {
+        actions.setBridge(item.checked)
         refreshTrayMenu()
       }
     },

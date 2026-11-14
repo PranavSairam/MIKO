@@ -32,6 +32,7 @@ import { DobermanRig } from './DobermanRig'
 import { MailView } from '../mail/MailView'
 import { useMail } from '../mail/useMail'
 import { MAIL_REQUEST } from '../../../shared/commands'
+import { BRIDGE_TEST_PROMPT } from '../../../shared/bridge'
 import { MAIL_PANEL, PANEL, PET_WINDOW, type PanelSize } from '../../../shared/layout'
 
 const HIT_SLOP_PX = 2
@@ -43,6 +44,8 @@ export function MotionApp() {
   const [hit, setHit] = useState<HitRect>({ x: 36, y: 24, width: 148, height: 200 })
   const [draft, setDraft] = useState('')
   const [entries, setEntries] = useState<PanelEntry[]>([])
+  const entriesRef = useRef<PanelEntry[]>([])
+  entriesRef.current = entries
   const [listening, setListening] = useState(false)
   const [listenDetail, setListenDetail] = useState('')
   const [canSpeak, setCanSpeak] = useState(false)
@@ -603,6 +606,17 @@ export function MotionApp() {
 
   useEffect(() => {
     if (typeof window.miko === 'undefined') return
+    return window.miko.onBridge((u) => {
+      const secs = u.seconds !== undefined ? ` (${u.seconds} s)` : ''
+      if (u.phase === 'running') updateBridge(u.requestId, { status: 'running' })
+      else if (u.phase === 'done')
+        updateBridge(u.requestId, { status: 'done', reply: u.reply ?? '', thread: u.thread ?? '', detail: `Reply received${secs}. Conversation ${(u.thread ?? '').slice(0, 8)}\u2026` })
+      else updateBridge(u.requestId, { status: u.phase, detail: `${u.reason ?? 'Stopped.'}${secs}` })
+    })
+  }, [])
+
+  useEffect(() => {
+    if (typeof window.miko === 'undefined') return
     let warned = false
     return window.miko.onKeys((event) => {
       if (event.kind === 'talk-start') {
@@ -714,6 +728,41 @@ export function MotionApp() {
     void loadChats()
     setPanelView('chats')
     if (!panelRef.current) void applyPanel(true)
+  }
+
+  /** Bridge proof of concept: one request at a time; success only when its own reply arrives. */
+  async function startBridge(): Promise<void> {
+    if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) {
+      pushEntry({ id: 0, kind: 'note', text: 'A bridge request is still waiting for its reply. Cancel it or wait.' })
+      return
+    }
+    const status = await window.miko.bridgeStatus()
+    if (!status?.enabled) {
+      pushEntry({ id: 0, kind: 'note', text: 'The ChatGPT bridge is off. Turn on \u201cChatGPT bridge test (Codex CLI)\u201d in the paw menu.' })
+      return
+    }
+    if (!status.available || !status.signedIn) {
+      pushEntry({ id: 0, kind: 'note', text: status.available ? 'Sign in to ChatGPT in the ChatGPT app first.' : 'The ChatGPT app\u2019s Codex CLI wasn\u2019t found.' })
+      return
+    }
+    const requestId = `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    pushEntry({
+      id: 0,
+      kind: 'bridge',
+      requestId,
+      prompt: BRIDGE_TEST_PROMPT,
+      status: 'sending',
+      reply: '',
+      thread: status.thread,
+      detail: status.thread ? `Conversation ${status.thread.slice(0, 8)}\u2026` : 'New conversation.',
+      kept: Boolean(status.thread)
+    })
+    const sent = await window.miko.bridgeSend(requestId)
+    if (!sent.ok) updateBridge(requestId, { status: 'failed', detail: sent.reason })
+  }
+
+  function updateBridge(requestId: string, patch: Partial<Extract<PanelEntry, { kind: 'bridge' }>>): void {
+    setEntries((items) => items.map((item) => (item.kind === 'bridge' && item.requestId === requestId ? { ...item, ...patch } : item)))
   }
 
   async function onSubmit(): Promise<void> {
@@ -841,6 +890,15 @@ export function MotionApp() {
         detail: 'Ready for you to review. Nothing has been sent.',
         destination: ''
       })
+      return
+    }
+    if (decision.type === 'bridge-test') {
+      await startBridge()
+      return
+    }
+    if (decision.type === 'bridge-new') {
+      await window.miko.bridgeKeep('')
+      pushEntry({ id: 0, kind: 'note', text: 'The next bridge request will start a new conversation.' })
       return
     }
     if (decision.type === 'mail') {
@@ -1148,6 +1206,14 @@ export function MotionApp() {
             onOpen: (name) => {
               void window.miko.openChat(name).then((result) => setChatsMessage(openedLine(result, `\u201c${name}\u201d`)))
             }
+          }}
+          onBridgeCancel={(requestId) => window.miko.bridgeCancel(requestId)}
+          onBridgeKeep={(id) => {
+            const entry = entries.find((item) => item.id === id)
+            if (entry?.kind !== 'bridge' || !entry.thread) return
+            void window.miko.bridgeKeep(entry.thread).then((ok) => {
+              if (ok) setEntries((items) => items.map((item) => (item.kind === 'bridge' ? { ...item, kept: item.thread === entry.thread } : item)))
+            })
           }}
           onUseChatGpt={(id) => {
             void onUseChatGpt(id)

@@ -192,3 +192,12 @@ describe('mail routing', () => {
     assert.equal(routeCommand('open calculator', 'typed', catalog).type !== 'mail-or-app', true)
   })
 })
+
+describe('bridge commands', () => {
+  it('recognises the bridge test and new-conversation commands', () => {
+    assert.deepEqual(routeCommand('Reply with MIKO bridge test', 'typed', catalog), { type: 'bridge-test' })
+    assert.deepEqual(routeCommand('miko bridge test.', 'voice', catalog), { type: 'bridge-test' })
+    assert.deepEqual(routeCommand('bridge new conversation', 'typed', catalog), { type: 'bridge-new' })
+    assert.equal(planVoice(routeCommand('miko bridge test', 'voice', catalog), true).kind, 'run')
+  })
+})

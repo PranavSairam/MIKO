@@ -90,6 +90,58 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, ChatGPT desktop bridge investigation + proof of concept
+**Goal:** submit from MIKO while WhatsApp is in front, have ChatGPT answer in a chosen conversation, and show the answer in MIKO.
+
+**Findings**
+- **Desktop Accessibility route: not possible, and not appropriate.**
+  - ChatGPT.app (`com.openai.codex` 26.924, Electron) exposes only its windows (6–8 elements): no composer, no submit control, no generation state, no reply text.
+  - `AXManualAccessibility` gives -25205 and `AXEnhancedUserInterface` gives -25208 (re-check with `scripts/probe-chatgpt-composer.swift`).
+  - OpenAI's Terms of Use (version dated 2026-01-01) prohibit automatically or programmatically extracting data or Output from the Services. Scraping replies out of the ChatGPT window would break that even if it were exposed.
+- **No official interface reads or continues chatgpt.com conversations from another app.**
+  - The app's documented `codex://` links open new or local threads, settings and plugins. None returns a reply.
+  - Apple Shortcuts has ChatGPT actions ("Ask ChatGPT", and the macOS 26 "Use Model" action via Apple Intelligence's ChatGPT extension). They need the owner to build a Shortcut and don't target a chosen ChatGPT conversation. Not pursued.
+  - The OpenAI API is a separate product (API key, billing), with no access to ChatGPT conversations or memory.
+- **Supported route found: the official Codex CLI bundled in ChatGPT.app** (`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`, 0.158.0-alpha.2.1).
+  - It reuses ChatGPT's own sign-in (`codex login status` reports "Logged in using ChatGPT"); MIKO never sees credentials.
+  - `codex exec --json` runs headless and streams `thread.started`, `item.completed` (agent_message) and `turn.completed`.
+  - `codex exec resume <thread>` continues a chosen thread.
+  - Documented at learn.chatgpt.com/docs/non-interactive-mode.
+  - **Limits:**
+    - These are **Codex threads** (they show up in the ChatGPT app's Codex workspace), not chatgpt.com chat conversations, Projects or custom GPTs. ChatGPT connectors and memory from chat aren't implied.
+    - Each request uses ChatGPT plan usage: about 17k input tokens for the first turn and about 35k on resume, because of Codex's system context.
+    - OpenAI's docs call API keys "the right default for automation". ChatGPT sign-in is documented for local use and advanced CI.
+
+**Proof of concept (opt-in)**
+- **Turning it on:** tray menu → "ChatGPT bridge test (Codex CLI)". Off by default, stored as `bridgeEnabled`.
+- **Commands:** "Reply with MIKO bridge test" / "MIKO bridge test", typed or spoken. "bridge new conversation" forgets the chosen thread.
+- **How a request runs:**
+  - `src/main/bridge.ts` spawns `codex exec [resume <thread>] --json --skip-git-repo-check -c sandbox_mode="read-only" -c approval_policy="never"` in an empty `userData/bridge-work` folder, with stdin closed.
+  - Each request has its own id and process.
+  - The reply is accepted only after `turn.completed`, a non-empty agent message, and (when resuming) the same thread id (`src/shared/bridge.ts`, tested).
+  - **Timeout:** 120 s, after which the process is killed.
+  - **Cancel:** SIGTERM; the card says ChatGPT may already have received the request.
+  - **Busy/duplicate:** one request per conversation; a second is refused, not queued. The card only shows success when its own reply arrives.
+  - **Existing composer text:** not applicable, because the ChatGPT window is never touched.
+- **Choosing a conversation:** after a reply, "Keep using this conversation" saves the thread (`bridgeThread`) for later requests.
+
+**Observed (real app, Playwright, owner's ChatGPT sign-in)**
+- **Bridge off:** the request was refused with the opt-in hint.
+- **Bridge on, spoken request with WhatsApp frontmost:**
+  - reply "MIKO bridge test" in 6.6 s
+  - WhatsApp frontmost in 19/19 samples; **no foreground activation of ChatGPT or MIKO**
+  - a duplicate request while pending was refused
+- **Keep this conversation, then resend:** same thread (01a1d9a1…), reply in 7.6 s, WhatsApp still frontmost.
+- **Cancel:** card showed Cancelled; still Cancelled 8 s later (no late success); 0 leftover `codex` processes.
+- **Earlier direct CLI runs:** 6 s each, new thread then resumed thread, WhatsApp frontmost. One run showed the macOS UserNotificationCenter dialog in front for about 1 s; it didn't recur.
+- **Not exercised live:** the 120 s timeout (code path only).
+- **Side effect:** the test created a few Codex threads, visible in the ChatGPT app's Codex list.
+- typecheck passes, 103/103 tests pass, build passes.
+
+**Next step:** decide whether Codex threads are an acceptable "conversation" for this workflow.
+- **If yes:** generalise the bridge from the fixed test phrase to free-form requests (keep it read-only and opt-in), and add a thread picker from `~/.codex/sessions`.
+- **If you need real chatgpt.com chats (Projects, custom GPTs, memory, connectors):** there is no supported interface today. Keep the copy-and-paste handoff, and watch OpenAI's app docs for an official integration.
+
 ### 2026-11-14: Session 1, Mail panel (Gmail, read-only)
 **Provider:** Gmail. Nothing was configured locally; the owner's addresses are Gmail.
 - **Sign-in:** Google's installed-app OAuth flow (PKCE + loopback redirect on `127.0.0.1`), scope `gmail.readonly` only.

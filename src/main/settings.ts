@@ -37,6 +37,25 @@ export function setSavedChats(list: SavedChat[]): boolean {
   return writeKey('savedChats', list)
 }
 
+/** ChatGPT bridge proof of concept: off unless the owner turns it on. */
+export function bridgeEnabled(): boolean {
+  return readAll().bridgeEnabled === true
+}
+
+export function setBridgeEnabled(enabled: boolean): void {
+  writeKey('bridgeEnabled', enabled)
+}
+
+/** Codex thread id chosen for bridge requests ('' = start a new conversation). */
+export function bridgeThread(): string {
+  const value = readAll().bridgeThread
+  return typeof value === 'string' && /^[0-9a-f-]{8,64}$/i.test(value) ? value : ''
+}
+
+export function setBridgeThread(thread: string): void {
+  writeKey('bridgeThread', /^[0-9a-f-]{8,64}$/i.test(thread) ? thread : '')
+}
+
 /** Mail importance rules (adjustable in the Mail tab). */
 export function mailRules(): ImportanceRules {
   return parseRules(readAll().mailRules)
