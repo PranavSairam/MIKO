@@ -77,13 +77,13 @@ export function routeCommand(
   _source: CommandSource,
   catalog: CatalogApp[],
   chats: SavedChat[] = [],
-  context: { mailTab?: boolean } = {}
+  context: { mailTab?: boolean; assistantActive?: boolean } = {}
 ): CommandResult {
   const original = text.trim().slice(0, 2000)
   if (!original) return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
   const bridge = normalize(original)
   if (/^(?:reply with\s+)?miko bridge test$/.test(bridge)) return { type: 'bridge-test' }
-  if (/^bridge\s+new\s+(?:conversation|chat|thread)$/.test(bridge)) return { type: 'bridge-new' }
+  if (/^(?:bridge\s+|start\s+(?:a\s+)?)?new\s+(?:conversation|chat|thread)$/.test(bridge)) return { type: 'bridge-new' }
   const asked = matchAskGpt(original)
   if (asked) return asked
   if (isCheckMailInChatGpt(normalize(original))) return { type: 'check-mail', prompt: MAIL_REQUEST }
@@ -107,6 +107,8 @@ export function routeCommand(
   const opened = matchOpen(spoken, catalog)
   if (opened) return opened
   if (context.mailTab) return { type: 'mail', intent: { kind: 'search', query: cleanQuery(original.replace(/[.!?]+$/, '')) } }
+  // While an assistant conversation is active, anything that isn't a local command is a follow-up.
+  if (context.assistantActive) return { type: 'question', prompt: original }
   return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
 }
 
@@ -174,7 +176,7 @@ function normalize(text: string): string {
 function isQuestion(text: string): boolean {
   if (/\?\s*$/.test(text)) return true
   const stripped = text.trim().replace(/^(?:please\s+)?(?:(?:can|could)\s+you\s+)?/i, '')
-  return /^(how|what|why|when|who|where|which|explain|write|draft|compose|rewrite|summarize|tell me)\b/i.test(
+  return /^(how|what|why|when|who|where|which|explain|write|draft|compose|rewrite|summari[sz]e|tell me|give me|list|translate|suggest|define|describe|compare|generate|brainstorm|outline|proofread|rephrase|paraphrase|calculate|convert|recommend|say|create|make|plan|help me)\b/i.test(
     stripped
   )
 }

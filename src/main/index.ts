@@ -13,7 +13,7 @@ import { startKeys } from './keys'
 import { postToPet } from './pet-window'
 import { startListening, stopListening } from './speech'
 import { toggleSwitcher, warmSwitcher } from './switcher-window'
-import { bridgeEnabled, setBridgeEnabled, setVoiceAutoExecute, voiceAutoExecute } from './settings'
+import { assistantEnabled, setAssistantEnabled, setVoiceAutoExecute, voiceAutoExecute } from './settings'
 import { stopAllBridges } from './bridge'
 
 app.setName('MIKO')
@@ -100,9 +100,9 @@ if (!gotLock) {
         refresh()
         return result
       },
-      bridge: bridgeEnabled,
+      bridge: assistantEnabled,
       setBridge: (enabled) => {
-        setBridgeEnabled(enabled)
+        setAssistantEnabled(enabled)
         if (!enabled) stopAllBridges()
       },
       voiceAuto: voiceAutoExecute,

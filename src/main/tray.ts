@@ -93,7 +93,7 @@ function buildMenu(): Menu {
       }
     },
     {
-      label: 'ChatGPT bridge test (Codex CLI)',
+      label: 'MIKO assistant (Codex, ChatGPT sign-in)',
       type: 'checkbox',
       checked: actions.bridge(),
       click: (item) => {

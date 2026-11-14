@@ -50,6 +50,13 @@ describe('parseMailCommand', () => {
     assert.deepEqual(parseMailCommand('open the last mail'), { kind: 'open', index: -1 })
     assert.deepEqual(parseMailCommand('open that email'), { kind: 'open', index: 0 })
   })
+  it('sends mail questions to the mailbox, not the model', () => {
+    assert.deepEqual(parseMailCommand('Do I have any unread emails?'), { kind: 'unread' })
+    assert.deepEqual(parseMailCommand('any new mail?'), { kind: 'recent' })
+    assert.deepEqual(parseMailCommand("What's in my inbox?"), { kind: 'recent' })
+    assert.deepEqual(parseMailCommand('did I get any important emails?'), { kind: 'important', unreadOnly: false })
+    assert.equal(parseMailCommand('how do I write a polite email?'), null)
+  })
   it('ignores app and other commands', () => {
     for (const t of ['open mail', 'open calculator', 'move left', 'ask gpt what is mail']) assert.equal(parseMailCommand(t), null, t)
   })

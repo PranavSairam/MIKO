@@ -82,6 +82,15 @@ export function parseMailCommand(raw: string): MailIntent | null {
   ) {
     return { kind: 'recent' }
   }
+  // Questions about the user's own mail go to the mailbox, never to the model.
+  const asks = new RegExp(`^(?:do|did|have)\\s+i\\s+(?:got|get|have|received?)\\s+(?:any\\s+)?(new\\s+|unread\\s+|important\\s+)?${MAIL}$|^any\\s+(new\\s+|unread\\s+|important\\s+)?${MAIL}$`).exec(t)
+  if (asks) {
+    const kind = (asks[1] ?? asks[2] ?? '').trim()
+    if (kind === 'unread') return { kind: 'unread' }
+    if (kind === 'important') return { kind: 'important', unreadOnly: false }
+    return { kind: 'recent' }
+  }
+  if (new RegExp(`^what(?:'s|\\s+is)\\s+(?:new\\s+)?in\\s+my\\s+(?:inbox|mail|email)$`).test(t)) return { kind: 'recent' }
   const important = new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?important\\s+(unread\\s+)?${MAIL}$`).exec(t)
   if (important) return { kind: 'important', unreadOnly: Boolean(important[1]) }
   if (new RegExp(`^(?:show\\s+(?:me\\s+)?)?(?:my\\s+)?unread\\s+${MAIL}$`).test(t)) return { kind: 'unread' }

@@ -19,7 +19,9 @@ export const IPC = {
   bridgeCancel: 'miko:bridge-cancel',
   bridgeUpdate: 'miko:bridge-update',
   bridgeStatus: 'miko:bridge-status',
-  bridgeKeep: 'miko:bridge-keep',
+  bridgeNew: 'miko:bridge-new',
+  prefsGet: 'miko:prefs-get',
+  prefsSet: 'miko:prefs-set',
   mailStatus: 'miko:mail-status',
   mailConnect: 'miko:mail-connect',
   mailDisconnect: 'miko:mail-disconnect',
@@ -281,10 +283,13 @@ export interface MikoApi {
   onVoiceAuto: (listener: (enabled: boolean) => void) => () => void
   /** ChatGPT bridge proof of concept (opt-in; Codex CLI, headless). */
   bridgeStatus: () => Promise<BridgeStatusInfo | null>
-  bridgeSend: (requestId: string) => Promise<{ ok: boolean; reason: string }>
+  bridgeSend: (requestId: string, prompt: string) => Promise<{ ok: boolean; reason: string }>
   bridgeCancel: (requestId: string) => void
-  /** Use this conversation for later bridge requests ('' = new conversation each time). */
-  bridgeKeep: (thread: string) => Promise<boolean>
+  /** Start a new assistant conversation (the next question opens a fresh thread). */
+  bridgeNew: () => Promise<void>
+  /** MIKO preferences (stored on this Mac, added to new assistant conversations). */
+  prefsGet: () => Promise<string>
+  prefsSet: (text: string) => Promise<boolean>
   onBridge: (listener: (update: BridgeUpdate) => void) => () => void
   /** Gmail (read-only). Tokens never reach the renderer. */
   mailStatus: () => Promise<MailStatusInfo | null>

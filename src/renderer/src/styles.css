@@ -952,3 +952,31 @@ pre.mail-body.text {
     margin-left: 0;
   }
 }
+
+.assistant-label {
+  margin: 0 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e7b98a;
+}
+
+.assistant-reply {
+  margin: 4px 0;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.prefs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prefs-text {
+  flex: 1;
+  min-height: 60px;
+  resize: none;
+}

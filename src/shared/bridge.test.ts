@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
-import { BRIDGE_TEST_PROMPT, bridgeResult, emptyBridge, readBridgeEvent } from './bridge.ts'
+import { BRIDGE_TEST_PROMPT, assistantInstructions, bridgeResult, emptyBridge, readBridgeEvent } from './bridge.ts'
 
 const lines = (thread: string, text: string) => [
   `{"type":"thread.started","thread_id":"${thread}"}`,
@@ -39,5 +39,20 @@ describe('bridge events', () => {
   })
   it('uses the exact test prompt', () => {
     assert.equal(BRIDGE_TEST_PROMPT, 'Reply with MIKO bridge test')
+  })
+})
+
+describe('assistantInstructions', () => {
+  it('is short, has no tools, forbids inventing mail, and adds MIKO preferences', () => {
+    const text = assistantInstructions('Call me Pranav.\nI prefer short answers.')
+    assert.ok(text.length < 1500, `length ${text.length}`)
+    assert.match(text, /no tools/i)
+    assert.match(text, /never invent/i)
+    assert.match(text, /MIKO preferences/)
+    assert.match(text, /I prefer short answers\./)
+  })
+  it('omits the preferences block when there are none and caps long ones', () => {
+    assert.doesNotMatch(assistantInstructions(''), /MIKO preferences/)
+    assert.ok(assistantInstructions('x'.repeat(10000)).length < 4000)
   })
 })

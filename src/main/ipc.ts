@@ -9,9 +9,8 @@ import { requestClose, watchClose } from './quit'
 import { cancelListening, startListening, stopListening } from './speech'
 import { openSwitcher, registerSwitcherIpc } from './switcher-window'
 import { registerMailIpc } from './mail/ipc'
-import { bridgeStatus, cancelBridge, sendBridge } from './bridge'
-import { BRIDGE_TEST_PROMPT } from '../shared/bridge'
-import { savedChats, setBridgeThread, setSavedChats, voiceAutoExecute } from './settings'
+import { bridgeStatus, cancelBridge, newConversation, sendBridge } from './bridge'
+import { mikoPreferences, savedChats, setMikoPreferences, setSavedChats, voiceAutoExecute } from './settings'
 import {
   currentLayout,
   isTrustedSender,
@@ -168,19 +167,20 @@ export function registerIpc(presence: {
   registerMailIpc()
 
   ipcMain.handle(IPC.bridgeStatus, (event) => (trusted(event) ? bridgeStatus() : null))
-  ipcMain.handle(IPC.bridgeSend, (event, requestId: unknown) => {
+  ipcMain.handle(IPC.bridgeSend, (event, requestId: unknown, prompt: unknown) => {
     if (!trusted(event) || typeof requestId !== 'string' || !/^[a-z0-9-]{4,40}$/i.test(requestId)) {
       return { ok: false, reason: 'Not allowed.' }
     }
-    return sendBridge(requestId, BRIDGE_TEST_PROMPT)
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 4000) return { ok: false, reason: 'That request is empty or too long.' }
+    return sendBridge(requestId, prompt.trim())
   })
+  ipcMain.handle(IPC.bridgeNew, (event) => {
+    if (trusted(event)) newConversation()
+  })
+  ipcMain.handle(IPC.prefsGet, (event) => (trusted(event) ? mikoPreferences() : ''))
+  ipcMain.handle(IPC.prefsSet, (event, text: unknown) => (trusted(event) && typeof text === 'string' ? setMikoPreferences(text) : false))
   ipcMain.on(IPC.bridgeCancel, (event, requestId: unknown) => {
     if (trusted(event) && typeof requestId === 'string') cancelBridge(requestId)
-  })
-  ipcMain.handle(IPC.bridgeKeep, (event, thread: unknown) => {
-    if (!trusted(event) || typeof thread !== 'string') return false
-    setBridgeThread(thread)
-    return true
   })
 
   ipcMain.handle(IPC.getVoiceAuto, (event) => (trusted(event) ? voiceAutoExecute() : true))

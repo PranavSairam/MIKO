@@ -165,12 +165,19 @@ const api: MikoApi = {
     return () => ipcRenderer.removeListener(IPC.voiceAuto, wrapped)
   },
   bridgeStatus: async () => (await ipcRenderer.invoke(IPC.bridgeStatus)) as BridgeStatusInfo | null,
-  bridgeSend: async (requestId: string) => {
-    const r = (await ipcRenderer.invoke(IPC.bridgeSend, String(requestId))) as { ok?: unknown; reason?: unknown } | null
+  bridgeSend: async (requestId: string, prompt: string) => {
+    const r = (await ipcRenderer.invoke(IPC.bridgeSend, String(requestId), String(prompt))) as { ok?: unknown; reason?: unknown } | null
     return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '' }
   },
   bridgeCancel: (requestId: string) => ipcRenderer.send(IPC.bridgeCancel, String(requestId)),
-  bridgeKeep: async (thread: string) => (await ipcRenderer.invoke(IPC.bridgeKeep, String(thread))) === true,
+  bridgeNew: async () => {
+    await ipcRenderer.invoke(IPC.bridgeNew)
+  },
+  prefsGet: async () => {
+    const v: unknown = await ipcRenderer.invoke(IPC.prefsGet)
+    return typeof v === 'string' ? v : ''
+  },
+  prefsSet: async (text: string) => (await ipcRenderer.invoke(IPC.prefsSet, String(text).slice(0, 2000))) === true,
   onBridge: (listener: (update: BridgeUpdate) => void) => {
     const wrapped = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
       const u = payload as Partial<BridgeUpdate> | null

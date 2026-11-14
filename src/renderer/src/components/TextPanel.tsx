@@ -37,6 +37,9 @@ export type PanelEntry =
       thread: string
       detail: string
       kept: boolean
+      startedAt?: number
+      /** Message number within its conversation. */
+      turn?: number
     }
 
 interface TextPanelProps {
@@ -59,13 +62,16 @@ interface TextPanelProps {
   canSpeak?: boolean
   onSpeak?: (text: string) => void
   /** 'chats' swaps the conversation for the Saved chats manager. */
-  view?: 'log' | 'chats'
-  onView?: (view: 'log' | 'chats') => void
+  view?: 'log' | 'chats' | 'prefs'
+  onView?: (view: 'log' | 'chats' | 'prefs') => void
   chats?: SavedChat[]
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
   onBridgeCancel?: (requestId: string) => void
-  onBridgeKeep?: (id: number) => void
+  onBridgeNew?: () => void
+  onAskInChatGpt?: (prompt: string) => void
+  assistantThread?: string
+  prefs?: { text: string; message: string; onSave: (text: string) => Promise<void> }
   /** Chat / Mail tabs. Mail content replaces the conversation. */
   tab?: 'chat' | 'mail'
   onTab?: (tab: 'chat' | 'mail') => void
@@ -74,6 +80,9 @@ interface TextPanelProps {
 
 export const MAIL_NOTE =
   'ChatGPT does the checking with the mail accounts connected to your ChatGPT account. MIKO never sees your mail or the summary.'
+
+export const ASSISTANT_NOTE =
+  'Runs on Codex with your ChatGPT sign-in, in its own MIKO conversation. It can\u2019t see your ChatGPT chats, memory, files or mail. Say \u201cask GPT \u2026\u201d for your ChatGPT chats.'
 
 export const HANDOFF_NOTE =
   'Continuing in ChatGPT uses that conversation\u2019s context and your account\u2019s memory settings. MIKO hasn\u2019t read any of it.'
@@ -103,7 +112,10 @@ export function TextPanel({
   chatTools,
   onDestination,
   onBridgeCancel,
-  onBridgeKeep,
+  onBridgeNew,
+  onAskInChatGpt,
+  assistantThread = '',
+  prefs,
   tab = 'chat',
   onTab,
   mail
@@ -156,7 +168,18 @@ export function TextPanel({
             ))}
           </div>
         ) : null}
-        {onView && tab === 'chat' ? (
+        {onView && prefs && tab === 'chat' ? (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={view === 'prefs' ? 'Back' : 'MIKO preferences'}
+            title="MIKO preferences"
+            onClick={() => onView(view === 'prefs' ? 'log' : 'prefs')}
+          >
+            {view === 'prefs' ? '←' : '⚙'}
+          </button>
+        ) : null}
+        {onView && tab === 'chat' && view !== 'prefs' ? (
           <button
             type="button"
             className="text-button secondary bar-button"
@@ -171,6 +194,8 @@ export function TextPanel({
       </header>
       {tab === 'mail' && mail ? (
         mail
+      ) : view === 'prefs' && prefs ? (
+        <Preferences {...prefs} />
       ) : view === 'chats' && chatTools ? (
         <SavedChats chats={chats} {...chatTools} />
       ) : (
@@ -227,24 +252,36 @@ export function TextPanel({
               ) : null}
               {entry.kind === 'bridge' ? (
                 <>
-                  <p className="prompt">{entry.prompt}</p>
-                  <p className="panel-detail">
-                    {entry.status === 'sending' || entry.status === 'running' ? 'Waiting for ChatGPT\u2026 ' : ''}
-                    {entry.detail}
+                  <p className="assistant-label">
+                    MIKO assistant · {entry.thread ? `conversation ${entry.thread.slice(0, 8)}` : 'new conversation'}
+                    {entry.turn && entry.turn > 1 ? ` · follow-up ${entry.turn - 1}` : ''}
                   </p>
-                  {entry.status === 'done' ? <p className="pasted">{entry.reply}</p> : null}
+                  <p className="prompt">{entry.prompt}</p>
+                  {entry.status === 'sending' || entry.status === 'running' ? (
+                    <p className="panel-detail">
+                      Thinking… {entry.startedAt ? Math.floor((Date.now() - entry.startedAt) / 1000) : 0} s
+                    </p>
+                  ) : null}
+                  {entry.status === 'done' ? <p className="assistant-reply">{entry.reply}</p> : null}
+                  {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
                   <div className="panel-inline">
                     {entry.status === 'sending' || entry.status === 'running' ? (
                       <button type="button" className="text-button secondary" onClick={() => onBridgeCancel?.(entry.requestId)}>
                         Cancel
                       </button>
                     ) : null}
-                    {entry.status === 'done' && entry.thread && !entry.kept ? (
-                      <button type="button" className="text-button" onClick={() => onBridgeKeep?.(entry.id)}>
-                        Keep using this conversation
+                    {entry.status === 'done' && entry.thread && entry.thread === assistantThread ? (
+                      <button type="button" className="text-button secondary" onClick={() => onBridgeNew?.()}>
+                        New conversation
+                      </button>
+                    ) : null}
+                    {entry.status !== 'sending' && entry.status !== 'running' ? (
+                      <button type="button" className="text-button secondary" onClick={() => onAskInChatGpt?.(entry.prompt)}>
+                        Ask in ChatGPT app
                       </button>
                     ) : null}
                   </div>
+                  <p className="panel-detail note">{ASSISTANT_NOTE}</p>
                 </>
               ) : null}
               {entry.kind === 'choices' ? (
@@ -330,5 +367,32 @@ export function TextPanel({
       </>
       )}
     </section>
+  )
+}
+
+function Preferences({ text, message, onSave }: { text: string; message: string; onSave: (text: string) => Promise<void> }) {
+  const [draft, setDraft] = useState(text)
+  return (
+    <div className="prefs">
+      <p className="panel-detail">
+        <strong>MIKO preferences</strong>: things you want MIKO to remember (name, tone, context). Stored only on this Mac and
+        added to new MIKO assistant conversations. Separate from ChatGPT&apos;s memory.
+      </p>
+      <textarea
+        className="prefs-text"
+        value={draft}
+        maxLength={2000}
+        placeholder="e.g. Call me Pranav. Keep answers short. I'm building MIKO, a desktop dog."
+        aria-label="MIKO preferences"
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      {message ? <p className="panel-detail" role="status">{message}</p> : null}
+      <div className="panel-inline">
+        <button type="button" className="text-button" onClick={() => void onSave(draft)} disabled={draft === text}>
+          Save
+        </button>
+        <span className="panel-detail">{draft.length}/2000</span>
+      </div>
+    </div>
   )
 }

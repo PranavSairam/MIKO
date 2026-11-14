@@ -37,23 +37,37 @@ export function setSavedChats(list: SavedChat[]): boolean {
   return writeKey('savedChats', list)
 }
 
-/** ChatGPT bridge proof of concept: off unless the owner turns it on. */
-export function bridgeEnabled(): boolean {
-  return readAll().bridgeEnabled === true
+/**
+ * MIKO assistant (questions and writing via the Codex CLI with ChatGPT sign-in).
+ * On by default since the owner asked for questions to route through it; the
+ * paw menu turns it off (then questions use the ChatGPT app handoff).
+ */
+export function assistantEnabled(): boolean {
+  return readAll().assistantEnabled !== false
 }
 
-export function setBridgeEnabled(enabled: boolean): void {
-  writeKey('bridgeEnabled', enabled)
+export function setAssistantEnabled(enabled: boolean): void {
+  writeKey('assistantEnabled', enabled)
 }
 
-/** Codex thread id chosen for bridge requests ('' = start a new conversation). */
-export function bridgeThread(): string {
-  const value = readAll().bridgeThread
+/** Current assistant conversation (Codex thread id; '' = the next question starts a new one). */
+export function assistantThread(): string {
+  const value = readAll().assistantThread
   return typeof value === 'string' && /^[0-9a-f-]{8,64}$/i.test(value) ? value : ''
 }
 
-export function setBridgeThread(thread: string): void {
-  writeKey('bridgeThread', /^[0-9a-f-]{8,64}$/i.test(thread) ? thread : '')
+export function setAssistantThread(thread: string): void {
+  writeKey('assistantThread', /^[0-9a-f-]{8,64}$/i.test(thread) ? thread : '')
+}
+
+/** MIKO preferences: text the owner explicitly asked MIKO to remember. Local only. */
+export function mikoPreferences(): string {
+  const value = readAll().mikoPreferences
+  return typeof value === 'string' ? value.slice(0, 2000) : ''
+}
+
+export function setMikoPreferences(text: string): boolean {
+  return writeKey('mikoPreferences', text.replace(/\r/g, '').slice(0, 2000))
 }
 
 /** Mail importance rules (adjustable in the Mail tab). */

@@ -201,3 +201,31 @@ describe('bridge commands', () => {
     assert.equal(planVoice(routeCommand('miko bridge test', 'voice', catalog), true).kind, 'run')
   })
 })
+
+describe('assistant routing', () => {
+  it('sends questions and writing requests to the assistant, keeps local commands local', () => {
+    assert.equal(routeCommand('Write a two-line poem about rain', 'typed', catalog).type, 'question')
+    assert.equal(routeCommand('summarize the benefits of sleep', 'voice', catalog).type, 'question')
+    assert.equal(routeCommand('move left', 'typed', catalog, [], { assistantActive: true }).type, 'move')
+    assert.equal(routeCommand('open chrome', 'typed', catalog, [], { assistantActive: true }).type, 'launch')
+    assert.deepEqual(routeCommand('check mail', 'typed', catalog, [], { assistantActive: true }), { type: 'mail', intent: { kind: 'recent' } })
+  })
+  it('treats other text as a follow-up while a conversation is active', () => {
+    assert.deepEqual(routeCommand('shorter and friendlier', 'typed', catalog, [], { assistantActive: true }), { type: 'question', prompt: 'shorter and friendlier' })
+    assert.equal(routeCommand('shorter and friendlier', 'typed', catalog).type, 'unknown')
+  })
+  it('treats imperative writing and knowledge requests as assistant requests', () => {
+    for (const t of ['Say only the word ready.', 'Give me three name ideas for a dog', 'Translate hello to Tamil', 'List five fruits', 'Make a packing list for Goa', 'Help me plan my week'])
+      assert.equal(routeCommand(t, 'typed', catalog).type, 'question', t)
+    for (const t of ['show saved chats', 'sit', 'move left', 'open chrome', 'check mail'])
+      assert.notEqual(routeCommand(t, 'typed', catalog).type, 'question', t)
+  })
+  it('starts a new conversation on request', () => {
+    for (const t of ['new conversation', 'start a new conversation', 'bridge new conversation', 'New chat.'])
+      assert.deepEqual(routeCommand(t, 'typed', catalog), { type: 'bridge-new' }, t)
+  })
+  it('keeps ChatGPT app shortcuts for existing chats and memory', () => {
+    assert.equal(routeCommand('ask GPT what did we decide about FreshNet?', 'typed', catalog).type, 'ask-gpt')
+    assert.equal(routeCommand('open ChatGPT', 'typed', catalog).type, 'open-chatgpt')
+  })
+})

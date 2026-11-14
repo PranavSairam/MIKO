@@ -46,10 +46,16 @@ export function MotionApp() {
   const [entries, setEntries] = useState<PanelEntry[]>([])
   const entriesRef = useRef<PanelEntry[]>([])
   entriesRef.current = entries
+  const [assistantThread, setAssistantThread] = useState('')
+  const assistantThreadRef = useRef('')
+  assistantThreadRef.current = assistantThread
+  const [, setTick] = useState(0)
+  const [prefs, setPrefs] = useState('')
+  const [prefsMessage, setPrefsMessage] = useState('')
   const [listening, setListening] = useState(false)
   const [listenDetail, setListenDetail] = useState('')
   const [canSpeak, setCanSpeak] = useState(false)
-  const [panelView, setPanelView] = useState<'log' | 'chats'>('log')
+  const [panelView, setPanelView] = useState<'log' | 'chats' | 'prefs'>('log')
   const [tab, setTab] = useState<'chat' | 'mail'>('chat')
   const tabRef = useRef<'chat' | 'mail'>('chat')
   tabRef.current = tab
@@ -606,13 +612,23 @@ export function MotionApp() {
 
   useEffect(() => {
     if (typeof window.miko === 'undefined') return
-    return window.miko.onBridge((u) => {
-      const secs = u.seconds !== undefined ? ` (${u.seconds} s)` : ''
+    void window.miko.bridgeStatus().then((st) => setAssistantThread(st?.thread ?? ''))
+    void window.miko.prefsGet().then(setPrefs)
+    const tick = window.setInterval(() => {
+      if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) setTick((n) => n + 1)
+    }, 1000)
+    const stop = window.miko.onBridge((u) => {
+      const secs = u.seconds !== undefined ? ` in ${u.seconds} s` : ''
       if (u.phase === 'running') updateBridge(u.requestId, { status: 'running' })
-      else if (u.phase === 'done')
-        updateBridge(u.requestId, { status: 'done', reply: u.reply ?? '', thread: u.thread ?? '', detail: `Reply received${secs}. Conversation ${(u.thread ?? '').slice(0, 8)}\u2026` })
-      else updateBridge(u.requestId, { status: u.phase, detail: `${u.reason ?? 'Stopped.'}${secs}` })
+      else if (u.phase === 'done') {
+        if (u.thread) setAssistantThread(u.thread)
+        updateBridge(u.requestId, { status: 'done', reply: u.reply ?? '', thread: u.thread ?? '', detail: `Answered${secs}.` })
+      } else updateBridge(u.requestId, { status: u.phase, detail: `${u.reason ?? 'Stopped.'}${secs ? ` (${secs.trim()})` : ''}` })
     })
+    return () => {
+      window.clearInterval(tick)
+      stop()
+    }
   }, [])
 
   useEffect(() => {
@@ -730,15 +746,18 @@ export function MotionApp() {
     if (!panelRef.current) void applyPanel(true)
   }
 
-  /** Bridge proof of concept: one request at a time; success only when its own reply arrives. */
-  async function startBridge(): Promise<void> {
+  /**
+   * MIKO assistant (Codex with ChatGPT sign-in). One request at a time; a card shows
+   * success only when its own reply arrives. Follow-ups continue the current conversation.
+   */
+  async function startAssistant(prompt: string): Promise<void> {
     if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) {
-      pushEntry({ id: 0, kind: 'note', text: 'A bridge request is still waiting for its reply. Cancel it or wait.' })
+      pushEntry({ id: 0, kind: 'note', text: 'MIKO is still answering. Cancel it or wait.' })
       return
     }
     const status = await window.miko.bridgeStatus()
     if (!status?.enabled) {
-      pushEntry({ id: 0, kind: 'note', text: 'The ChatGPT bridge is off. Turn on \u201cChatGPT bridge test (Codex CLI)\u201d in the paw menu.' })
+      pushEntry({ id: 0, kind: 'handoff', prompt, status: 'ready', detail: 'MIKO assistant is off, so this goes to the ChatGPT app. Nothing has been sent.', destination: '' })
       return
     }
     if (!status.available || !status.signedIn) {
@@ -746,18 +765,21 @@ export function MotionApp() {
       return
     }
     const requestId = `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const turn = status.thread ? entriesRef.current.filter((e) => e.kind === 'bridge' && e.status === 'done' && e.thread === status.thread).length + 1 : 1
     pushEntry({
       id: 0,
       kind: 'bridge',
       requestId,
-      prompt: BRIDGE_TEST_PROMPT,
+      prompt,
       status: 'sending',
       reply: '',
       thread: status.thread,
-      detail: status.thread ? `Conversation ${status.thread.slice(0, 8)}\u2026` : 'New conversation.',
-      kept: Boolean(status.thread)
+      detail: '',
+      kept: false,
+      startedAt: Date.now(),
+      turn
     })
-    const sent = await window.miko.bridgeSend(requestId)
+    const sent = await window.miko.bridgeSend(requestId, prompt)
     if (!sent.ok) updateBridge(requestId, { status: 'failed', detail: sent.reason })
   }
 
@@ -771,7 +793,7 @@ export function MotionApp() {
     setDraft('')
     const catalog = await loadCatalog()
     if (!catalog) return
-    await runDecision(routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: tabRef.current === 'mail' }))
+    await runDecision(routeCommand(text, 'typed', catalog, await loadChats(), { mailTab: tabRef.current === 'mail', assistantActive: Boolean(assistantThreadRef.current) }))
   }
 
   /**
@@ -788,7 +810,7 @@ export function MotionApp() {
       setDraft(text)
       return
     }
-    const decision = routeCommand(text, 'voice', catalog, await loadChats(), { mailTab: tabRef.current === 'mail' })
+    const decision = routeCommand(text, 'voice', catalog, await loadChats(), { mailTab: tabRef.current === 'mail', assistantActive: Boolean(assistantThreadRef.current) })
     const plan = planVoice(decision, auto)
     if (plan.kind === 'review') {
       setDraft(text)
@@ -881,11 +903,15 @@ export function MotionApp() {
       await runClose(decision.appId, decision.name, false)
       return
     }
-    if (decision.type === 'question' || decision.type === 'ask-gpt') {
+    if (decision.type === 'question') {
+      await startAssistant(decision.prompt)
+      return
+    }
+    if (decision.type === 'ask-gpt') {
       pushEntry({
         id: 0,
         kind: 'handoff',
-        prompt: decision.type === 'question' ? decision.prompt : decision.question,
+        prompt: decision.question,
         status: 'ready',
         detail: 'Ready for you to review. Nothing has been sent.',
         destination: ''
@@ -893,12 +919,13 @@ export function MotionApp() {
       return
     }
     if (decision.type === 'bridge-test') {
-      await startBridge()
+      await startAssistant(BRIDGE_TEST_PROMPT)
       return
     }
     if (decision.type === 'bridge-new') {
-      await window.miko.bridgeKeep('')
-      pushEntry({ id: 0, kind: 'note', text: 'The next bridge request will start a new conversation.' })
+      await window.miko.bridgeNew()
+      setAssistantThread('')
+      pushEntry({ id: 0, kind: 'note', text: 'New conversation. Your next question starts a fresh MIKO assistant thread.' })
       return
     }
     if (decision.type === 'mail') {
@@ -1177,7 +1204,7 @@ export function MotionApp() {
             />
           }
           view={panelView}
-          onView={(next) => (next === 'chats' ? showChats() : setPanelView('log'))}
+          onView={(next) => (next === 'chats' ? showChats() : setPanelView(next))}
           chats={chats}
           onDestination={(entryId, name) => {
             const entry = entries.find((item) => item.id === entryId)
@@ -1208,12 +1235,24 @@ export function MotionApp() {
             }
           }}
           onBridgeCancel={(requestId) => window.miko.bridgeCancel(requestId)}
-          onBridgeKeep={(id) => {
-            const entry = entries.find((item) => item.id === id)
-            if (entry?.kind !== 'bridge' || !entry.thread) return
-            void window.miko.bridgeKeep(entry.thread).then((ok) => {
-              if (ok) setEntries((items) => items.map((item) => (item.kind === 'bridge' ? { ...item, kept: item.thread === entry.thread } : item)))
+          assistantThread={assistantThread}
+          onBridgeNew={() => {
+            void window.miko.bridgeNew().then(() => {
+              setAssistantThread('')
+              pushEntry({ id: 0, kind: 'note', text: 'New conversation. Your next question starts a fresh MIKO assistant thread.' })
             })
+          }}
+          onAskInChatGpt={(prompt) =>
+            pushEntry({ id: 0, kind: 'handoff', prompt, status: 'ready', detail: 'For your ChatGPT chats and memory. Nothing has been sent.', destination: '' })
+          }
+          prefs={{
+            text: prefs,
+            message: prefsMessage,
+            onSave: async (text) => {
+              const ok = await window.miko.prefsSet(text)
+              if (ok) setPrefs(text.slice(0, 2000))
+              setPrefsMessage(ok ? 'Saved. New MIKO assistant conversations will use these.' : 'Couldn\u2019t save.')
+            }
           }}
           onUseChatGpt={(id) => {
             void onUseChatGpt(id)

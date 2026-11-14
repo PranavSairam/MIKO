@@ -90,6 +90,59 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, MIKO assistant (generalised Codex bridge)
+**Commit-hash correction:** git history shows the bridge proof of concept is **`a68f0dc`** ("Add opt-in ChatGPT bridge proof of concept (Codex CLI)"). The `9b54e46` given in that turn's summary was wrong and doesn't exist. The mail panel is `32ecac6`.
+
+**Routing**
+- Questions and writing requests go to the MIKO assistant: they start with how/what/why/…, explain, write, draft, summarise, translate, give me, list, suggest, say, make, create, plan, help me, …
+- While a conversation is active, any other non-command text is a follow-up.
+- Local commands (movement, apps, chats, mail, switcher) are matched by the local router first.
+- "ask GPT …", "open ChatGPT", saved chats and Ask-in-ChatGPT-app stay for the owner's real ChatGPT chats and memory.
+- Mail questions ("do I have any unread emails?", "any new mail?", "what's in my inbox?") go to the Mail panel's real mailbox, never to the model.
+
+**Assistant** (`src/main/bridge.ts`, `src/shared/bridge.ts`)
+- Uses the Codex CLI bundled in ChatGPT.app, signed in with ChatGPT.
+- Requests run headless, one at a time; each card is tied to its own request id.
+- Card shows "Thinking… N s" (`codex exec --json` streams no partial text, so the timer is the pending indicator), then Cancel and a 120 s timeout.
+- Each reply continues the current thread (`assistantThread`). "New conversation" (button or voice) starts fresh.
+- Every card is labelled "MIKO assistant · conversation <id> · follow-up N", with a note that it can't see ChatGPT chats, memory, files or mail.
+- The paw-menu item "MIKO assistant (Codex, ChatGPT sign-in)" is on by default because the owner asked for questions to route through it. Turned off, questions go to the ChatGPT app handoff.
+
+**MIKO preferences:** Chat tab → ⚙. Free text up to 2000 characters, stored as `mikoPreferences` in `userData/miko-settings.json` (never in Git). It's added to the assistant's instructions for new conversations, and the UI explains it is separate from ChatGPT memory.
+
+**Token investigation** (same prompt "Reply with MIKO bridge test", input tokens)
+
+| Change | Input tokens |
+|---|---|
+| Default `codex exec` (as in the bridge test) | 17,222 |
+| `--ignore-user-config` (drops the owner's 10 plugins, `node_repl` MCP server, notify hook) | 15,680 |
+| + MIKO instructions file instead of Codex's agent prompt (21,175 chars → 632) | −4,044 |
+| + `web_search="disabled"` | −2,369 |
+| + `skills.include_instructions=false` (9,277-char skills block) | −2,053 |
+| + feature switches off (shell, unified_exec, apps, image generation, goals, sleep, …) | about −1,600 |
+| + collaboration-mode, permissions and environment text off | about −480 |
+| **Final, validated with `--strict-config`** | **3,616** (live MIKO turn with preferences: 3,726) |
+
+- `tools.view_image` and `include_apply_patch_tool` turned out not to be real settings (strict mode rejects them), so they were removed.
+- **Left over:** Codex's `<multi_agent_role>` block (2,429 chars). `features.multi_agent=false` doesn't remove it.
+- The assistant has **no tools** (no shell, web, files, plugins or MCP), runs read-only with `approval_policy=never`, and starts in an empty folder (`userData/assistant/empty`).
+- The instructions file `userData/assistant/instructions.md` is written by MIKO and is not in Git. Credentials stay in Codex's own login.
+
+**Verified live** (real app, ChatGPT sign-in)
+- **Question:** "Thinking… 0 s → 1 s → 2 s", then "The capital of Australia is Canberra." in 4.9 s.
+- **Follow-up:** "and roughly how many people live there" continued the same conversation (follow-up 1): "Around 480,000 people live in Canberra, Pranav." That used the context, plus the preference.
+- **Name check:** "What is my name?" gave "Your name is Pranav." (from MIKO preferences).
+- **Cancel:** the 400-word story was cancelled and still showed Cancelled 10 s later with no reply.
+- **New conversation:** "Say only the word ready." gave "ready" in a new conversation (01a1d9b0). Final-args run: "Sail." in conversation 01a1d9b2.
+- **Mail:** "do I have any unread emails?" opened the Mail tab, which showed **Connect mail** (no mailbox is connected). The model wasn't asked.
+- typecheck passes, 111/111 tests pass, build passes. The owner's settings file was restored after testing (none existed).
+- **Side effect:** the tests created several Codex threads, visible in the ChatGPT app's Codex list.
+
+**Next**
+- Optionally stream partial text if a future Codex CLI emits deltas.
+- A thread picker for older MIKO conversations.
+- Windows: the Codex CLI path is macOS-only for now.
+
 ### 2026-11-14: Session 1, ChatGPT desktop bridge investigation + proof of concept
 **Goal:** submit from MIKO while WhatsApp is in front, have ChatGPT answer in a chosen conversation, and show the answer in MIKO.
 
