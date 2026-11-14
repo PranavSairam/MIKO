@@ -119,3 +119,49 @@ describe('planVoice', () => {
     assert.deepEqual(planVoice(routeCommand('close excel', 'voice', catalog), false), { kind: 'review', reason: 'off' })
   })
 })
+
+describe('ChatGPT commands', () => {
+  const chats = [
+    { name: 'FreshNet', url: 'https://chatgpt.com/c/6735a1b2-0c1d' },
+    { name: 'Major project', url: 'https://chatgpt.com/g/g-p-67a0b1c2d3e4-major/project' },
+    { name: 'Major exam prep', url: 'https://chatgpt.com/c/aaaaaaaa-bbbb' }
+  ]
+  it('opens ChatGPT itself', () => {
+    assert.deepEqual(routeCommand('open ChatGPT', 'typed', catalog, chats), { type: 'open-chatgpt' })
+    assert.deepEqual(routeCommand('Open chat GPT.', 'voice', catalog, chats), { type: 'open-chatgpt' })
+  })
+  it('opens saved chats by name and asks when ambiguous', () => {
+    assert.deepEqual(routeCommand('open my FreshNet chat', 'typed', catalog, chats), {
+      type: 'open-chat',
+      name: 'FreshNet',
+      url: 'https://chatgpt.com/c/6735a1b2-0c1d'
+    })
+    assert.equal(routeCommand('Open my major project chat.', 'voice', catalog, chats).type, 'open-chat')
+    const many = routeCommand('open my major chat', 'typed', catalog, chats)
+    assert.equal(many.type, 'chat-choices')
+    assert.deepEqual(many.type === 'chat-choices' && many.options.map((c) => c.name), ['Major project', 'Major exam prep'])
+    assert.equal(routeCommand('open my biology chat', 'typed', catalog, chats).type, 'missing')
+  })
+  it('shows saved chats', () => {
+    assert.deepEqual(routeCommand('show saved chats', 'typed', catalog, chats), { type: 'list-chats' })
+    assert.deepEqual(routeCommand('Show my saved chats.', 'voice', catalog, chats), { type: 'list-chats' })
+  })
+  it('keeps the exact question for ask GPT', () => {
+    assert.deepEqual(routeCommand('ask GPT What is a B-tree, really?', 'typed', catalog, chats), {
+      type: 'ask-gpt',
+      question: 'What is a B-tree, really?'
+    })
+    assert.deepEqual(routeCommand('Ask ChatGPT, how do I cook rice?', 'voice', catalog, chats), {
+      type: 'ask-gpt',
+      question: 'how do I cook rice?'
+    })
+    assert.equal(routeCommand('ask gpt', 'typed', catalog, chats).type, 'unknown')
+  })
+  it('plans voice: open runs, ask is a handoff, ambiguous chats are reviewed', () => {
+    assert.equal(planVoice(routeCommand('open chatgpt', 'voice', catalog, chats), true).kind, 'run')
+    assert.equal(planVoice(routeCommand('open my freshnet chat', 'voice', catalog, chats), true).kind, 'run')
+    assert.equal(planVoice(routeCommand('show saved chats', 'voice', catalog, chats), true).kind, 'run')
+    assert.equal(planVoice(routeCommand('ask gpt why is the sky blue', 'voice', catalog, chats), true).kind, 'handoff')
+    assert.deepEqual(planVoice(routeCommand('open my major chat', 'voice', catalog, chats), true), { kind: 'review', reason: 'ambiguous' })
+  })
+})

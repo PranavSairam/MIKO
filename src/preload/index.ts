@@ -3,6 +3,9 @@ import {
   IPC,
   type AppListing,
   type HitRect,
+  type OpenResult,
+  type SavedChat,
+  type ChatEditResult,
   type KeyEvent,
   type LaunchRequest,
   type LaunchResult,
@@ -56,10 +59,14 @@ const api: MikoApi = {
     const payload: unknown = await ipcRenderer.invoke(IPC.launchApp, { id, confirm: request.confirm })
     return parseLaunchResult(payload)
   },
-  openChatGpt: async (): Promise<boolean> => {
-    const payload: unknown = await ipcRenderer.invoke(IPC.openChatGpt)
-    return payload === true
-  },
+  openChatGpt: async (): Promise<OpenResult> => parseOpen(await ipcRenderer.invoke(IPC.openChatGpt)),
+  listChats: async (): Promise<SavedChat[]> => parseChats(await ipcRenderer.invoke(IPC.chatsList)),
+  addChat: async (name: string, url: string): Promise<ChatEditResult> =>
+    parseEdit(await ipcRenderer.invoke(IPC.chatsAdd, { name: String(name), url: String(url) })),
+  renameChat: async (from: string, to: string): Promise<ChatEditResult> =>
+    parseEdit(await ipcRenderer.invoke(IPC.chatsRename, { from: String(from), to: String(to) })),
+  removeChat: async (name: string): Promise<ChatEditResult> => parseEdit(await ipcRenderer.invoke(IPC.chatsRemove, String(name))),
+  openChat: async (name: string): Promise<OpenResult> => parseOpen(await ipcRenderer.invoke(IPC.chatsOpen, String(name))),
   copyText: async (text: string): Promise<boolean> => {
     if (typeof text !== 'string' || text.length === 0 || text.length > 4000) return false
     const payload: unknown = await ipcRenderer.invoke(IPC.copyText, text)
@@ -207,6 +214,24 @@ const api: MikoApi = {
     ipcRenderer.on(IPC.pointer, wrapped)
     return () => ipcRenderer.removeListener(IPC.pointer, wrapped)
   }
+}
+
+function parseOpen(value: unknown): OpenResult {
+  const v = (value ?? {}) as { ok?: unknown; target?: unknown; appName?: unknown }
+  const target = v.target === 'app' || v.target === 'browser' ? v.target : 'none'
+  return { ok: v.ok === true, target, appName: typeof v.appName === 'string' ? v.appName.slice(0, 80) : '' }
+}
+
+function parseChats(value: unknown): SavedChat[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((row): row is SavedChat => !!row && typeof row.name === 'string' && typeof row.url === 'string')
+    .map((row) => ({ name: row.name.slice(0, 60), url: row.url.slice(0, 2000) }))
+}
+
+function parseEdit(value: unknown): ChatEditResult {
+  const v = (value ?? {}) as { ok?: unknown; reason?: unknown; list?: unknown }
+  return { ok: v.ok === true, reason: typeof v.reason === 'string' ? v.reason : '', list: parseChats(v.list) }
 }
 
 function parseListings(value: unknown): AppListing[] {

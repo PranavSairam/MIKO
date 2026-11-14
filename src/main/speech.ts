@@ -123,7 +123,7 @@ function launchMac(root: string, hold: boolean): boolean {
     kill: () => handle?.signal('TERM')
   }
   const hooks = track(current, hold ? HOLD_MS : LISTEN_MS)
-  handle = launchHelper(root, hold ? ['--hold'] : [], hooks.line, hooks.ended)
+  handle = launchHelper(root, [...(hold ? ['--hold'] : []), '--parent', String(process.pid)], hooks.line, hooks.ended)
   if (!handle) {
     session = null
     clearKillTimer()

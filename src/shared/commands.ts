@@ -1,3 +1,4 @@
+import { resolveChat, type SavedChat } from './chatgpt.ts'
 import { LITTLE_DIP, MOVE_DIP } from './guide.ts'
 
 /** One router for typed text now and a speech transcript later. */
@@ -25,6 +26,11 @@ export type CommandResult =
   | { type: 'choices'; purpose: 'open' | 'close'; text: string; options: { id: string; name: string; familiar: boolean }[] }
   | { type: 'missing'; name: string; text: string }
   | { type: 'question'; prompt: string }
+  | { type: 'open-chatgpt' }
+  | { type: 'open-chat'; name: string; url: string }
+  | { type: 'chat-choices'; text: string; options: SavedChat[] }
+  | { type: 'list-chats' }
+  | { type: 'ask-gpt'; question: string }
   | { type: 'unknown'; text: string }
 
 
@@ -60,11 +66,20 @@ export function poseLine(pose: 'sit' | 'stand' | 'stay' | 'wander', panelOpen: b
   return panelOpen ? 'I\u2019ll wander once this is closed.' : 'Wandering again.'
 }
 
-export function routeCommand(text: string, _source: CommandSource, catalog: CatalogApp[]): CommandResult {
+export function routeCommand(
+  text: string,
+  _source: CommandSource,
+  catalog: CatalogApp[],
+  chats: SavedChat[] = []
+): CommandResult {
   const original = text.trim().slice(0, 2000)
   if (!original) return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
+  const asked = matchAskGpt(original)
+  if (asked) return asked
   if (isQuestion(original)) return { type: 'question', prompt: original }
   const spoken = normalize(original)
+  const chat = matchChatGpt(spoken, chats)
+  if (chat) return chat
   const motion = matchMotion(spoken)
   if (motion) return motion
   const followed = matchFollow(spoken)
@@ -74,6 +89,36 @@ export function routeCommand(text: string, _source: CommandSource, catalog: Cata
   const opened = matchOpen(spoken, catalog)
   if (opened) return opened
   return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
+}
+
+const CHATGPT_NAME = '(?:chat\\s*-?\\s*gpt|chat\\s*g\\s*p\\s*t|gpt)'
+
+/** "ask GPT <question>" / "ask ChatGPT, <question>". The question is kept exactly as written. */
+function matchAskGpt(original: string): CommandResult | null {
+  const match = new RegExp(`^(?:please\\s+)?ask\\s+${CHATGPT_NAME}\\b\\s*[,:\\-]?\\s*`, 'i').exec(original)
+  if (!match) return null
+  const question = original.slice(match[0].length).trim()
+  if (!question) return { type: 'unknown', text: 'What should I ask? Say \u201cask GPT\u201d and then your question.' }
+  return { type: 'ask-gpt', question }
+}
+
+function matchChatGpt(spoken: string, chats: SavedChat[]): CommandResult | null {
+  if (new RegExp(`^(?:open|launch|start|show)\\s+(?:the\\s+)?${CHATGPT_NAME}(?:\\s+app)?$`).test(spoken)) {
+    return { type: 'open-chatgpt' }
+  }
+  if (/^(?:show|list|open)\s+(?:my\s+)?saved\s+chats$/.test(spoken) || /^(?:show|list)\s+my\s+chats$/.test(spoken)) {
+    return { type: 'list-chats' }
+  }
+  const opened = /^(?:open|go\s+to|switch\s+to)\s+(my\s+)?(.+?)(\s+(?:chat|conversation|project|gpt))?$/.exec(spoken)
+  if (!opened?.[2]) return null
+  const explicit = Boolean(opened[1] || opened[3])
+  const name = opened[2].trim()
+  const found = resolveChat(chats, name)
+  if (found.kind === 'one') return { type: 'open-chat', name: found.chat.name, url: found.chat.url }
+  if (found.kind === 'many') return { type: 'chat-choices', text: 'Which chat should I open?', options: found.chats }
+  // "open my X chat" with no match is about chats; plain "open X" falls through to apps.
+  if (explicit && opened[3]) return { type: 'missing', name, text: `I don\u2019t have a saved chat called \u201c${name}\u201d.` }
+  return null
 }
 
 function normalize(text: string): string {
@@ -221,6 +266,9 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'pose':
     case 'follow':
     case 'launch':
+    case 'open-chatgpt':
+    case 'open-chat':
+    case 'list-chats':
       return { kind: 'run' }
     case 'confirm':
     case 'close':
@@ -228,8 +276,10 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'close-self':
       return { kind: 'confirm' }
     case 'question':
+    case 'ask-gpt':
       return { kind: 'handoff' }
     case 'choices':
+    case 'chat-choices':
       return { kind: 'review', reason: 'ambiguous' }
     default:
       return { kind: 'review', reason: 'unclear' }

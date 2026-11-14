@@ -141,4 +141,13 @@ func startRecognition() {
     }
 }
 
+// Exit if MIKO goes away mid-recording, releasing the microphone.
+if let index = CommandLine.arguments.firstIndex(of: "--parent"),
+   index + 1 < CommandLine.arguments.count,
+   let parent = Int32(CommandLine.arguments[index + 1]), parent > 1 {
+    Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+        if kill(parent, 0) != 0 && errno == ESRCH { exit(0) }
+    }
+}
+
 dispatchMain()

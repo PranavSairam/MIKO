@@ -35,6 +35,9 @@ npm test
 | --- | --- |
 | Click the puppy | A short pet reaction, then the app fan opens above MIKO (macOS). A brief pause lets a double-click cancel it. |
 | Tab + Q (macOS) | Opens or closes the app fan: every running app as a card. Click a card or use ←/→ and Enter to switch; type to filter; 1–9 picks directly; × quits an app; Tab (or the Tabs chip) on Chrome/Safari lists its tabs. Esc closes. |
+| "open ChatGPT" | Launches or focuses the ChatGPT desktop app; opens chatgpt.com in your default browser if the app isn't installed. MIKO says which happened. |
+| Saved chats | Panel → **Saved chats**: Add (name + chatgpt.com conversation, Project or custom GPT link), Open, Rename (✎), Remove (×). Say or type "open my FreshNet chat" or "show saved chats". Links open through the system's normal handler (your default browser unless that's ChatGPT). |
+| "ask GPT <question>" | Shows the exact question with **Copy and open ChatGPT** and an optional saved-chat destination. Copies the question and brings ChatGPT forward; you paste it. **Paste reply** brings an answer back. |
 | Hold Caps Lock + A (macOS) | Push-to-talk. MIKO listens while both are held and puts the words in the chat box when you let go (not sent). Caps Lock is restored. Needs Accessibility for "MIKO Keys" once. |
 | Double-click the puppy | Opens the note panel beside MIKO. The note stays inside the display work area, flipping to the other side of the puppy when the first side does not fit. |
 | Esc | Closes the note. MIKO stays visible. The window has to be focused (click the puppy or the note first). |

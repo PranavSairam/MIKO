@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { SavedChat } from '../../../shared/api'
+import { SavedChats, type SavedChatsProps } from './SavedChats'
 
 export const COMMANDS_LATER = 'Commands are coming next.'
 
@@ -17,8 +19,10 @@ export type PanelEntry =
       status: 'ready' | 'copied' | 'copied-only' | 'browser-only' | 'pasted'
       detail: string
       reply?: string
+      /** Saved chat name to open on handoff; '' means ChatGPT itself. */
+      destination?: string
     }
-  | { id: number; kind: 'choices'; purpose: 'open' | 'close'; text: string; options: PanelChoice[] }
+  | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat'; text: string; options: PanelChoice[] }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
   | { id: number; kind: 'closing'; appId: string; name: string; text: string }
 
@@ -41,7 +45,16 @@ interface TextPanelProps {
   onListenCancel?: () => void
   canSpeak?: boolean
   onSpeak?: (text: string) => void
+  /** 'chats' swaps the conversation for the Saved chats manager. */
+  view?: 'log' | 'chats'
+  onView?: (view: 'log' | 'chats') => void
+  chats?: SavedChat[]
+  chatTools?: Omit<SavedChatsProps, 'chats'>
+  onDestination?: (id: number, name: string) => void
 }
+
+export const HANDOFF_NOTE =
+  'Continuing in ChatGPT uses that conversation\u2019s context and your account\u2019s memory settings. MIKO hasn\u2019t read any of it.'
 
 export function TextPanel({
   onClose,
@@ -61,7 +74,12 @@ export function TextPanel({
   onListenStop,
   onListenCancel,
   canSpeak = false,
-  onSpeak
+  onSpeak,
+  view = 'log',
+  onView,
+  chats = [],
+  chatTools,
+  onDestination
 }: TextPanelProps) {
   const [localDraft, setLocalDraft] = useState('')
   const [localReplies, setLocalReplies] = useState<string[]>([])
@@ -71,7 +89,10 @@ export function TextPanel({
 
   useEffect(() => {
     const log = logRef.current
-    if (log) log.scrollTop = log.scrollHeight
+    if (!log) return
+    // Show the start of the newest entry; a tall card (question + actions) would otherwise show only its buttons.
+    const last = log.lastElementChild as HTMLElement | null
+    log.scrollTop = last ? Math.max(0, last.offsetTop - log.offsetTop) : log.scrollHeight
   }, [entries, replies, localReplies])
 
   function setValue(next: string): void {
@@ -91,11 +112,24 @@ export function TextPanel({
   return (
     <section className="panel" data-hit="panel" aria-label="Talk to MIKO">
       <header className="panel-bar">
-        <h1>MIKO</h1>
+        <h1>{view === 'chats' ? 'Saved chats' : 'MIKO'}</h1>
+        {onView ? (
+          <button
+            type="button"
+            className="text-button secondary bar-button"
+            onClick={() => onView(view === 'chats' ? 'log' : 'chats')}
+          >
+            {view === 'chats' ? 'Back' : 'Saved chats'}
+          </button>
+        ) : null}
         <button type="button" className="close" onClick={onClose} aria-label="Close">
           ×
         </button>
       </header>
+      {view === 'chats' && chatTools ? (
+        <SavedChats chats={chats} {...chatTools} />
+      ) : (
+      <>
       <div className="panel-log" ref={logRef} role="log" aria-live="polite" aria-label="MIKO replies">
         {notes.length === 0 ? (
           <p className="panel-empty">MIKO is listening.</p>
@@ -117,11 +151,28 @@ export function TextPanel({
               {entry.kind === 'handoff' ? (
                 <>
                   <p className="prompt">{entry.prompt}</p>
+                  {chats.length > 0 ? (
+                    <label className="destination">
+                      Send to{' '}
+                      <select
+                        value={entry.destination ?? ''}
+                        onChange={(event) => onDestination?.(entry.id, event.target.value)}
+                      >
+                        <option value="">ChatGPT</option>
+                        {chats.map((chat) => (
+                          <option key={chat.name} value={chat.name}>
+                            {chat.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                   <p className="panel-detail">{entry.detail}</p>
+                  <p className="panel-detail note">{HANDOFF_NOTE}</p>
                   {entry.reply ? <p className="pasted">{entry.reply}</p> : null}
                   <div className="panel-inline">
                     <button type="button" className="text-button" onClick={() => onUseChatGpt?.(entry.id)}>
-                      Use ChatGPT
+                      Copy and open ChatGPT
                     </button>
                     <button type="button" className="text-button secondary" onClick={() => onPasteReply?.(entry.id)}>
                       Paste reply
@@ -209,6 +260,8 @@ export function TextPanel({
           Send
         </button>
       </div>
+      </>
+      )}
     </section>
   )
 }

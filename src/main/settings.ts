@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { parseSavedChats, type SavedChat } from '../shared/chatgpt'
 
 /** Small persisted preferences in userData/miko-settings.json. Unknown keys (e.g. summonShortcut) are kept. */
 
@@ -23,11 +24,25 @@ export function voiceAutoExecute(): boolean {
 }
 
 export function setVoiceAutoExecute(enabled: boolean): void {
+  writeKey('voiceAutoExecute', enabled)
+}
+
+/** Saved ChatGPT shortcuts ({ name, url }), validated on every read. */
+export function savedChats(): SavedChat[] {
+  return parseSavedChats(readAll().savedChats)
+}
+
+export function setSavedChats(list: SavedChat[]): boolean {
+  return writeKey('savedChats', list)
+}
+
+function writeKey(key: string, value: unknown): boolean {
   const all = readAll()
-  all.voiceAutoExecute = enabled
+  all[key] = value
   try {
     writeFileSync(file(), JSON.stringify(all, null, 2))
+    return true
   } catch {
-    // Not persisted; the in-memory menu still reflects the choice until restart.
+    return false
   }
 }

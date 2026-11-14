@@ -90,6 +90,51 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, ChatGPT app handoff and saved chats
+**How to use**
+- **"open ChatGPT"** (typed or spoken): launches or focuses the ChatGPT desktop app (`/Applications/ChatGPT.app`, bundle `com.openai.codex`; `com.openai.chat` is also detected). Without the app it opens https://chatgpt.com in the default browser and says which.
+- **Saved chats:** the panel's **Saved chats** button (or "show saved chats") opens Add / Open / Rename (✎) / Remove (×). Each entry is a name plus a chatgpt.com link:
+  - a conversation `/c/<id>`
+  - a Project `/g/g-p-<id>[/project]`
+  - a custom GPT `/g/g-<id>`
+  - a conversation inside a Project or GPT `/g/g-…/c/<id>`
+
+  Stored as `savedChats` in `userData/miko-settings.json`.
+- **Opening a saved chat:** "open my FreshNet chat" / "open my major project chat". If the name is ambiguous MIKO lists the matches to choose from; unknown names give "I don't have a saved chat called …".
+- **"ask GPT <question>"** (typed or spoken) shows the exact question card:
+  - an optional **Send to** saved-chat picker
+  - **Copy and open ChatGPT**: copies the question, brings ChatGPT or the chosen chat forward, and shows "Question copied. Paste it into the ChatGPT conversation you want." plus where it opened
+  - **Paste reply**, as before
+  - a note that continuing uses that conversation's context and the account's memory settings, and that MIKO hasn't read it
+
+  Ordinary questions ("how…?") use the same card.
+
+**Decisions**
+- **No app deep links for chats.** OpenAI's docs (learn.chatgpt.com/docs/app/commands) list only `codex://` links: new and local threads, settings, plugins. Nothing opens a chatgpt.com conversation, Project or custom GPT, and the app has no associated-domains entitlement. So saved links go through `shell.openExternal`. MIKO asks macOS (NSWorkspace) which app handles the link and reports it. On this Mac that is Google Chrome.
+- **URL validation** (`src/shared/chatgpt.ts`, WHATWG URL parser): https only, host exactly `chatgpt.com`, no port, no username/password, supported paths only. Query and fragment are stripped.
+- **Names** are trimmed, at most 60 characters, and unique ignoring case (duplicates are refused with a clear message). They render as plain React text. Main re-validates every edit and every stored entry.
+
+**Bug found and fixed:** MIKO Keys (and MIKO Listen) kept running when MIKO was killed rather than quit. Two leftover helpers were still swallowing A and Q. Both helpers now get `--parent <pid>` and exit within about 1 s once MIKO is gone. Verified with a force-kill: 0 helpers left. The keys helper was recompiled, so macOS may ask once more for Accessibility / Input Monitoring.
+
+**Verified** (real app, driven with Playwright):
+- "open ChatGPT" opened the app and ChatGPT became frontmost
+- invalid links were rejected with reasons: other host, http, credentials, unsupported path
+- query strings are stripped
+- a duplicate "freshnet" and a rename onto an existing name were both refused
+- the name `<b>bold</b>` was stored and shown as literal text
+- rename and remove work
+- "show saved chats" opens the list
+- "open my major chat" lists Major project / Major exam prep
+- "open my biology chat" says it isn't saved
+- ask GPT: the card prompt and the clipboard were byte-for-byte the question (`What is a B-tree, really? Explain "fan-out" & keys <in> 2 lines.`), ChatGPT became frontmost, and the detail text was shown
+- saved chats persist across a restart
+- typecheck passes, 80/80 tests pass, build passes
+
+**Pending**
+- Live destination check with a real chat link: none was supplied, so opening an actual saved conversation is untested.
+- Browser fallback not exercised live: ChatGPT.app is installed here. The handler lookup did resolve Chrome for chatgpt.com links.
+- **Windows:** ChatGPT app detection is macOS-only, so Windows always uses the browser fallback. Saved-chat handler naming is macOS-only. The panel and router are shared but untested on Windows.
+
 ### 2026-11-14: Session 1, local git history
 - `git init -b main`. Local identity is `PRANAV SAIRAM <pranavsairamanc@gmail.com>`, the owner's choice.
 - `.claude/settings.json` turns off Claude Code commit/PR attribution (`attribution.commit/pr = ""`, `sessionUrl: false`, `includeCoAuthoredBy: false`).

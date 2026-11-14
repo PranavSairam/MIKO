@@ -14,6 +14,11 @@ export const IPC = {
   listApps: 'miko:list-apps',
   launchApp: 'miko:launch-app',
   openChatGpt: 'miko:open-chatgpt',
+  chatsList: 'miko:chats-list',
+  chatsAdd: 'miko:chats-add',
+  chatsRename: 'miko:chats-rename',
+  chatsRemove: 'miko:chats-remove',
+  chatsOpen: 'miko:chats-open',
   copyText: 'miko:copy-text',
   readClipboard: 'miko:read-clipboard',
   closeApp: 'miko:close-app',
@@ -39,6 +44,18 @@ export const IPC = {
   switcherClose: 'miko:switcher-close',
   switcherOpened: 'miko:switcher-opened'
 } as const
+
+export interface OpenResult {
+  ok: boolean
+  target: 'app' | 'browser' | 'none'
+  appName: string
+}
+
+export interface ChatEditResult {
+  ok: boolean
+  reason: string
+  list: SavedChat[]
+}
 
 export interface PresenceEvent {
   phase: 'shown' | 'exit' | 'hidden'
@@ -137,6 +154,8 @@ export interface ShiftDelta {
 }
 
 export type { KeyEvent } from './keys'
+export type { SavedChat } from './chatgpt'
+import type { SavedChat } from './chatgpt'
 import type { KeyEvent } from './keys'
 
 /** Preload surface. The renderer has no Node integration. */
@@ -159,8 +178,15 @@ export interface MikoApi {
   listApps: () => Promise<AppListing[]>
   /** Launch a validated action id. Unfamiliar apps launch only after confirm. */
   launchApp: (request: LaunchRequest) => Promise<LaunchResult>
-  /** Open https://chatgpt.com in the user's normal browser. */
-  openChatGpt: () => Promise<boolean>
+  /** Launch or focus the ChatGPT app; falls back to chatgpt.com in the default browser. */
+  openChatGpt: () => Promise<OpenResult>
+  /** Saved ChatGPT shortcuts, stored in MIKO's local settings. */
+  listChats: () => Promise<SavedChat[]>
+  addChat: (name: string, url: string) => Promise<ChatEditResult>
+  renameChat: (from: string, to: string) => Promise<ChatEditResult>
+  removeChat: (name: string) => Promise<ChatEditResult>
+  /** Open a saved chat through the system URL handler. */
+  openChat: (name: string) => Promise<OpenResult>
   /** Copy reviewed prompt text. This does not run it. */
   copyText: (text: string) => Promise<boolean>
   /** Clipboard text for Paste reply, length capped. */

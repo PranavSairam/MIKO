@@ -1,12 +1,14 @@
 import { app, clipboard, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type AppListing, type HitRect, type LaunchResult, type PanelLayout } from '../shared/api'
 import { parseActionId } from '../shared/commands'
-import { launchApplication, listApplications, openChatGpt } from './apps'
+import { launchApplication, listApplications } from './apps'
+import { openChatGpt, openChatUrl } from './chatgpt'
+import { addChat, removeChat, renameChat, type ChatEdit } from '../shared/chatgpt'
 import { comeToFront, enableFollow } from './follow'
 import { requestClose, watchClose } from './quit'
 import { cancelListening, startListening, stopListening } from './speech'
 import { openSwitcher, registerSwitcherIpc } from './switcher-window'
-import { voiceAutoExecute } from './settings'
+import { savedChats, setSavedChats, voiceAutoExecute } from './settings'
 import {
   currentLayout,
   isTrustedSender,
@@ -91,9 +93,33 @@ export function registerIpc(presence: {
     return launchApplication(request.id, request.confirm)
   })
 
-  ipcMain.handle(IPC.openChatGpt, (event): Promise<boolean> => {
-    if (!trusted(event)) return Promise.resolve(false)
+  ipcMain.handle(IPC.openChatGpt, (event) => {
+    if (!trusted(event)) return { ok: false, target: 'none', appName: '' }
     return openChatGpt()
+  })
+
+  ipcMain.handle(IPC.chatsList, (event) => (trusted(event) ? savedChats() : []))
+  ipcMain.handle(IPC.chatsAdd, (event, payload: unknown) => {
+    if (!trusted(event)) return refused()
+    const { name, url } = (payload ?? {}) as { name?: unknown; url?: unknown }
+    if (typeof name !== 'string' || typeof url !== 'string' || name.length > 200 || url.length > 2000) return refused()
+    return commit(addChat(savedChats(), name, url))
+  })
+  ipcMain.handle(IPC.chatsRename, (event, payload: unknown) => {
+    if (!trusted(event)) return refused()
+    const { from, to } = (payload ?? {}) as { from?: unknown; to?: unknown }
+    if (typeof from !== 'string' || typeof to !== 'string' || from.length > 200 || to.length > 200) return refused()
+    return commit(renameChat(savedChats(), from, to))
+  })
+  ipcMain.handle(IPC.chatsRemove, (event, name: unknown) => {
+    if (!trusted(event) || typeof name !== 'string' || name.length > 200) return refused()
+    return commit(removeChat(savedChats(), name))
+  })
+  ipcMain.handle(IPC.chatsOpen, (event, name: unknown) => {
+    if (!trusted(event) || typeof name !== 'string') return { ok: false, target: 'none', appName: '' }
+    const chat = savedChats().find((item) => item.name.toLowerCase() === name.toLowerCase())
+    if (!chat) return { ok: false, target: 'none', appName: '' }
+    return openChatUrl(chat.url)
   })
 
   ipcMain.handle(IPC.copyText, async (event, payload: unknown): Promise<boolean> => {
@@ -180,6 +206,16 @@ export function registerIpc(presence: {
     if (!trusted(event) || typeof generation !== 'number' || !Number.isInteger(generation)) return
     presence.exitFinished(generation)
   })
+}
+
+function refused(): { ok: false; reason: string; list: never[] } {
+  return { ok: false, reason: 'That change isn\u2019t allowed.', list: [] }
+}
+
+function commit(edit: ChatEdit): { ok: boolean; reason: string; list: { name: string; url: string }[] } {
+  if (!edit.ok) return { ok: false, reason: edit.reason, list: savedChats() }
+  if (!setSavedChats(edit.list)) return { ok: false, reason: 'I couldn\u2019t save that.', list: savedChats() }
+  return { ok: true, reason: '', list: edit.list }
 }
 
 function trusted(event: IpcMainEvent | IpcMainInvokeEvent): boolean {

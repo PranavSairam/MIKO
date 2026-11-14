@@ -33,7 +33,7 @@ export function startKeys(handlers: KeyHandlers): () => void {
     if (!helper) return
     handle = launchHelper(
       helper.root,
-      [],
+      ['--parent', String(process.pid)],
       (line) => {
         const event = parseKeyEvent(line)
         if (!event) return

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { HitRect, PanelLayout, PlacementEvent, PointerSample, PresenceEvent } from '../../../shared/api'
+import type { HitRect, OpenResult, PanelLayout, PlacementEvent, PointerSample, PresenceEvent, SavedChat } from '../../../shared/api'
 import {
   movementLine,
   planVoice,
@@ -43,6 +43,9 @@ export function MotionApp() {
   const [listening, setListening] = useState(false)
   const [listenDetail, setListenDetail] = useState('')
   const [canSpeak, setCanSpeak] = useState(false)
+  const [panelView, setPanelView] = useState<'log' | 'chats'>('log')
+  const [chats, setChats] = useState<SavedChat[]>([])
+  const [chatsMessage, setChatsMessage] = useState('')
   const entryId = useRef(1)
   const panelRequest = useRef(0)
   const panelRef = useRef(false)
@@ -82,6 +85,7 @@ export function MotionApp() {
     setPanelSide(layout.panelSide)
     setPanelOpen(layout.panelOpen)
     if (!open) {
+      setPanelView('log')
       window.miko.listenCancel()
       setListening(false)
       if (pendingCome.current) {
@@ -665,13 +669,41 @@ export function MotionApp() {
     }
   }
 
+  async function loadChats(): Promise<SavedChat[]> {
+    try {
+      const list = await window.miko.listChats()
+      setChats(list)
+      return list
+    } catch {
+      return []
+    }
+  }
+
+  function openedLine(result: OpenResult, what: string): string {
+    if (!result.ok) return `I couldn\u2019t open ${what}.`
+    if (result.target === 'app') return `Opened ${what} in the ChatGPT app.`
+    return `Opened ${what} in ${result.appName || 'your browser'} (browser).`
+  }
+
+  async function openSavedChat(name: string): Promise<void> {
+    const result = await window.miko.openChat(name)
+    pushEntry({ id: 0, kind: 'note', text: openedLine(result, `\u201c${name}\u201d`) })
+  }
+
+  function showChats(): void {
+    setChatsMessage('')
+    void loadChats()
+    setPanelView('chats')
+    if (!panelRef.current) void applyPanel(true)
+  }
+
   async function onSubmit(): Promise<void> {
     const text = draft.trim()
     if (!text || typeof window.miko === 'undefined') return
     setDraft('')
     const catalog = await loadCatalog()
     if (!catalog) return
-    await runDecision(routeCommand(text, 'typed', catalog))
+    await runDecision(routeCommand(text, 'typed', catalog, await loadChats()))
   }
 
   /**
@@ -688,7 +720,7 @@ export function MotionApp() {
       setDraft(text)
       return
     }
-    const decision = routeCommand(text, 'voice', catalog)
+    const decision = routeCommand(text, 'voice', catalog, await loadChats())
     const plan = planVoice(decision, auto)
     if (plan.kind === 'review') {
       setDraft(text)
@@ -781,13 +813,45 @@ export function MotionApp() {
       await runClose(decision.appId, decision.name, false)
       return
     }
-    if (decision.type === 'question') {
+    if (decision.type === 'question' || decision.type === 'ask-gpt') {
       pushEntry({
         id: 0,
         kind: 'handoff',
-        prompt: decision.prompt,
+        prompt: decision.type === 'question' ? decision.prompt : decision.question,
         status: 'ready',
-        detail: 'Ready for you to review. Nothing has been sent.'
+        detail: 'Ready for you to review. Nothing has been sent.',
+        destination: ''
+      })
+      return
+    }
+    if (decision.type === 'open-chatgpt') {
+      const result = await window.miko.openChatGpt()
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: !result.ok
+          ? 'I couldn\u2019t open ChatGPT.'
+          : result.target === 'app'
+            ? 'Opened the ChatGPT app.'
+            : `The ChatGPT app isn\u2019t installed, so I opened chatgpt.com in ${result.appName || 'your browser'}.`
+      })
+      return
+    }
+    if (decision.type === 'open-chat') {
+      await openSavedChat(decision.name)
+      return
+    }
+    if (decision.type === 'list-chats') {
+      showChats()
+      return
+    }
+    if (decision.type === 'chat-choices') {
+      pushEntry({
+        id: 0,
+        kind: 'choices',
+        purpose: 'chat',
+        text: decision.text,
+        options: decision.options.map((chat) => ({ id: chat.name, name: chat.name, familiar: true }))
       })
       return
     }
@@ -836,20 +900,24 @@ export function MotionApp() {
     replaceEntry(id, { id, kind: 'closing', appId, name, text })
   }
 
+  /** Copy the exact question, then bring ChatGPT (or the chosen saved chat) forward. Nothing is sent. */
   async function onUseChatGpt(id: number): Promise<void> {
     const entry = entries.find((item) => item.id === id)
     if (!entry || entry.kind !== 'handoff' || typeof window.miko === 'undefined') return
     const copied = await window.miko.copyText(entry.prompt)
-    const opened = await window.miko.openChatGpt()
-    const status = copied && opened ? 'copied' : copied ? 'copied-only' : opened ? 'browser-only' : entry.status
+    const destination = entry.destination ?? ''
+    const opened = destination ? await window.miko.openChat(destination) : await window.miko.openChatGpt()
+    const where = destination ? `\u201c${destination}\u201d` : 'ChatGPT'
+    const place = !opened.ok ? '' : opened.target === 'app' ? ' (ChatGPT app)' : ` (${opened.appName || 'browser'})`
+    const status = copied && opened.ok ? 'copied' : copied ? 'copied-only' : opened.ok ? 'browser-only' : entry.status
     const detail =
-      copied && opened
-        ? 'Copied. ChatGPT is open in your browser. Paste the prompt there yourself.'
+      copied && opened.ok
+        ? `Question copied. Paste it into the ChatGPT conversation you want. Opened ${where}${place}.`
         : copied
-          ? 'Copied, but the browser did not open.'
-          : opened
-            ? 'ChatGPT opened, but the prompt was not copied.'
-            : 'The prompt was not copied, and the browser did not open.'
+          ? `Question copied, but ${where} didn\u2019t open.`
+          : opened.ok
+            ? `Opened ${where}${place}, but the question wasn\u2019t copied.`
+            : `The question wasn\u2019t copied, and ${where} didn\u2019t open.`
     replaceEntry(id, { ...entry, status, detail })
   }
 
@@ -880,6 +948,11 @@ export function MotionApp() {
     if (!option) return
     if (entry.purpose === 'close') {
       await runClose(appId, option.name, false)
+      return
+    }
+    if (entry.purpose === 'chat') {
+      replaceEntry(entryId, { id: entryId, kind: 'note', text: `Opening \u201c${option.name}\u201d.` })
+      await openSavedChat(option.name)
       return
     }
     replaceEntry(entryId, { id: entryId, kind: 'note', text: `Opening ${option.name}.` })
@@ -939,6 +1012,37 @@ export function MotionApp() {
           onDraft={setDraft}
           onSubmit={() => {
             void onSubmit()
+          }}
+          view={panelView}
+          onView={(next) => (next === 'chats' ? showChats() : setPanelView('log'))}
+          chats={chats}
+          onDestination={(entryId, name) => {
+            const entry = entries.find((item) => item.id === entryId)
+            if (entry?.kind === 'handoff') replaceEntry(entryId, { ...entry, destination: name })
+          }}
+          chatTools={{
+            message: chatsMessage,
+            onAdd: async (name, url) => {
+              const result = await window.miko.addChat(name, url)
+              setChats(result.list)
+              setChatsMessage(result.ok ? `Saved \u201c${name.trim()}\u201d.` : result.reason)
+              return result.ok
+            },
+            onRename: async (from, to) => {
+              const result = await window.miko.renameChat(from, to)
+              setChats(result.list)
+              setChatsMessage(result.ok ? `Renamed to \u201c${to.trim()}\u201d.` : result.reason)
+              return result.ok
+            },
+            onRemove: (name) => {
+              void window.miko.removeChat(name).then((result) => {
+                setChats(result.list)
+                setChatsMessage(result.ok ? `Removed \u201c${name}\u201d.` : result.reason)
+              })
+            },
+            onOpen: (name) => {
+              void window.miko.openChat(name).then((result) => setChatsMessage(openedLine(result, `\u201c${name}\u201d`)))
+            }
           }}
           onUseChatGpt={(id) => {
             void onUseChatGpt(id)

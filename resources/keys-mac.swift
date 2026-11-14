@@ -178,4 +178,14 @@ if !installTap() {
     }
 }
 
+// MIKO passes its pid. If MIKO goes away without stopping us (crash, kill), exit too:
+// a leftover helper would keep swallowing A and Q with nobody listening.
+if let index = CommandLine.arguments.firstIndex(of: "--parent"),
+   index + 1 < CommandLine.arguments.count,
+   let parent = Int32(CommandLine.arguments[index + 1]), parent > 1 {
+    Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+        if kill(parent, 0) != 0 && errno == ESRCH { exit(0) }
+    }
+}
+
 CFRunLoopRun()
