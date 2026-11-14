@@ -130,6 +130,34 @@ export const MAIL_REQUEST =
   'Use my existing preferences when available.'
 
 /** "check mail in ChatGPT": the read-only request handed to the ChatGPT app (MIKO sees no mail). */
+const MAIL_RULES =
+  'Keep messages unread and make this a read-only check. State which accounts and date range you checked, ' +
+  'and disclose any access limits.'
+
+/**
+ * The read-only request handed to the ChatGPT app for a mail intent when MIKO has
+ * no mailbox of its own. ChatGPT reads the mail; MIKO never sees it.
+ */
+export function mailRequestFor(intent: MailIntent): string {
+  if (intent.kind === 'recent' || intent.kind === 'important') return MAIL_REQUEST
+  if (intent.kind === 'unread') {
+    return (
+      'Show my unread email from the accounts currently connected to this ChatGPT account, newest first. ' +
+      'For each message include the account, sender, subject, received date, a short summary, and a link to the message. ' +
+      MAIL_RULES
+    )
+  }
+  if (intent.kind === 'search') {
+    return (
+      `Search the email accounts currently connected to this ChatGPT account for: ${intent.query}. ` +
+      'List matching messages newest first with the account, sender, subject, received date, a short summary, ' +
+      'and a link to the message. This is a read-only search. ' +
+      MAIL_RULES
+    )
+  }
+  return ''
+}
+
 function isCheckMailInChatGpt(spoken: string): boolean {
   return /^(?:check|chk)\s+(?:my\s+)?(?:e-?mails?|mail|inbox)\s+(?:in|with|using)\s+(?:chat\s*-?\s*gpt|gpt)$/.test(spoken)
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   MAIL_REQUEST,
+  mailRequestFor,
   movementLine,
   planVoice,
   parseActionId,
@@ -227,5 +228,22 @@ describe('assistant routing', () => {
   it('keeps ChatGPT app shortcuts for existing chats and memory', () => {
     assert.equal(routeCommand('ask GPT what did we decide about FreshNet?', 'typed', catalog).type, 'ask-gpt')
     assert.equal(routeCommand('open ChatGPT', 'typed', catalog).type, 'open-chatgpt')
+  })
+})
+
+describe('mailRequestFor (ChatGPT mail handoff)', () => {
+  it('uses the read-only check for browsing intents', () => {
+    assert.equal(mailRequestFor({ kind: 'recent' }), MAIL_REQUEST)
+    assert.match(mailRequestFor({ kind: 'unread' }), /^Show my unread email/)
+    assert.match(mailRequestFor({ kind: 'important', unreadOnly: true }), /Urgent, Action needed, and Important FYI/)
+  })
+  it('turns a search into a read-only search request with the exact terms', () => {
+    const text = mailRequestFor({ kind: 'search', query: 'from:Imran invoice' })
+    assert.match(text, /for: from:Imran invoice\./)
+    assert.match(text, /read-only/)
+    assert.match(text, /Keep messages unread/)
+  })
+  it('has nothing to hand off for "open the second email"', () => {
+    assert.equal(mailRequestFor({ kind: 'open', index: 2 }), '')
   })
 })

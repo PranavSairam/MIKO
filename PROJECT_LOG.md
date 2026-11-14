@@ -90,6 +90,12 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, mail via ChatGPT (owner: "just use mail from my gpt")
+- **Investigated:** Codex CLI, with the apps feature on and with the owner's full config, reports **no Gmail/email tools**. ChatGPT's Gmail connector is not reachable from MIKO by any supported route, and the ChatGPT window can't be read (Accessibility plus OpenAI terms).
+- **Change:** when MIKO has no mailbox of its own, mail commands hand off to the ChatGPT app right away. They copy a read-only request (`mailRequestFor`: recent/important → MAIL_REQUEST; unread; search with the exact terms) and bring ChatGPT forward. The owner pastes and presses Send, and the results stay in ChatGPT. "open the second email" says to open it in ChatGPT. With a Gmail account connected in MIKO, the Mail panel is used as before.
+- **Verified:** typecheck, 116/116 tests, build.
+- **Not yet live-checked:** the automatic handoff in the app (usage limit reached).
+
 ### 2026-11-14: Session 1, Gmail connection setup made in-app
 - **New:** the Mail tab's Connect mail screen has a **Gmail setup** form (Client ID + Client secret).
   - Values are checked (`checkGoogleClient`: `…apps.googleusercontent.com` and a token-shaped secret).

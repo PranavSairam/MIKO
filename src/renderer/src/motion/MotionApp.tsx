@@ -31,7 +31,7 @@ import { usePetGestures, type GuidePhase } from '../hooks/usePetGestures'
 import { DobermanRig } from './DobermanRig'
 import { MailView } from '../mail/MailView'
 import { useMail } from '../mail/useMail'
-import { MAIL_REQUEST } from '../../../shared/commands'
+import { MAIL_REQUEST, mailRequestFor } from '../../../shared/commands'
 import { BRIDGE_TEST_PROMPT } from '../../../shared/bridge'
 import { MAIL_PANEL, PANEL, PET_WINDOW, type PanelSize } from '../../../shared/layout'
 
@@ -929,6 +929,28 @@ export function MotionApp() {
       return
     }
     if (decision.type === 'mail') {
+      // No mailbox connected in MIKO: use the mail connected to the owner's ChatGPT account (handoff).
+      const status = await window.miko.mailStatus()
+      if (!status?.accounts.length) {
+        const prompt = mailRequestFor(decision.intent)
+        if (!prompt) {
+          pushEntry({ id: 0, kind: 'note', text: 'Your mail is in ChatGPT, not MIKO, so open that message there.' })
+          return
+        }
+        if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
+        const entry: Extract<PanelEntry, { kind: 'handoff' }> = {
+          id: 0,
+          kind: 'handoff',
+          variant: 'mail',
+          prompt,
+          status: 'ready',
+          detail: 'Using the mail connected to your ChatGPT account.',
+          destination: ''
+        }
+        const id = pushEntry(entry)
+        await continueMail({ ...entry, id })
+        return
+      }
       showMailTab()
       const line = mailActions.applyIntent(decision.intent)
       if (tabRef.current !== 'mail') pushEntry({ id: 0, kind: 'note', text: line })
