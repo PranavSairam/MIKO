@@ -1,0 +1,236 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", sans-serif;
+  background: #e7e1da;
+  color: #2d241e;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+.living {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 16px;
+  box-sizing: border-box;
+  gap: 12px;
+}
+
+.living header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.living h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.living p {
+  margin: 0;
+  color: #6d5b50;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.living .actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.living button {
+  font: inherit;
+  border: 0;
+  background: #2d241e;
+  color: #fffaf6;
+  border-radius: 999px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.living canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border-radius: 18px;
+  display: block;
+}
+
+.living button[aria-pressed='false'] {
+  background: transparent;
+  color: #2d241e;
+  box-shadow: inset 0 0 0 1px rgba(45, 36, 30, 0.28);
+}
+
+.living button[aria-pressed='true'] {
+  background: #2d241e;
+  color: #fffaf6;
+}
+
+.phase {
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.walk-review {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 8px;
+}
+
+.walk-stages {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.walk-stage {
+  position: relative;
+  height: 250px;
+  overflow: hidden;
+  border-radius: 18px;
+}
+
+.walk-stage.is-light {
+  background: #f4efe8;
+}
+
+.walk-stage.is-dark {
+  background: #1a1614;
+}
+
+.walk-tag {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 1;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.walk-stage.is-light .walk-tag {
+  color: #6d5b50;
+}
+
+.walk-stage.is-dark .walk-tag {
+  color: #d9cfc6;
+}
+
+.walk-ground {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  height: 1px;
+  background: rgba(120, 96, 78, 0.45);
+  pointer-events: none;
+}
+
+.walk-stage.is-dark .walk-ground,
+.walk-still.is-dark .walk-ground {
+  background: rgba(255, 244, 232, 0.4);
+}
+
+.walk-box {
+  position: absolute;
+  width: 168px;
+  height: 200px;
+}
+
+.walk-box img {
+  position: absolute;
+  left: 0;
+  width: 168px;
+  display: block;
+  transition: none;
+  animation: none;
+}
+
+.walk-check {
+  margin: 0;
+  width: min(420px, 100%);
+}
+
+.walk-check img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.walk-check figcaption {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #6d5b50;
+}
+
+.walk-note {
+  max-width: 70ch;
+}
+
+.walk-findings {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.walk-findings h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.walk-findings p {
+  max-width: 78ch;
+  margin-bottom: 10px;
+}
+
+.walk-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.walk-still {
+  position: relative;
+  width: 168px;
+  height: 228px;
+  margin: 0;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.walk-still.is-light {
+  background: #f4efe8;
+}
+
+.walk-still.is-dark {
+  background: #1a1614;
+}
+
+.walk-still figcaption {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-size: 12px;
+}
+
+.walk-still.is-light figcaption {
+  color: #6d5b50;
+}
+
+.walk-still.is-dark figcaption {
+  color: #d9cfc6;
+}

@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.web.tsbuildinfo",
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "useDefineForClassFields": true
+  },
+  "include": [
+    "src/renderer/src/**/*",
+    "src/shared/api.ts",
+    "src/shared/layout.ts",
+    "src/shared/gait.ts",
+    "src/shared/motion.ts",
+    "src/shared/sequence.ts",
+    "src/shared/summon.ts",
+    "src/shared/wander.ts",
+    "src/shared/walk-review.ts",
+    "src/shared/photo-walk.ts",
+    "src/shared/movement.ts",
+    "src/shared/doberman.ts",
+    "src/shared/look.ts"
+  ]
+}

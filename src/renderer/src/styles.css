@@ -1,0 +1,388 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+button,
+textarea {
+  font: inherit;
+  -webkit-app-region: no-drag;
+}
+
+.stage {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.stage.is-open {
+  gap: var(--panel-gap);
+}
+
+.stage.panel-right {
+  flex-direction: row-reverse;
+}
+
+.pet-slot {
+  width: var(--pet-width);
+  height: var(--pet-height);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.pet-slot.is-motion {
+  position: relative;
+  overflow: hidden;
+}
+
+.motion-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  background: transparent;
+}
+
+.walk-frame {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  object-fit: fill;
+  background: transparent;
+  -webkit-user-drag: none;
+}
+
+.walk-frame.is-exiting {
+  animation: miko-duck 420ms ease-in forwards;
+}
+
+.pet-hit.walk-hit {
+  position: absolute;
+  z-index: 1;
+  margin: 0;
+  touch-action: none;
+}
+
+.pet-hit {
+  width: 168px;
+  height: 200px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  position: relative;
+  overflow: visible;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.pet-hit.is-armed {
+  cursor: grab;
+}
+
+.pet-hit.is-dragging {
+  cursor: grabbing;
+}
+
+.pet-hit:focus {
+  outline: none;
+}
+
+.pet-hit:focus-visible {
+  outline: 2px solid rgba(196, 122, 74, 0.9);
+  outline-offset: 4px;
+  border-radius: 48px;
+}
+
+.pet-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-origin: 50% 91.17%;
+}
+
+.pet-art.is-idle {
+  animation: miko-breathe 3.4s ease-in-out infinite;
+}
+
+.pet-art.is-exiting {
+  animation: miko-duck 420ms ease-in forwards;
+}
+
+.pet-art img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+  background: transparent;
+  -webkit-user-drag: none;
+}
+
+.panel {
+  box-sizing: border-box;
+  width: var(--panel-width);
+  height: var(--panel-height);
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 10px 8px;
+  border-radius: 18px;
+  background: #1c1918;
+  color: #f6efe6;
+  border: 1px solid rgba(196, 138, 82, 0.55);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+}
+
+.panel-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.panel-bar h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  color: #e7b07a;
+}
+
+.close,
+.send {
+  border: 0;
+  cursor: pointer;
+}
+
+.close {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: transparent;
+  color: #e7d3c0;
+  line-height: 1;
+  font-size: 18px;
+}
+
+.close:hover,
+.send:hover:not(:disabled) {
+  background: rgba(231, 176, 122, 0.18);
+}
+
+.send:hover:not(:disabled) {
+  background: #d39a5c;
+}
+
+.close:focus-visible,
+.send:focus-visible,
+.text-button:focus-visible,
+.panel textarea:focus-visible {
+  outline: 2px solid #f3ce61;
+  outline-offset: 2px;
+}
+
+.panel-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255, 248, 240, 0.06);
+  color: #f6efe6;
+  font-size: 13px;
+  line-height: 1.4;
+  user-select: text;
+}
+
+.panel-log p {
+  margin: 0 0 6px;
+}
+
+.panel-log p:last-child {
+  margin-bottom: 0;
+}
+
+.panel-empty,
+.panel-detail {
+  color: #cbb8a4;
+}
+
+.panel-entry {
+  margin: 0 0 8px;
+}
+
+.panel-entry:last-child {
+  margin-bottom: 0;
+}
+
+.panel-entry p {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.panel-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.text-button {
+  border: 0;
+  cursor: pointer;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #c4844a;
+  color: #1b130e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.text-button.secondary {
+  background: transparent;
+  color: #e7d3c0;
+  border: 1px solid rgba(231, 176, 122, 0.45);
+}
+
+.text-button:hover,
+.text-button.secondary:hover {
+  background: #d39a5c;
+  color: #1b130e;
+}
+
+.panel textarea {
+  width: 100%;
+  height: 52px;
+  flex: 0 0 auto;
+  resize: none;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid rgba(231, 176, 122, 0.35);
+  background: #141211;
+  color: #f6efe6;
+  color-scheme: dark;
+  padding: 8px 10px;
+  user-select: text;
+  cursor: text;
+}
+
+.listen-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  color: #e7b07a;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.listen-bar span {
+  flex: 1;
+}
+
+.panel-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.mic {
+  min-width: 52px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(231, 176, 122, 0.45);
+  border-radius: 999px;
+  background: transparent;
+  color: #e7d3c0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mic.is-live {
+  background: #c4844a;
+  color: #1b130e;
+  border-color: transparent;
+}
+
+.mic:focus-visible {
+  outline: 2px solid #f3ce61;
+  outline-offset: 2px;
+}
+
+.send {
+  min-width: 72px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #c4844a;
+  color: #1b130e;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.send:disabled {
+  cursor: default;
+  background: rgba(196, 132, 74, 0.35);
+  color: rgba(27, 19, 14, 0.7);
+}
+
+.bridge-error {
+  margin: 0;
+  max-width: 180px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff8f2;
+  color: #3a2a22;
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+@keyframes miko-duck {
+  to {
+    transform: translateY(48px) scale(0.98, 0.86);
+  }
+}
+
+@keyframes miko-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(1.006, 1.014);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-art.is-idle,
+  .pet-art.is-exiting,
+  .walk-frame.is-exiting {
+    animation: none;
+  }
+}

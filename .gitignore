@@ -1,0 +1,31 @@
+# Dependencies and generated builds
+node_modules
+out
+dist
+coverage
+.vite
+*.tsbuildinfo
+.eslintcache
+
+# Logs and OS files
+*.log
+.DS_Store
+
+# Local environment and credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# Machine-specific settings and agent scratch
+.claude/settings.local.json
+.superpowers/
+.vscode/
+.idea/
+
+# Blender auto-backups (the .blend files are kept)
+*.blend1
+
+# Generated exploration videos not used by the app (kept on disk, not in history)
+src/renderer/src/assets/gemini_generated_video_*.mp4

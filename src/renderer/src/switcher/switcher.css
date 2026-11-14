@@ -1,0 +1,287 @@
+:root {
+  --ink: #f6efe6;
+  --night: #1c1918;
+  --copper: #c4844a;
+  --copper-soft: rgba(196, 132, 74, 0.55);
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+  color: var(--ink);
+  user-select: none;
+}
+
+.switcher {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* A warm halo rising from MIKO, under the fan. */
+.glow {
+  position: absolute;
+  left: 50%;
+  bottom: -230px;
+  width: 720px;
+  height: 520px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(28, 25, 24, 0.82), rgba(28, 25, 24, 0.55) 62%, rgba(28, 25, 24, 0) 100%);
+  pointer-events: none;
+}
+
+.card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 84px;
+  height: 84px;
+  transition:
+    transform 280ms cubic-bezier(0.2, 0.9, 0.25, 1.15),
+    opacity 200ms ease;
+  will-change: transform;
+}
+
+.card-face {
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(246, 239, 230, 0.12);
+  border-radius: 20px;
+  background: linear-gradient(160deg, #2a2523, #191615);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.38);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.card-face img {
+  width: 60px;
+  height: 60px;
+  pointer-events: none;
+}
+
+.card.is-hidden .card-face img {
+  opacity: 0.55;
+}
+
+.card.is-selected {
+  z-index: 2;
+}
+
+.card.is-selected .card-face {
+  border-color: var(--copper);
+  box-shadow:
+    0 0 0 3px var(--copper-soft),
+    0 14px 28px rgba(0, 0, 0, 0.45);
+}
+
+.letter {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--copper);
+}
+
+.badge {
+  position: absolute;
+  left: 6px;
+  top: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(246, 239, 230, 0.55);
+}
+
+.quit,
+.tabs-chip {
+  position: absolute;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  font-weight: 700;
+}
+
+.card:hover .quit,
+.card:hover .tabs-chip,
+.card.is-selected .tabs-chip {
+  opacity: 1;
+}
+
+.quit {
+  right: -6px;
+  top: -6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #3a3230;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 22px;
+  padding: 0;
+}
+
+.quit:hover {
+  background: #b5482f;
+}
+
+.tabs-chip {
+  left: 50%;
+  bottom: -11px;
+  transform: translateX(-50%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--copper);
+  color: #1b130e;
+  font-size: 10px;
+}
+
+.hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 8px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.hint {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(28, 25, 24, 0.72);
+  color: rgba(246, 239, 230, 0.7);
+}
+
+.query {
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: var(--night);
+  border: 1px solid var(--copper-soft);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--copper);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 650;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.message {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(246, 239, 230, 0.8);
+}
+
+.message.center {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 46%;
+  text-align: center;
+}
+
+.tabs-card {
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  width: 520px;
+  height: 330px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: var(--night);
+  border: 1px solid var(--copper-soft);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
+}
+
+.tabs-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tabs-card h1 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--copper);
+}
+
+.chip {
+  border: 1px solid var(--copper-soft);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tab-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tab-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 10px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tab-row.is-selected {
+  background: rgba(196, 132, 74, 0.22);
+}
+
+.tab-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tab-domain {
+  flex: 0 0 auto;
+  color: rgba(246, 239, 230, 0.5);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+}

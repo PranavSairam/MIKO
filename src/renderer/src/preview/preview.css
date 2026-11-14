@@ -1,0 +1,199 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", sans-serif;
+  background: #efeae4;
+  color: #2d241e;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: #efeae4;
+}
+
+button {
+  font: inherit;
+}
+
+.preview {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 28px 32px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.preview-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.preview-bar h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.preview-bar p,
+.status,
+.alignment {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #6d5b50;
+}
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toggle {
+  flex: 0 0 auto;
+  border: 1px solid rgba(60, 42, 32, 0.18);
+  background: #fffaf6;
+  color: #2d241e;
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.toggle[aria-pressed='true'] {
+  background: #2d241e;
+  color: #fffaf6;
+  border-color: #2d241e;
+}
+
+.toggle:hover {
+  background: #fff;
+}
+
+.stage {
+  min-height: 320px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+}
+
+.stage.is-light {
+  background: #f7f4ef;
+}
+
+.stage.is-dark {
+  background: #161616;
+}
+
+.pose {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.pose-box {
+  width: 168px;
+  height: 200px;
+  outline: 1px solid rgba(120, 96, 78, 0.45);
+  outline-offset: 8px;
+}
+
+.stage.is-dark .pose-box {
+  outline-color: rgba(255, 244, 232, 0.45);
+}
+
+.pose-sprite {
+  position: relative;
+  width: 168px;
+  height: 200px;
+  transform-origin: 50% 91.17%;
+}
+
+.pose-sprite.is-breathing {
+  animation: phase2-breath 3.4s ease-in-out infinite;
+}
+
+.pose-sprite img {
+  position: absolute;
+  inset: 0;
+  width: 168px;
+  height: 200px;
+  display: block;
+  object-fit: fill;
+  background: transparent;
+}
+
+.pose-sprite .overlay {
+  opacity: 0;
+  transition: opacity 80ms linear;
+}
+
+.pose-sprite .overlay.is-on {
+  opacity: 1;
+}
+
+@keyframes phase2-breath {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+
+  50% {
+    transform: scale(1.006, 1.014);
+  }
+}
+
+.pose figcaption {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #7a675c;
+}
+
+.stage.is-dark .pose figcaption {
+  color: #d9cdc2;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.controls button {
+  border: 1px solid rgba(60, 42, 32, 0.16);
+  background: #fffaf6;
+  color: #2d241e;
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 132px;
+}
+
+.controls button span {
+  font-size: 12px;
+  color: #7a675c;
+}
+
+.controls button:hover:enabled {
+  background: #fff;
+}
+
+.controls button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.alignment {
+  max-width: 62ch;
+}

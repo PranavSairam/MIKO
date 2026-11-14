@@ -1,0 +1,24 @@
+{
+  "source": "art/miko-walk/original/miko-walk-crossing.mp4",
+  "fps": 24,
+  "strideFrames": [
+    119,
+    185
+  ],
+  "frameCount": 66,
+  "cycleSeconds": 2.75,
+  "torsoTravelSourcePx": 128.5,
+  "sourceCrop": [
+    956,
+    629
+  ],
+  "exportScale": 0.5271966527196653,
+  "exportWidth": 504,
+  "exportHeight": 332,
+  "groundExportY": 300,
+  "travelExportPx": 67.74476987447699,
+  "frontToe": {
+    "frame119": 889,
+    "frame143": 793
+  }
+}

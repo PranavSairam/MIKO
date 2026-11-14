@@ -1,0 +1,35 @@
+{
+  "name": "miko",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MIKO phase 1: a small always-on-top desktop puppy.",
+  "main": "./out/main/index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "preview:phase2": "electron-vite preview -- --phase2-preview",
+    "preview:living": "electron-vite preview -- --living-preview",
+    "start:motion": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
+    "test": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/shared/layout.test.ts src/shared/living.test.ts src/shared/walk-review.test.ts src/shared/photo-walk.test.ts src/shared/doberman.test.ts src/shared/guide.test.ts src/shared/commands.test.ts src/shared/follow.test.ts src/shared/keys.test.ts src/shared/switcher.test.ts",
+    "postinstall": "install-electron"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^45.2.3",
+    "electron-vite": "^6.0.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "three": "^0.187.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.0"
+  }
+}
