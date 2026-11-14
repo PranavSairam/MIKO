@@ -486,3 +486,7 @@ textarea {
 .chats-message {
   margin: 0;
 }
+
+.panel-entry .prompt {
+  white-space: pre-wrap;
+}

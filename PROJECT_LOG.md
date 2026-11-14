@@ -90,6 +90,26 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-14: Session 1, "check mail" handoff
+**How to use:** say or type "check mail", "chk mail", "check my inbox", "check my email" or "important unread mail(s)". MIKO shows the expanded request (`MAIL_REQUEST` in `src/shared/commands.ts`, worded exactly as the owner specified) with **Continue in ChatGPT** and **Paste reply**. Continue copies the request and brings the ChatGPT app forward; the card then reads "Request copied—paste into ChatGPT and press Send." plus where ChatGPT opened. Email retrieval and the summary stay inside ChatGPT.
+
+**Composer insertion was investigated and is not used:**
+- ChatGPT.app (`com.openai.codex` 26.924) is Electron-based (a renamed "Codex Framework" with Chromium resources and `app.asar`).
+- Its Accessibility tree stops at the windows (8 elements, no text areas).
+- Both supported ways to ask for the full tree failed: `AXManualAccessibility` returned -25205 (unsupported) and `AXEnhancedUserInterface` returned -25208 (not implemented).
+- So the composer can't be found or verified, and MIKO never types or pastes into ChatGPT itself.
+- `codex://new?prompt=` (documented) would prefill a *Codex local chat*, not a ChatGPT chat with connected mail, so it isn't used.
+- **Re-check after ChatGPT updates:** `scripts/probe-chatgpt-composer.swift`. If it ever finds a verifiable composer, insertion could be added, asking before replacing existing text.
+
+**Windows:** the existing handoff fallback applies (copy, then chatgpt.com in the browser). Untested on Windows.
+
+**Verified live:**
+- typed "chk mail" showed the card with the request text byte-identical to the spec, the Continue in ChatGPT / Paste reply buttons, and no destination picker
+- Continue put exactly the request on the clipboard, ChatGPT became frontmost, and the card said "Request copied—paste into ChatGPT and press Send. The ChatGPT app is in front."
+- the spoken "Chk mail." transcript gave the same card (Heard note shown)
+- the owner's clipboard was saved before the test and restored after
+- typecheck passes, 84/84 tests pass, build passes
+
 ### 2026-11-14: Session 1, ChatGPT app handoff and saved chats
 **How to use**
 - **"open ChatGPT"** (typed or spoken): launches or focuses the ChatGPT desktop app (`/Applications/ChatGPT.app`, bundle `com.openai.codex`; `com.openai.chat` is also detected). Without the app it opens https://chatgpt.com in the default browser and says which.

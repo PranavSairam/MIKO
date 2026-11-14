@@ -21,6 +21,8 @@ export type PanelEntry =
       reply?: string
       /** Saved chat name to open on handoff; '' means ChatGPT itself. */
       destination?: string
+      /** 'mail': the expanded "check mail" request (no destination picker). */
+      variant?: 'mail'
     }
   | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat'; text: string; options: PanelChoice[] }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
@@ -52,6 +54,9 @@ interface TextPanelProps {
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
 }
+
+export const MAIL_NOTE =
+  'ChatGPT does the checking with the mail accounts connected to your ChatGPT account. MIKO never sees your mail or the summary.'
 
 export const HANDOFF_NOTE =
   'Continuing in ChatGPT uses that conversation\u2019s context and your account\u2019s memory settings. MIKO hasn\u2019t read any of it.'
@@ -151,7 +156,7 @@ export function TextPanel({
               {entry.kind === 'handoff' ? (
                 <>
                   <p className="prompt">{entry.prompt}</p>
-                  {chats.length > 0 ? (
+                  {chats.length > 0 && entry.variant !== 'mail' ? (
                     <label className="destination">
                       Send to{' '}
                       <select
@@ -168,11 +173,11 @@ export function TextPanel({
                     </label>
                   ) : null}
                   <p className="panel-detail">{entry.detail}</p>
-                  <p className="panel-detail note">{HANDOFF_NOTE}</p>
+                  <p className="panel-detail note">{entry.variant === 'mail' ? MAIL_NOTE : HANDOFF_NOTE}</p>
                   {entry.reply ? <p className="pasted">{entry.reply}</p> : null}
                   <div className="panel-inline">
                     <button type="button" className="text-button" onClick={() => onUseChatGpt?.(entry.id)}>
-                      Copy and open ChatGPT
+                      {entry.variant === 'mail' ? 'Continue in ChatGPT' : 'Copy and open ChatGPT'}
                     </button>
                     <button type="button" className="text-button secondary" onClick={() => onPasteReply?.(entry.id)}>
                       Paste reply

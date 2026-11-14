@@ -824,6 +824,18 @@ export function MotionApp() {
       })
       return
     }
+    if (decision.type === 'check-mail') {
+      pushEntry({
+        id: 0,
+        kind: 'handoff',
+        variant: 'mail',
+        prompt: decision.prompt,
+        status: 'ready',
+        detail: 'Check mail request. Nothing has been sent.',
+        destination: ''
+      })
+      return
+    }
     if (decision.type === 'open-chatgpt') {
       const result = await window.miko.openChatGpt()
       pushEntry({
@@ -904,6 +916,10 @@ export function MotionApp() {
   async function onUseChatGpt(id: number): Promise<void> {
     const entry = entries.find((item) => item.id === id)
     if (!entry || entry.kind !== 'handoff' || typeof window.miko === 'undefined') return
+    if (entry.variant === 'mail') {
+      await continueMail(entry)
+      return
+    }
     const copied = await window.miko.copyText(entry.prompt)
     const destination = entry.destination ?? ''
     const opened = destination ? await window.miko.openChat(destination) : await window.miko.openChatGpt()
@@ -919,6 +935,25 @@ export function MotionApp() {
             ? `Opened ${where}${place}, but the question wasn\u2019t copied.`
             : `The question wasn\u2019t copied, and ${where} didn\u2019t open.`
     replaceEntry(id, { ...entry, status, detail })
+  }
+
+  /**
+   * "Check mail" handoff. ChatGPT's message box is not reachable through macOS
+   * Accessibility (see PROJECT_LOG), so MIKO never types into it: the request is
+   * copied and ChatGPT is brought forward for the user to paste and send.
+   */
+  async function continueMail(entry: Extract<PanelEntry, { kind: 'handoff' }>): Promise<void> {
+    const copied = await window.miko.copyText(entry.prompt)
+    const opened = await window.miko.openChatGpt()
+    const where = !opened.ok
+      ? 'ChatGPT didn\u2019t open.'
+      : opened.target === 'app'
+        ? 'The ChatGPT app is in front.'
+        : `The ChatGPT app isn\u2019t installed, so chatgpt.com opened in ${opened.appName || 'your browser'}.`
+    const detail = copied
+      ? `Request copied\u2014paste into ChatGPT and press Send. ${where}`
+      : `The request wasn\u2019t copied. ${where}`
+    replaceEntry(entry.id, { ...entry, status: copied && opened.ok ? 'copied' : copied ? 'copied-only' : entry.status, detail })
   }
 
   async function onPasteReply(id: number): Promise<void> {

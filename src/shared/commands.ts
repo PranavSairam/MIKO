@@ -31,6 +31,7 @@ export type CommandResult =
   | { type: 'chat-choices'; text: string; options: SavedChat[] }
   | { type: 'list-chats' }
   | { type: 'ask-gpt'; question: string }
+  | { type: 'check-mail'; prompt: string }
   | { type: 'unknown'; text: string }
 
 
@@ -76,6 +77,7 @@ export function routeCommand(
   if (!original) return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
   const asked = matchAskGpt(original)
   if (asked) return asked
+  if (isCheckMail(normalize(original))) return { type: 'check-mail', prompt: MAIL_REQUEST }
   if (isQuestion(original)) return { type: 'question', prompt: original }
   const spoken = normalize(original)
   const chat = matchChatGpt(spoken, chats)
@@ -89,6 +91,30 @@ export function routeCommand(
   const opened = matchOpen(spoken, catalog)
   if (opened) return opened
   return { type: 'unknown', text: 'I can walk, sit, open or close an app, or follow the active window.' }
+}
+
+/**
+ * "check mail": a read-only request handed to ChatGPT, which reads the mail
+ * accounts connected there. MIKO never sees the mail or the summary.
+ */
+export const MAIL_REQUEST =
+  'Check the email accounts currently connected to this ChatGPT account. ' +
+  'Find unread messages that need my attention. Prioritize direct requests, ' +
+  'deadlines, approvals, payments, interviews, and important follow-ups. ' +
+  'Exclude spam, promotions, newsletters, shopping, and routine automated ' +
+  'updates unless they contain a relevant deadline or action.\n\n' +
+  'Group results into Urgent, Action needed, and Important FYI. For each ' +
+  'message include the account, sender, subject, received date, a short ' +
+  'summary, why it matters, the next action, and a link to the message. ' +
+  'Keep messages unread and make this a read-only check. State which ' +
+  'accounts and date range you checked, and disclose any access limits. ' +
+  'Use my existing preferences when available.'
+
+function isCheckMail(spoken: string): boolean {
+  return (
+    /^(?:check|chk)\s+(?:my\s+)?(?:e-?mails?|mail|inbox)$/.test(spoken) ||
+    /^(?:show\s+(?:me\s+)?)?(?:my\s+)?important\s+unread\s+(?:e-?mails?|mails?)$/.test(spoken)
+  )
 }
 
 const CHATGPT_NAME = '(?:chat\\s*-?\\s*gpt|chat\\s*g\\s*p\\s*t|gpt)'
@@ -277,6 +303,7 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
       return { kind: 'confirm' }
     case 'question':
     case 'ask-gpt':
+    case 'check-mail':
       return { kind: 'handoff' }
     case 'choices':
     case 'chat-choices':

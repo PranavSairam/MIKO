@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  MAIL_REQUEST,
   movementLine,
   planVoice,
   parseActionId,
@@ -163,5 +164,24 @@ describe('ChatGPT commands', () => {
     assert.equal(planVoice(routeCommand('show saved chats', 'voice', catalog, chats), true).kind, 'run')
     assert.equal(planVoice(routeCommand('ask gpt why is the sky blue', 'voice', catalog, chats), true).kind, 'handoff')
     assert.deepEqual(planVoice(routeCommand('open my major chat', 'voice', catalog, chats), true), { kind: 'review', reason: 'ambiguous' })
+  })
+})
+
+describe('check mail', () => {
+  it('expands mail phrases into the read-only ChatGPT request', () => {
+    for (const phrase of ['check mail', 'chk mail', 'Check mail.', 'important unread mail', 'Important unread emails', 'check my inbox', 'check my email', 'chk my mail']) {
+      assert.deepEqual(routeCommand(phrase, 'voice', catalog), { type: 'check-mail', prompt: MAIL_REQUEST }, phrase)
+    }
+  })
+  it('keeps the exact request wording', () => {
+    assert.match(MAIL_REQUEST, /^Check the email accounts currently connected to this ChatGPT account\./)
+    assert.match(MAIL_REQUEST, /Keep messages unread and make this a read-only check\./)
+    assert.match(MAIL_REQUEST, /Use my existing preferences when available\.$/)
+  })
+  it('is a handoff for review, not an action', () => {
+    assert.equal(planVoice(routeCommand('chk mail', 'voice', catalog), true).kind, 'handoff')
+  })
+  it('does not swallow unrelated phrases', () => {
+    assert.notEqual(routeCommand('open mail', 'typed', catalog).type, 'check-mail')
   })
 })
