@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "description": "Held-out unfamiliar wording for interpretation. Scored separately from the 10-example development set. Deterministic routing may miss these; AI interpret is expected for several.",
+  "examples": [
+    {
+      "id": "uf-boot-up-yt",
+      "input": "can you boot up that video site for me",
+      "source": "typed",
+      "expect": { "kinds": ["open_website"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-kill-yt-tabs",
+      "input": "get rid of every youtube tab",
+      "source": "voice",
+      "expect": { "kinds": ["close_website"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-msg-dad-visit",
+      "input": "ping Dad on WA that I'll drop by next month, keep it proper",
+      "source": "typed",
+      "expect": { "kinds": ["open_whatsapp_chat", "draft_whatsapp"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-whats-the-scoop",
+      "input": "what's the scoop on that chat",
+      "context": { "waChat": "Mum" },
+      "source": "typed",
+      "expect": { "kinds": ["summarize_whatsapp"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-tighten-draft",
+      "input": "trim that down a bit",
+      "context": { "waDraftActive": true },
+      "source": "typed",
+      "expect": { "kinds": ["refine_draft"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-scratch-that",
+      "input": "scratch that",
+      "source": "typed",
+      "expect": { "kinds": ["cancel_task"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-find-invoice",
+      "input": "dig up that invoice mail from last week",
+      "source": "typed",
+      "expect": { "kinds": ["search_mail"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-browser-instead",
+      "input": "actually use safari instead",
+      "context": { "pendingUrl": true },
+      "source": "typed",
+      "expect": { "kinds": ["open_website"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-thanks-check",
+      "input": "say thanks and that I'll look tomorrow",
+      "context": { "waChat": "Me" },
+      "source": "voice",
+      "expect": { "kinds": ["draft_whatsapp"], "needsInterpret": true }
+    },
+    {
+      "id": "uf-ordinary-q",
+      "input": "how tall is the eiffel tower roughly",
+      "source": "typed",
+      "expect": { "kinds": ["ask_assistant"], "needsInterpret": false }
+    }
+  ]
+}

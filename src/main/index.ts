@@ -3,7 +3,9 @@ import { join } from 'path'
 import { restoreFollow, startFollowLoop, isFollowEnabled, enableFollow } from './follow'
 import { registerIpc } from './ipc'
 import { createLivingPreview } from './living-preview'
-import { createPetWindow, isPetVisible, setQuitting } from './pet-window'
+import { createPetWindow, isPetVisible, setPlacementListener, setQuitting } from './pet-window'
+import { availablePets, currentPetChoice, syncTree } from './pets'
+import { PETS } from '../shared/pets'
 import { createPhase2Preview } from './phase2-preview'
 import { createPresence } from './presence'
 import { registerSummonShortcut } from './summon-shortcut'
@@ -95,6 +97,15 @@ if (!gotLock) {
     restoreFollow()
     startFollowLoop()
     const tray = createTray({
+      pets: () => ({ available: availablePets().map((id) => ({ id, name: PETS[id].name })), selected: currentPetChoice() }),
+      choosePet: (id) => {
+        presence.show()
+        postToPet(IPC.petCommand, { kind: 'switch', pet: id })
+      },
+      openPetChooser: () => {
+        presence.show()
+        postToPet(IPC.petCommand, { kind: 'choose' })
+      },
       show: () => presence.show(),
       hide: () => presence.hide(),
       isVisible: isPetVisible,
@@ -119,8 +130,12 @@ if (!gotLock) {
       }
     })
     refresh = tray.refresh
+    setPlacementListener(syncTree)
     createPetWindow({
-      onVisibility: () => tray.refresh(),
+      onVisibility: () => {
+        tray.refresh()
+        syncTree()
+      },
       onReady: () => presence.markReady(),
       onClose: () => presence.hide()
     })

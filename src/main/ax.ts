@@ -31,6 +31,10 @@ export interface AxResult {
 
 let binary: string | null = null
 
+export function axHelperPath(): string | null {
+  return compile()
+}
+
 function compile(): string | null {
   if (process.platform !== 'darwin') return null
   const source = sourcePath('ax-mac.swift')

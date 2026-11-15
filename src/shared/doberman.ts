@@ -107,6 +107,17 @@ export interface BehaviorContext {
   roamMax: number
   /** Manual command. It wins over wandering and over the open panel. */
   order: BehaviorOrder
+  /**
+   * Real lengths of this pet's one-shot clips (seconds). Other pets map Sit /
+   * StandUp to their own clips; the Doberman's timings are used when absent.
+   */
+  oneShotSeconds?: { sit: number; standUp: number }
+}
+
+/** Safety limit for a one-shot phase: the clip's length plus a little. */
+function oneShotLimit(phase: 'sit' | 'standUp', ctx: BehaviorContext): number {
+  const seconds = ctx.oneShotSeconds?.[phase]
+  return (seconds !== undefined && Number.isFinite(seconds) && seconds > 0 ? seconds : clipDuration(clipName(phase))) + 0.2
 }
 
 export function clipDuration(name: DobermanClipName): number {
@@ -416,7 +427,7 @@ export function stepBehavior(actor: Actor, ctx: BehaviorContext): { actor: Actor
   if (next.phase === 'idle') return stepIdle(next, ctx)
   if (next.phase === 'sitIdle') return stepSitIdle(next, ctx)
   if (next.phase === 'sit' || next.phase === 'standUp') {
-    const limit = clipDuration(clipName(next.phase)) + 0.2
+    const limit = oneShotLimit(next.phase, ctx)
     const age = next.age + ctx.dt
     if (age < limit) return { actor: { ...next, age }, dx: 0 }
     return { actor: finishOneShot(next, next.token, ctx), dx: 0 }
@@ -634,7 +645,7 @@ function markArrived(actor: Actor, ctx: BehaviorContext): Actor {
 }
 
 function ageOneShot(actor: Actor, ctx: BehaviorContext): { actor: Actor; dx: number } {
-  const limit = clipDuration(clipName(actor.phase)) + 0.2
+  const limit = oneShotLimit(actor.phase === 'standUp' ? 'standUp' : 'sit', ctx)
   const age = actor.age + ctx.dt
   if (age < limit) return { actor: { ...actor, age }, dx: 0 }
   return { actor: finishOneShot(actor, actor.token, ctx), dx: 0 }

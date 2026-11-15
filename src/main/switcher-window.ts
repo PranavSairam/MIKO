@@ -115,6 +115,7 @@ function ensureWindow(): BrowserWindow {
     }
   })
   win = created
+  created.setBackgroundColor('#00000000')
   created.setAlwaysOnTop(true, 'pop-up-menu')
   created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   created.setHiddenInMissionControl(true)

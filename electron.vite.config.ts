@@ -9,7 +9,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
-          switcher: resolve('src/preload/switcher.ts')
+          switcher: resolve('src/preload/switcher.ts'),
+          tree: resolve('src/preload/tree.ts')
         }
       }
     }
@@ -29,7 +30,8 @@ export default defineConfig({
           preview: resolve('src/renderer/preview.html'),
           living: resolve('src/renderer/living.html'),
           motion: resolve('src/renderer/motion.html'),
-          switcher: resolve('src/renderer/switcher.html')
+          switcher: resolve('src/renderer/switcher.html'),
+          tree: resolve('src/renderer/tree.html')
         }
       }
     }

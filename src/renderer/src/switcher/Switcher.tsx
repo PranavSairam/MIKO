@@ -125,8 +125,8 @@ export function Switcher() {
   const focusName = shown[hovered ?? selected]?.name ?? ''
 
   return (
-    <div className="switcher" onMouseDown={(event) => event.target === event.currentTarget && api.close()}>
-      <div className="glow" />
+    <div className="switcher">
+      <div className="glow" aria-hidden="true" />
       {tabsView ? (
         <section className="tabs-card" aria-label={`${tabsView.name} tabs`}>
           <header>

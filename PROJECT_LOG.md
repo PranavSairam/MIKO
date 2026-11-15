@@ -6,9 +6,9 @@ This is the running record of the project. Read it first when you pick the proje
 
 ## Snapshot (as of 2026-11-14)
 
-**What it is:** MIKO is a desktop pet companion built with Electron, React, TypeScript, and three.js. A 3D Doberman sits on top of your other windows. You talk to it in a chat panel, by typing or by push-to-talk voice. It can walk around, sit, follow the active window, open and close apps, and pass questions on to ChatGPT.
+**What it is:** MIKO is a desktop companion built with Electron, React, TypeScript, and three.js. A 3D Doberman sits on top of your other windows. You talk to it in a chat panel, by typing or by push-to-talk. It can walk, sit, follow the active window, open and close apps, search WhatsApp contacts on macOS, draft and insert WhatsApp replies (macOS), read Gmail, and answer through the MIKO assistant (Codex, using your ChatGPT sign-in in a separate thread) or hand a prompt to the ChatGPT app.
 
-**Platforms:** Developed on macOS. The code targets Windows too, but the Windows smoke test in README.md has not been run yet. There is no installer.
+**Platforms:** Developed on macOS. The code targets Windows too, but the Windows smoke test in README.md has not been run. WhatsApp contact search returns a clear unsupported state on Windows. There is no installer. Git history is on `main`.
 
 **Run it:**
 
@@ -30,7 +30,7 @@ Needs Node 22.12 or newer.
 |---|---|---|
 | Main process | `src/main/` | `index.ts` is the entry: single-instance lock, tray, summon shortcut, follow loop, pet window. `pet-window.ts` is the frameless, transparent, always-on-top window and its click-through hit rects. `ipc.ts` holds every IPC handler. `apps.ts` finds, launches, and quits apps. `speech.ts` runs on-device speech-to-text. `follow.ts` and `foreground.ts` follow the active window. `tray.ts`, `presence.ts` (show/hide/exit animation), `summon-shortcut.ts`, `quit.ts`. |
 | Preload | `src/preload/index.ts` | Exposes `window.miko` (the `MikoApi` in `src/shared/api.ts`). The renderer runs sandboxed with contextIsolation on and nodeIntegration off. |
-| Renderer (live) | `src/renderer/index.html` → `src/renderer/src/motion/` | `MotionApp.tsx` (about 900 lines) is the real app: 3D dog (`DobermanRig.ts`, loads `assets/doberman.glb`), behavior loop, chat panel, and command routing. |
+| Renderer (live) | `src/renderer/index.html` → `src/renderer/src/motion/` | `MotionApp.tsx` is the real app: 3D dog (`DobermanRig.ts`, loads `assets/doberman.glb`), behavior loop, chat panel, and command routing. |
 | Renderer (older/preview) | `src/renderer/src/App.tsx`, `PetView.tsx`, `preview/`, `living/` | `App.tsx` and `PetView.tsx` are the Phase 1 SVG puppy and are no longer loaded by index.html. `preview/` and `living/` are the experimental 2D photo and walk-frame versions of "Miko". |
 | Shared logic | `src/shared/` | Pure, tested TS: `commands.ts` (text/voice command router), `doberman.ts` (behavior state machine: Idle/Walk/Sit/SitIdle/StandUp), `guide.ts`, `look.ts`, `layout.ts`, `movement.ts`, `wander.ts`, `follow.ts`, `gait.ts`, `sequence.ts`, `photo-walk.ts`, `walk-review.ts`. |
 | Speech helpers | `resources/listen-mac.swift`, `resources/listen-win.ps1` | The Mac helper is compiled with `swiftc` on first use into userData (SFSpeechRecognizer, on-device only). Windows uses System.Speech. Each session has a 12 s cap. Read-aloud uses the renderer's `speechSynthesis`. |
@@ -41,21 +41,19 @@ Needs Node 22.12 or newer.
 
 - **Movement:** "move/walk left|right", "a little left|right", "left|right corner", "come back/home", "sit", "stand", "stay", "wander"
 - **Follow:** "follow me", "come here", "stay here"
-- **Apps:** "open/launch/start X", "close/quit X", "force quit X" (asks first), "quit MIKO" (asks first). Apps it hasn't seen before need a confirm before the first launch.
-- **Questions** (ending in `?`, or starting with how/what/why/explain/write/…) become a **ChatGPT handoff**
+- **Apps:** "open/launch/start X", "close/quit X", "force quit X" (asks first), "quit MIKO" (asks first). Apps it hasn't seen before need a confirm before the first launch. "open WhatsApp" launches WhatsApp.
+- **Websites:** "open YouTube" / "ok open youtube" opens `https://www.youtube.com/` locally. "… in Chrome" uses Chrome. A follow-up "in Chrome" finishes the last pending site open. "close YouTube" / "close it" closes matching browser tabs by host (macOS), never quits the browser.
+- **WhatsApp contacts (macOS):** "open Mum in WhatsApp", "open WhatsApp chat with Mum", "find Mukundan on WhatsApp", and "open Dad in WhatsApp and tell him …" / "open Me in WhatsApp and type …" (navigate first; held draft resumes after the chat is verified). One exact result opens after the chat header matches. Several or approximate results are a choice. A bare "open Muku chat" opens an exact saved ChatGPT chat, otherwise uses a WhatsApp context you already chose, otherwise asks which. Aliases live in `userData/miko-settings.json` under `whatsappAliases`.
+- **WhatsApp summarize / replies (macOS):** Bare "summarize" with a verified chat summarizes latest **incoming** text inside MIKO (composer unchanged, fresh model request). "tell him…", "reply saying…", "type … in a formal way" draft and insert unsent. Refine: shorter / more formal. "leave it" / "never mind" / "cancel that" cancel pending workflow.
+- **Architecture helpers:** typed `ActionPlan` / capability registry / working context / task phases; unfamiliar wording → schema-validated interpret (async bridge) → `runActionPlan` gated by capabilities; structured preferences + correction examples in Preferences (not training); eval under `src/shared/eval/` including `holdout-unfamiliar.json`.
+- **Chrome profiles (macOS live-checked):** “open Chrome” / “choose chrome profile” / “open … in Chrome” → glass fan of real Local State profiles (avatar/initials, directory id separate from name). Optional saved default; never auto-saved. Launch by `--profile-directory` without closing other profile windows.
+- **WhatsApp attachments (macOS):** “fetch/download the latest file/PDF”, “copy this file”, “save to Downloads”, “show in Finder”, “attach it here” → attachment actions (not the general assistant). Visible document bubbles only; Save to Downloads + verified local file; file card; real file pasteboard; attach unsent with header recheck.
+- **Questions** (ending in `?`, or starting with how/what/why/explain/write/…) go to the MIKO assistant when that setting is on, and to the ChatGPT app handoff when it is off.
 
-### Important: how ChatGPT works today
+### Known loose ends
 
-There is **no API backend**. `routeCommand` marks a message as a question. "Use ChatGPT" then **copies the prompt to the clipboard and opens https://chatgpt.com in the browser**. You paste it there yourself, copy the answer, and click "Paste reply" to bring it back into the panel. Nothing is sent automatically, and no API key exists anywhere in the code.
-
-Voice commands for movement currently return "Voice control is not connected yet." (`VOICE_PENDING`).
-
-### Known loose ends seen on first read
-
-- `README.md` still describes Phase 1 (SVG puppy, notes only) and is out of date.
-- The folder is **not a git repository**, so there is no history or backup.
-- `.blend1` backups, the two `gemini_generated_video_*.mp4` files in assets, and `out/` take up a lot of space (about 486 MB in total).
-- The Windows smoke test is still pending.
+- The Windows smoke test is still pending. WhatsApp contact search and reply drafting/insertion are unimplemented there on purpose.
+- Helper permission grants are tied to the exact ad-hoc build. A real Swift change means removing the helper in System Settings and adding it again.
 
 ---
 
@@ -81,7 +79,7 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 - [ ] Automatic ChatGPT replies inside MIKO (a real API backend instead of the copy/paste handoff)
 - [x] Voice commands execute (2026-11-14): clear ones run, risky ones confirm, setting in the tray
 - [ ] Hands-on Windows verification (smoke test in README.md)
-- [ ] Rewrite README.md intro (controls table is current; intro still says Phase 1)
+- [x] Rewrite README.md intro (2026-11-14)
 - [x] Local git history (2026-11-14), branch `main`, author PRANAV SAIRAM
 - [x] Published 2026-11-14 to **private** GitHub repo https://github.com/PranavSairam/MIKO (remote `origin`, branch `main`)
 - [ ] Consider Git LFS for `art/` binaries before publishing (about 50 MB of .blend/.png/.mp4)
@@ -89,6 +87,324 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 ---
 
 ## Session log
+
+### 2026-11-15: Pet customization (Doberman, cat, bird with tree, koala)
+- **Picked up from Cursor:** Cursor's uncommitted work (WhatsApp, browser tabs, Chrome profiles, actions/interpreter, preferences, about 7,000 lines) was preserved untouched.
+  - There was no partial pet code in `src/`.
+  - A stray arm64 executable `main` sits in the repo root (probably a Swift compile output). Left as is and not committed.
+  - **Editor "6 problems":** `npm run typecheck` was clean before and after, so those diagnostics are stale.
+- **Assets inspected** (the GLB JSON, not just the README):
+  - doberman: Idle/Walk/Sit/SitIdle/StandUp
+  - cat: + LickPaw, Stretch (has a neck)
+  - koala: + Wave, Sleep (no neck bone)
+  - bird: Idle/Walk/Hop/Fly/TakeOff/Land/Peck/Chirp (no sit clips, no neck), plus a `Tree` node with a `PerchPoint`
+  - All of them: one skinned mesh, faces +Z, feet at y = 0, in-place locomotion.
+- **Registry: `src/shared/pets.ts`** (pure, tested against the real .glb files in `pets.test.ts`). Per pet:
+  - role → clip lists with fallbacks; a missing clip falls back to the next entry, then Idle; no Idle = unusable
+  - walk speed in units/s, from the asset notes
+  - fit: the Doberman keeps its measured fit **with its original sampling, so its size is unchanged**; the others use the Doberman's reference scale, so the cat is smaller than the dog
+  - look bones (neck optional)
+  - "flavors": extra clips played over idle/seated phases
+  - `flies` (bird)
+  - aliases for commands
+  - Also: tree/perch geometry, flight arc, and `parsePetCommand`.
+- **Shared behavior controller reused:**
+  - `stepBehavior` is unchanged except that one-shot safety limits now use the pet's real Sit/StandUp clip lengths (`oneShotSeconds`, optional).
+  - Bird roles: walk = Hop, sit = Peck, sitIdle = Idle, standUp = Chirp.
+- **Rig:** `DobermanRig.ts` → `PetRig.ts` (renamed with git mv). It loads any pet.
+  - **Safe swap:** a new pet is parsed off-screen and swapped in only on success; on failure the current pet stays.
+  - A failed saved pet at startup falls back to the bundled Doberman.
+  - The canvas exposes read-only diagnostics `data-pet`, `data-clip` and `data-look`.
+- **Main side** (`src/main/pets.ts`):
+  - lists only pets whose `.glb` exists under `pet_animals/` (the Doberman is bundled)
+  - serves model bytes
+  - saved choice `pet` in miko-settings (absent = Doberman, so existing users keep the dog)
+  - flight geometry
+  - **the bird's tree window**: transparent, click-through, non-focusable, in the bottom-right corner of the bird's display, drawn mirrored so the branch reaches left; shown only when the bird is on screen and MIKO is visible
+- **Pet behaviors:**
+  - cat: licks its paw while seated, sometimes stretches when standing
+  - koala: waves, naps (Sleep ×3)
+  - bird: pecks and chirps; every 25–60 s of rest it takes off, flies an arc to the tree's perch, lands, stays 15–40 s, then flies down somewhere in its roam range
+  - **Bird flight rules:**
+    - commands, follow moves, or a pet switch bring it down
+    - dragging cancels the flight; no flights with the panel open (perching continues)
+    - no flights with Reduce Motion
+    - with Follow active app on, the follow-placed sit counts as resting, so it still visits its tree (a command sit doesn't)
+- **UI:**
+  - Preferences → **Choose your pet**: cards with portraits rendered from each pet's own .glb, a check on the current pet, loading state and a status line.
+  - Paw menu → **Pet** (radio list plus "Choose your pet…").
+  - Typed or spoken: "switch to the cat", "make MIKO a koala", "change my pet to a bird", "be a dog again", "change pet" (opens the chooser). The router entry is added early and **only matches real pet names**, so "switch to Chrome" etc. route as before. Voice runs these directly.
+- **Checks:** typecheck pass, **237** tests pass (+12 pets, +1 router), build pass.
+
+#### Live (real app via Playwright, `MIKO_NO_HELPERS=1`)
+| Check | Result |
+|---|---|
+| All 4 pets render | Pass. Facing the viewer, feet on the ground, relative sizes (screenshots checked) |
+| Switch with the panel open and an unsent draft | Pass for cat → koala → bird → Doberman (each 20–30 ms), draft text unchanged, panel stayed open |
+| Chooser | Pass. 4 cards with portraits; clicking Cat switched and said "Here's your cat." |
+| Persisted choice | Pass. Relaunch came back as the cat |
+| Rest transitions | Pass. Cat SitIdle → LickPaw → SitIdle; koala SitIdle → Sleep → SitIdle; bird Idle → Peck / Chirp |
+| Movement ("move left", panel open) | Pass. Doberman/cat/koala StandUp → Idle → Walk → Sit, moving 128–150 px |
+| App fan (single click) | Pass for every pet |
+| Bird tree and flight | Pass. Tree at the bottom-right (210×249). Timeline: 22.2 s TakeOff → Fly → Land on the perch (feet exactly on the branch, composite checked) → about 38 s of Peck/Chirp → TakeOff → Fly → Land on the ground. Switching away hid the tree. |
+| Missing asset (koala.glb renamed briefly, then restored) | Pass. Koala not listed; "make miko a koala" → "The koala's files aren't there, so the Doberman stays." |
+| Commands | Pass. "switch to the cat", "be a dog again", "change pet" (chooser) worked; "switch to chrome" not taken as a pet |
+| Cursor tracking | Partly. The look offset is applied for every pet, including the neckless koala (non-zero yaw), but the real cursor poll overrides injected pointer samples, so **turn direction on the new pets still needs a hands-on look** |
+| Drag and hide/summon toggle | **Not verified here.** Playwright's synthetic mouse has no real screen coordinates, and the summon event only shows. These use the unchanged shared gesture/controller code; check by hand. |
+
+#### Remaining limitations / handoff to Cursor
+- **Hands-on still needed:** drag (guide and ⌥-drag) and ⌘⇧R hide/summon for each pet; head-turn direction toward the cursor for cat/koala/bird.
+- The tree lives on the display where the bird is. In follow mode the bird walks (it doesn't fly) to the active window.
+- **Not packaged:** `pet_animals/` is read from the app folder at runtime, and there is no installer yet. Add it to extraResources when packaging. Only the `.glb` files are needed at runtime (1.3 MB); the .blend and preview files are 15 MB.
+- **Add a pet:**
+  1. Drop `<name>/<name>.glb` into `pet_animals/`.
+  2. Add a `PETS` entry (roles, flavors, walk speed, look bones, aliases) and the id to `PET_IDS`.
+  3. Run `pets.test.ts`, which checks the roles and bones against the file.
+- Settings key `pet` stays `doberman` after the tests. Tests leave helpers off (`MIKO_NO_HELPERS=1`) so no permission prompts appear.
+- **Not committed yet (owner's call):** Cursor's uncommitted work and this feature share files (MotionApp, ipc, preload, api).
+
+### 2026-11-15: Follow-up drafting — Also tell her framing, ambiguous times, send status
+- **Preserved:** summarize/reply/refine/cancel, attachments, Chrome profiles, Preferences, browser-tab close, prior uncommitted work; did **not** open or send in Gayu Sis for testing.
+- **Root cause (framing):** `Also tell her…` / `Add that…` / `Let her know…` / `Ask her…` were **not** matched by `parseWhatsAppReplyIntent` (`tellPronoun` required `^tell`). Route fell through to `unknown` → interpreter → `draft_whatsapp` with content kept “exactly as written”, so the instruction framing was inserted (or returned verbatim). Ordinary “tell her…” was never meant to be literal — only `type exactly` / `Draft:`.
+- **Secondary:** `resumePendingWaDraft` used `literal: !needsModel`, so casual held open+tell content could paste without recipient-aware rewrite.
+- **Fixes:**
+  1. Additive / follow-up intent patterns + `additive` flag; all go through model drafting (not literal).
+  2. Unsent draft: composer still holds draft → refine/merge with overwrite protection; composer empty after insert → **new** follow-up message (never edit a sent bubble).
+  3. Ambiguous times (`3 AM` + `230`) → `clarify-time` UI in MIKO with choices + editable answer; original transcript retained; no silent AM↔PM / `230` expansion.
+  4. Draft prompt + interpret rules: strip Also-tell / Add-that / nested “tell her to…” framing; never invent times.
+  5. Insert path audited: AX `AXValue` only (comment in `ax-mac.swift`); no Return/Send. `sendStatus`: `not-sent` | `unverified` | `sent` when later observed.
+  6. `commandLead` keeps trailing punctuation for `type exactly`.
+- **Send-status investigation (Gayu Sis screenshot, read-only):** Outgoing bubbles are AX-labeled `Sent to Gayu Sis, Red` at 12:17 PM while MIKO still showed Inserted—not sent. Helper insert never submits; **no evidence MIKO pressed Send** — messages were sent outside the insert path (manual Send or equivalent). When composer is empty without a matching outgoing bubble proof in-session, UI can move to “Inserted as a draft; current send status unverified.”
+
+#### Live (self-chat **Me** only; synthetic times; no Send)
+| Check | Result |
+|---|---|
+| Routing Also tell / Add that / Let her know / Ask her / type exactly / cancel | Pass (unit + `routeCommand`) |
+| Ambiguous `3 AM` + `230` clarification question | Pass — `You said 3 AM. What time should “230” mean?` |
+| Insert into **Me** composer | Pass — `inserted` + `verified`; ask → `has-text` still holding `MIKO live check: movie at 7:05 PM…` (**unsent**) |
+| Gayu Sis | Not used for insert/send tests |
+
+- **Follow-up hardening:** `type Also tell her…` no longer literal-pastes framing (re-parses as additive draft). `resolveAdditiveFollowUpMode` covers unsent refine vs new follow-up vs blocked local edit. Live **Me** insert of clarified direct text `The movie starts at 7:05 PM. Please be ready by 6:35 PM.` stayed in composer (`has-text`, unsent).
+- **Checks:** typecheck pass, **224** tests pass, build pass; `miko-ax` rebuilt; MIKO restarted. Author PRANAV SAIRAM only; no push.
+
+### 2026-11-15: Recipient POV writing, contextual open, single search, draft status, Tab+Q glass
+- **Preserved:** summarize/reply/refine/cancel, attachments, Chrome profiles, Preferences, browser-tab close, unsent-only inserts, existing uncommitted work.
+- **Root causes:**
+  1. **Draft POV:** `whatsAppDraftPrompt` asked for a polite message but did not instruct second-person rewrite for “tell her …” vs keeping a distinct third person; no `type exactly` literal path.
+  2. **Contextual open:** After “Open WhatsApp”, bare `open Gayu Sis` stayed on the app catalog (`missing`) because follow-ups only matched search/find (earlier photoshop guard). Messaging was also cleared too eagerly when `lastExternalApp` was never WhatsApp (e.g. IDE frontmost).
+  3. **Double search:** `openWhatsAppContact` always ran the AX helper twice (list, then list+press), retyping the query. Concurrent double-submits could also start two opens.
+  4. **Draft status:** `notice` could still say “Draft inserted” while `choose-insert` (Replace/Append/Cancel) was showing.
+  5. **Tab+Q:** `.glow` was a large dark radial rectangle behind the fan.
+- **Fixes:** Recipient-aware drafting prompt + `type exactly` literal; `open X` with messaging → catalog apps first else WhatsApp contact; invalidate messaging only after WhatsApp→other-app switch; helper `reuseSearch` for press without retype + taskId coalesce; statuses Preparing / Draft ready / waiting Replace·Append·Cancel / Inserting / Inserted—not sent; remove `.glow`, transparent switcher root, `pointer-events` only on cards/hud/tabs.
+- **Scenarios:** `src/shared/scenarios-writing.test.ts` (Gayu Sis four-step routing, POV prompt rules, known apps during WA context). Model wording checked by constraints in the prompt tests — not claimed as trained weights.
+
+#### Live
+| Check | Result |
+|---|---|
+| Open WhatsApp → Open Gayu Sis | Pass — chooser with **Gayu Sis** #1 (after messaging-context fix). Cancelled; did not open over her existing unsent draft. |
+| Explicit contact open / one search | Helper rebuilt with `reuseSearch`; press no longer retypes when search still holds the query. |
+| Draft POV insert | **Skipped live insert** — Gayu Sis already had unsent composer text (`ill take her…`); would not overwrite without approval. Prompt + routing covered by tests. |
+| Draft status copy | UI strings updated; choose-insert no longer shares an “Inserted” notice. |
+| Tab+Q | `.glow` removed; fan cards over WhatsApp/TextEdit with desktop/app UI visible between cards (no full-window halo). Esc dismisses. |
+| Known apps in WA context | Unit: Calculator → launch, Chrome → chrome-profiles. |
+
+- **Checks:** typecheck pass, **217** tests pass, build pass; `miko-ax` rebuilt. Author PRANAV SAIRAM only; no push.
+
+### 2026-11-15: WhatsApp open-and-search routing (screenshot failures)
+- **Preserved:** summarize/reply/refine/cancel, attachments, Chrome profiles, Preferences, browser-tab close, unsent drafts.
+- **Root cause:** Compound lines like “Open WhatsApp and search for Mukundan” and “Open Mukundan in Whatsaappp” were reaching `matchOpen` / `resolveApp`. The full sentence (or typo’d app slot) became a catalog miss → “I can’t find Whatsapp And Search For ‘Mukundan.’” / “I can’t find Mukundan In Whatsaappp.” Messaging never ran.
+- **Fix:** App-slot-only WhatsApp spelling normalize (`Whatsaappp` → WhatsApp); open-then-search / in-app contact matchers before the app registry; `matchOpen` refuses compound open+search; post-launch “search for …” uses messaging context; bare `open X` still uses the catalog so missing apps stay honest. No silent Mukundan alias (none stored). Interpreter still tried when a miss looks messaging-shaped.
+- **Diagnostics:** Dev `[miko:route]` via `routeDiagnostics` (normalized instruction → action → capability; no chat bodies). `messagingRef` set on WhatsApp launch/search.
+
+#### Live (panel typed path; no composer typing / no Send in WhatsApp)
+| Check | Result |
+|---|---|
+| Open WhatsApp and search for Mukundan | Pass → chooser; **V T S MUKUNDAN** row 1 (multi-match). |
+| Open Mukundan in Whatsaappp | Pass → same chooser / V T S MUKUNDAN. |
+| Open WhatsApp → search for Mukundan | Pass → chooser after “Opening WhatsApp.” |
+| Cancel | Pass → “WhatsApp search cancelled.” |
+| open photoshop (with WA messaging set) | Pass → **I can’t find Photoshop.** |
+| Voice auto | Same `routeCommand`/`planVoice` run path as typed (unit + shared entry). |
+
+- Early live attempt hit AX `lost-focus` when WhatsApp was covered; routing had already selected WhatsApp search (not catalog miss). Retries with WhatsApp kept front completed chooser flows.
+- **Editor “6 problems”:** CLI `npm run typecheck` clean after `capability: string` + launch fallthrough typing; remaining Problems UI looked stale vs current tsc.
+- **Checks:** typecheck pass, **210** tests pass, build pass. Restarted project Electron so the running instance had the router. Author PRANAV SAIRAM only; no push.
+
+### 2026-11-15: Attachment insertion verification + provenance
+- **Preserved:** attachment routing, file clipboard, header checks (never bypassed), unsent attach (never Send).
+- **Header blank after helper rebuild:** Accessibility stayed trusted (`AXIsProcessTrusted`). Root cause was WhatsApp’s **AXSheet** *“This file has been recently saved… save it again?”* — while open, chat header/table vanish from AX. Helper now handles that sheet (press **Save** for a new Downloads write). If System Settings ever unchecks the helper after an ad-hoc rebuild, re-add `~/Library/Application Support/MIKO/bin/miko-ax` under Privacy & Security → Accessibility.
+- **Provenance:** Filename/size alone no longer auto-reuse Downloads. Proven only via new AX save (`ax-new-file`), session-proven id, or explicit owner-accepted **candidate**.
+
+#### Live (chat **V T S MUKUNDAN**)
+| Step | Result |
+|---|---|
+| **Retrieval** | Pass — new `~/Downloads/FreshNet_NNDL_Case_Study_Report (1).pdf` (664982 B), `saved` + `verified`, `provenance=ax-new-file`. |
+| **Copy** | Pass — clipboard `public.file-url` / `NSFilenamesPboardType` (not path text). |
+| **Attach** | Pass — `attached` + preview verified, composer text preserved, **unsent**. |
+| **Switch / cancel** | Pass — wrong header → `switched` / not verified; cancel blocks late attach; completed files kept. |
+
+- **Checks:** typecheck pass, **209** tests pass, build pass. No send; no push; no model upload of the PDF.
+
+### 2026-11-15: WhatsApp attachment retrieval + file transfer
+- **Preserved:** summarize/reply/refine/cancel, chat-switch insert guard, Chrome profile fan, Preferences, browser-tab close, unsent drafts.
+- **Routing:** “Fetch the latest file”, “Download that PDF”, “Get the last document they sent”, “Copy this file”, “Save it to Downloads”, “Show it in Finder”, “Attach it here”, “Paste that file into this chat” → `whatsapp-attachment` **before** general assistant. Typed + spoken share the same intents/`planVoice` run path.
+- **Discovery (AX only):** `whatsapp-attachments` lists visible `Document, …` bubbles (filename, kind, detail, time, incoming vs `Your Document`). Photos/links/previews skipped. Scope labelled **Latest visible attachment (visible messages only — not full chat history)**. Never reads WA databases/credentials.
+- **Download:** `AXShowMenu` → **Save to Downloads**; polls Downloads for a nonempty stable file (including `Name (n).ext`). Click alone ≠ success. Duplicate names never overwritten silently. *(Silent filename reuse removed in the verification session above.)*
+- **File card:** `wa-file` entry — filename/type/size/chat/status + Open / Show in Finder / Copy file / Copy filename / Copy path / Attach it here / Attach elsewhere…. Retrieved path kept in `WorkingContext.retrievedFile`. Download does **not** upload contents to the assistant.
+- **Clipboard:** `clipboard-file` writes a real `public.file-url` / `NSFilenamesPboardType` reference (not path text). Verified live.
+- **Attach:** `paste-file` ⌘V into verified WhatsApp composer; header rechecked before and after; preview verified; **never Send**; composer text preserved when possible. Destination chooser when unclear / switched; unsupported apps → Copy file / Show in Finder. Cancel bumps `attachmentToken` and blocks late attach; completed Downloads files are kept.
+- **Live (initial):** listed `FreshNet_NNDL_Case_Study_Report.pdf` in **V T S MUKUNDAN**; clipboard verified. Full retrieve→copy→attach completion recorded in the verification session above.
+- **Checks:** typecheck pass, tests pass, build pass. Author PRANAV SAIRAM only; no AI trailers; no push.
+- **Limits:** macOS only; visible bubbles only; attach preview detection is best-effort via AX; Windows unsupported; helper rebuild can require re-adding Accessibility.
+
+### 2026-11-15: Chrome profile chooser
+- **Preserved:** WhatsApp summarize/reply/refine/cancel + chat-switch guard; assistant/voice/mail; browser-tab close (still host-only — **no** profile ownership claimed); pending URL / unsent-draft behavior.
+- **Discovery (main only):** Reads Chrome `Local State` `profile.info_cache` + on-disk avatar image files under the profile directory. No passwords/cookies/history/tokens. Display name ≠ directory id. Paths validated; Chrome files never modified.
+- **UI:** Glass profile fan above MIKO (`ChromeProfileFan`) — avatar or initials, number shortcut, hover/selected, Default badge, fan or scrollable grid (≥6). Reduce Motion + reduced-transparency opaque fallback. `data-hit` so clicks work with click-through.
+- **Commands:** `open Chrome`, `choose chrome profile` (always shows fan), `open Chrome with Work`, `open YouTube in Chrome` (URL held through choice), `… in my Personal Chrome profile`, spoken ordinals / `use Work`, cancel / leave it / Esc. Explicit profile overrides saved default. Pending URL completed exactly once on selection.
+- **Default:** Never auto-saved. Optional “Always use …” on the fan → `defaultChromeProfileDirectory` in structured prefs. Preferences: see / clear / reopen chooser.
+- **Launch:** `open -na "Google Chrome" --args --profile-directory=<id> [url]` (arg array, no shell). Existing other-profile windows left open. Safe http(s) only. Launch success ≠ verified frontmost profile (tab APIs can’t attribute profile); note shown honestly.
+- **Live on this Mac:** Discovered **9** real profiles (duplicate `srmist.edu.in` → secondary directory labels). Launched Work + disposable `example.com/?miko-chrome-profile-check=1`: windows 1→2→1 after cleanup; prior window intact. Cancel path: dismisses fan without launch (code + Esc).
+- **Checks:** typecheck pass, **201** tests pass, build pass. Author PRANAV SAIRAM only; no AI trailers; no push.
+- **Still limited:** Windows Chrome profile launch implemented but **not** live-tested. Tab close still cannot tell which profile owns a tab. Frontmost profile after launch is not verified beyond the launch command returning.
+
+### 2026-11-15: Unfamiliar 3/10 investigation + interpretation improvements
+- **Preserved:** Me 2 summarize/reply/refine/cancel; chat-switch insert guard; Preferences; browser-tab close; destination exactness; unsent drafts (`don't send` negation + insert never sends).
+- **Eval path for the old 3/10:** Deterministic-only (`tryDeterministicPlan` + `routeCommand`). **No mocked interpreter. No real model.** The prior “3/10” was not model accuracy.
+
+#### Original holdout-unfamiliar v1 — expected vs actual (pre-fix, deterministic)
+| id | expected | actual (deterministic) | class |
+|---|---|---|---|
+| uf-boot-up-yt | open_website | unknown | wrong_intent → needs_interpret |
+| uf-kill-yt-tabs | close_website | unknown | wrong_intent → needs_interpret |
+| uf-msg-dad-visit | open+draft WA | unknown | wrong_intent → needs_interpret |
+| uf-whats-the-scoop | summarize_whatsapp | ask_assistant | wrong_intent (question steal / lost_context) |
+| uf-tighten-draft | refine_draft | ask_assistant / unknown | wrong_intent (lost_context) |
+| uf-scratch-that | cancel_task | cancel_task | ok |
+| uf-find-invoice | search_mail | unknown / mail-or-app | wrong_intent → needs_interpret |
+| uf-browser-instead | open_website | unknown | lost_context → needs_interpret |
+| uf-thanks-check | draft_whatsapp | draft_whatsapp | ok |
+| uf-ordinary-q | ask_assistant | ask_assistant | ok |
+
+#### Held-out v2 (frozen **before** improvements; separate from v1/dev)
+- File: `src/shared/eval/holdout-unfamiliar-v2.json`
+- **Baseline deterministic (pre-change):** **2/10** (`uf2-tell-them-hi`, `uf2-ordinary-sky`)
+- **After structural routing + interpret gate (deterministic):** **10/10**
+- **Real-model accuracy:** not scored this session (paid). Do not treat fixture/schema parses as model accuracy.
+
+#### Measured scores after changes (deterministic only)
+- Development: **10/10**
+- Familiar holdout: **≥3/5** (suite threshold; still reported separately)
+- Unfamiliar v1: **10/10** deterministic (was 3/10)
+- Unfamiliar v2: **10/10** deterministic (baseline was 2/10)
+- Real-model interpret: **not run** — report via `npm run eval:live` when scoring paid calls
+
+#### Shared interpretation flow
+- Structural slang for open/close sites, cancel verbs, browser-instead follow-ups, WA summarize/refine paraphrases, dig/hunt mail searches, ping/nudge compound plans + `keep it polite/proper` tone — **not** hardcoded to the seven failed phrases.
+- `shouldTryInterpreter`: unknowns and context-bound questions (WA chat/draft/pending URL) reach schema-validated AI interpret when deterministic routing cannot resolve; ordinary questions stay on the assistant.
+- Typed + voice-auto both use the gate; interpret plans still run through capability-gated `runActionPlan`.
+
+#### Checks
+- typecheck pass, **196** tests pass, build pass. Author PRANAV SAIRAM only; no AI trailers; no push; no messages sent.
+
+#### Remaining gaps
+- Paid live-model scoring of unfamiliar interpret still unset.
+- Windows WA + tab close still unimplemented.
+- Ambiguous pronoun drafts (`tell them…` without a verified chat) still route to WA reply; insert must keep revalidating the open header.
+
+### 2026-11-15: Remaining upgrade verify (switch/interpret/prefs/YouTube/holdout)
+- **Preserved:** Me 2 live summarize/reply/refine/cancel workflow from prior session; composer restored to `Thanks, will check tomorrow.`
+- **Switch during generation (panel):** Started **More formal** draft for Me 2, switched WhatsApp to **Me** while drafting. Insert refused: “You switched chats while I drafted… WhatsApp is on Me.” Me’s composer unchanged. AX expectHeader guard also returns `switched` for wrong chat.
+- **Async interpreter:** Typed path already wired (`interpretUnfamiliar` → waiters → `runActionPlan` + capability gate). **Gap filled:** voice auto now uses the same deterministic/interpret path for `unknown`. Added `interpret.test.ts` (schema reject of non-allowlisted kinds).
+- **Preferences UI (panel):** Structured prefs editable + saved (`Keep WhatsApp drafts short.` persisted). Correction example add/delete verified (`boot up that video site` → deleted). Alias list UI present (none saved on this Mac). Free-text prefs still available.
+- **YouTube (panel):** `close YouTube` → “I found 2 tabs for youtube.com. Which one?” with Chrome tab choices. `close all YouTube tabs` closed all YT; example.com remained (2).
+- **Eval (deterministic, reported separately):**
+  - Development: **10/10**
+  - Familiar holdout: **4/5**
+  - Held-out unfamiliar: **3/10** (7 need AI interpret; not claimed as accuracy)
+- **Checks:** typecheck pass, **188** tests pass, build pass. Author PRANAV SAIRAM only; no AI trailers; no push.
+- **Still limited:** Windows WA + tab close; paid live-model scoring of unfamiliar interpret; alias delete not exercised live (no aliases saved).
+
+### 2026-11-14: Panel UI live verify (after Screen Recording for Cursor Computer Use)
+- **Permission note:** Toggle must be on for **Cursor Computer Use** (`~/.cursor/computer-use-sidecar/Cursor Computer Use.app`), not only Cursor. Allow the macOS “bypass private window picker” prompt as well.
+- **Panel drive on Me 2 (nothing sent):**
+  - Opened Me 2 via panel chooser → “Opened Me 2… message box is ready.”
+  - **Summarize:** summary appeared in MIKO (“They shared an L&T recruitment platform link, followed by an unfinished story…”, Answered in 8.2 s). WhatsApp composer unchanged (`Thanks — I'll check tomorrow.`).
+  - **Reply saying thanks…:** draft `Thanks, I'll check tomorrow.` → Replace insert → verified in composer, unsent (“Draft inserted… Nothing was sent.”).
+  - **Shorter:** panel Shorter → refined `Thanks, will check tomorrow.` → Replace insert verified.
+  - **Cancel:** during “Drafting…” after `make it shorter`, typed `leave it` → “Okay. Cancelled.” Composer stayed at the prior inserted shorter draft (no late overwrite).
+- Switch-chat wrong-insert guard remains from earlier AX verify (`switched` when expectHeader≠open chat).
+
+### 2026-11-14: Finish upgrade — interpret async, prefs UI, live WA/browser, holdout-unfamiliar
+- **Interpreter → execution:** Unknown wording runs `tryDeterministicPlan`, else schema-validated `interpretUnfamiliar` (bridge waiter map + `interpretToken`). Valid plans go through `runActionPlan`, which gates each step on `capability()` / `availableKinds` before open/draft/summarize/close/etc. Cancel bumps interpret + WA tokens, resolves waiters with null, cancels bridge/WhatsApp/paste. Target revalidated via peek before draft/insert.
+- **Routing fix:** With a verified WhatsApp chat, `reply saying …` is `whatsapp-reply` (was stolen by Mail).
+- **Preferences UI:** Preferences view edits structured prefs (browser/tone/language/notes), lists/deletes WhatsApp aliases, and view/add/delete approved correction examples (local only; not training).
+- **Eval (deterministic, separate reports):**
+  - Development set: **10/10**
+  - Familiar holdout (in `dataset.json`): **4/5**
+  - Held-out unfamiliar (`holdout-unfamiliar.json`): **3/10** deterministic (`scratch that`, `say thanks…` with waChat, ordinary question). **7/10** miss without AI interpret (expected; not claimed as accuracy).
+- **Live WhatsApp (AX helper, Me 2; no messages sent):** open + Milo context; summarize prompt/composer-unchanged; reply insert; refine insert; switch guard; cancel kill. Panel UI complete verify in session entry above.
+- **Live browser close (JXA host-match = `closeWebsiteTabs` logic):** ≥2 YouTube → choices condition; close-all cleared YT; example.com stayed. Chrome not quit.
+- **Still limited:** Windows WA + tab close; live model interpret on unfamiliar wording not scored (paid).
+- **Checks:** typecheck pass, **183** tests pass, build pass. Author PRANAV SAIRAM only; no AI trailers; no push.
+
+### 2026-11-14: Context-aware assistant upgrade (stages 1–5)
+- **Goal:** Reliable routing + working context + capabilities so summarize/reply/open/close don’t confuse assistant history with the open app.
+- **Stage 1 — summarize/reply separation:** `whatsapp-summarize` peeks the verified chat (incoming by default), runs a **fresh** bridge summarize prompt, shows the result in MIKO, and checks the composer was not changed. Bare `summarize` with `waChat` no longer resumes the Chennai/assistant thread. Selection summarize only when the owner refers to the selection (or there is no WA target).
+- **Stage 2 — actions / capabilities / context / tasks:** `src/shared/actions.ts`, `capabilities.ts`, `context.ts`, `task.ts`. Explicit phases + task tokens; `leave it` cancels pending URL/draft/WA/bridge/paste work.
+- **Stage 3 — interpretation:** Deterministic compound plans (`tryDeterministicPlan`) for open+tell; schema-validated `interpretPrompt`/`parseInterpretResult` for future model mapping (no shell/IPC/code). Unknown free text tries deterministic plans before the free-text chooser.
+- **Stage 4 — preferences / corrections:** `structuredPreferences` + `correctionExamples` in `miko-settings.json` (local; not model weights). IPC: prefsStructured*, examples*. Retrieval helper `retrieveExamples` (bounded).
+- **Stage 5 — evaluation:** `src/shared/eval/dataset.json` (dev + holdout), deterministic `eval.test.ts` (no paid calls). `npm run eval:live` documents live-model cost and a future fine-tuning path without starting training.
+- **Browser close:** `closeTab` JXA + `closeWebsiteTabs` (host-boundary match). Live: closed 2 YouTube tabs in Chrome without quitting Chrome.
+- **Follow-up (same day):** async interpret waiters + Preferences UI + holdout-unfamiliar + further live AX/JXA checks — see session entry above.
+- **Checks (this stage):** typecheck, **180** tests, build pass. Authorship: PRANAV SAIRAM only; no AI trailers; no push.
+
+### 2026-11-14: Command routing (YouTube / in Chrome / WhatsApp open+type / formal type)
+- **Screenshot failures:** `ok open youtube` went to the assistant (“I can’t open it…”) because conversational `ok` was not stripped and sites were not a local action; follow-up `in chrome` had no pending URL state; `type tht … in a formal way` after opening Me hit the free-text “Where should it go?” chooser because `type …` was not a WhatsApp reply intent even with messaging set; open+type was never split so the message could not wait on chat verification.
+- **Root cause:** Router treated sites as catalog misses / assistant follow-ups; no pending browser or held WhatsApp-draft workflow; no `type`/`tell them` path on a verified chat; cancel phrases like `leave it` were not local cancels.
+- **Fixes:**
+  - `commandLead` strips ok/please/can-you for matching only (original text preserved for questions).
+  - `sites.ts` + `open-url` IPC: YouTube → `https://www.youtube.com/`; optional Chrome via `open -a`; pending URL so `in Chrome` completes the last site.
+  - `open Me in WhatsApp and type …` → navigate with `pendingDraft`; resume after verified open (or keep holding through a chooser pick).
+  - After a verified chat, `waChat` + messaging keep the reply target across MIKO focus; `type` / `tell them` / formal-way polish reuse draft+insert; chat switch updates or clears the target; “Where should it go?” only for generic unknowns.
+  - `leave it` / `never mind` / `cancel that` → `cancel-workflow` (clears pending URL/draft, cancels WA generation/paste).
+- **Live on this Mac:** `open`/`open -a "Google Chrome"` YouTube OK. Me was already front; search `Me` returned a chooser (Me / Me 2 / …) — pick exact Me opened header `Me`. Inserted `I will be travelling to Chennai tomorrow morning.` into Me’s composer (`verified=true`, unsent); `ask` then reported `has-text` with that exact text still present. Full UI typing through the panel was not driven here (Computer Use needs Screen Recording); routing phrases are covered by unit tests. MIKO restarted on `npm run dev` with the new main/preload handlers.
+- Typecheck, **169** tests, and build pass.
+
+### 2026-11-14: WhatsApp reply workflow debug
+- **What the screenshot showed:** WhatsApp on self-chat **Me (You)** with older history visible. AX header is `Me`; conversation table is `Messages in chat with You`.
+- **Root causes:**
+  1. `Draft: …` was routed as an ordinary assistant **question**, so nothing was inserted into WhatsApp.
+  2. `recipientMatchesOpenChat` used substring `includes`, so e.g. **Mum** could match **Sandy Mum**.
+  3. `clearSearch` always opened **File → Search** even when the field was empty, leaving search/filter chrome active after contact opens.
+  4. Context capture treated photos/contacts as messages and did not label older history.
+- **Fixes:** literal `Draft:` / `reply here` intents; exact recipient match; clearSearch skips File→Search when empty and Escapes after a real clear; peek/insert diag (roles/state only, no bodies); skip media/contact bubbles; `atLatest` + Use visible / Go to latest; recheck destination before context and insert; report inserted only when `verified`.
+- **Live on this Mac:** reopened Me → peek `atLatest=false`, 1 text bubble (media/contacts skipped) → inserted `The MIKO project is nearly complete.` verified in composer only → removed that exact draft → `has-text` / wrong-header `switched` checked. “Tell them…” still needs the owner to pick a contact in the UI (assistant wording not re-run here). Windows still unsupported.
+- Typecheck, 159 tests, and build pass.
+
+### 2026-11-14: WhatsApp reply drafting + composer insert
+- **Intent** (`whatsapp-reply.ts`, `commands.ts`): tell/reply/write-to-this and refine (“make that shorter”) route to a dedicated WhatsApp reply workflow before ordinary assistant answers when WhatsApp is the target or a draft is active. `Draft: …` inserts that exact text into the open chat (no model).
+- **Capture:** `whatsapp-peek` reads `NavigationBar_HeaderViewButton` and text `WAMessageBubbleTableViewCell` rows inside `ChatMessagesTableView` only. Panel shows “Replying to \<chat name\>”. Named recipients that don’t match the open chat reuse contact open + header verify. First use of visible context explains that the text goes to MIKO’s model (`whatsappContextNoticeSeen`).
+- **Draft:** one-off `bridgeSend` with `whatsAppDraftPrompt` — preserve meaning, no invented commitments. Context is quoted data only.
+- **Insert:** `whatsapp-insert` rechecks the header, requires focus on `ChatBar_ComposerTextView`, offers Replace/Append/Cancel if the composer has text, verifies AXValue, never sends. Chat switch mid-flight holds the draft and asks. Cancel / new request invalidates pending insert (`waReplyToken` / helper generation). Refine replaces the inserted text only when it still matches; manual edits ask first.
+- **Windows:** unsupported.
+
+### 2026-11-14: WhatsApp chooser disambiguation
+- Multiple WhatsApp matches open a panel chooser headed **“Which chat did you mean?”** (`TextPanel` `WhatsAppChooser`): numbered clickable rows, exact names first, last-message preview as a secondary line. Contact/group type is omitted unless WhatsApp exposes it clearly (it does not today).
+- Keyboard ↑↓ + Enter, Escape/Cancel, and Refine search (puts the original query back in the draft). Voice/typed “the second one”, “2”, “number 3”, “last” resolve against the active chooser via `parseChooserIndex`.
+- Result identity is name + last-message snippet (`matchId`), not row position. On pick, MIKO refocuses WhatsApp, re-searches, and opens only when that identity is still unique. If the list changed, the chooser refreshes. If several rows look the same, MIKO asks you to pick in WhatsApp.
+- A new contact search cancels the older chooser and ignores late results (`whatsAppToken` / main `generation`). The panel staying focused during the chooser is intentional; automation only runs while WhatsApp is frontmost.
+- **Live:** “open Mum in WhatsApp” returned 11 results with Mum first; opening that exact row verified header “Mum”, cleared search, and focused the composer. Numbered-choice and cancel paths are covered by unit tests; a fresh mic recording was not made.
+- Typecheck, 155 tests, and build pass.
+
+### 2026-11-14: WhatsApp contact navigation
+- **Routing** (`src/shared/commands.ts`), before saved chats and app lookup: "open Mum in WhatsApp", "open WhatsApp chat with Mum", and "find Mukundan on WhatsApp" are a WhatsApp contact. "open WhatsApp" still launches the app. "open my FreshNet chat" still opens that saved ChatGPT chat.
+- A bare "open Muku chat" opens an exact saved chat when one exists. Otherwise it uses WhatsApp only after you have chosen WhatsApp for a bare chat. If neither applies, MIKO asks "WhatsApp or a saved ChatGPT chat?"
+- **macOS search** (`resources/ax-mac.swift`, `src/main/whatsapp.ts`): focus WhatsApp, type into `TokenizedSearchBar_TextView` only while that field is focused, then use File → Search so the filtered rows (`ChatListSearchView_ChatResult`) appear. The ordinary chat list stays in the tree and is not treated as results. A unique exact row is opened and the header button `NavigationBar_HeaderViewButton` has to match before MIKO says it opened. Several matches open the chooser above. No readable results leaves the name in the search field and says to pick there. Focus leaving WhatsApp during automation stops further input. The message box is never written; search is cleared with select-all and delete only while the search field is focused. The composer is then focused.
+- **Aliases:** after you pick a result whose name differs from what you said, MIKO can remember it for WhatsApp. "show WhatsApp aliases" and "forget WhatsApp alias …" manage them. Using an alias searches the saved name and opens only if that name is still in the results.
+- **Windows:** contact search returns "isn't available yet" and does not type.
+- **Live on this Mac:** a name that isn't a contact reported no match. "Mum" returned several results, including one exact Mum. Choosing that exact row opened the chat, the header read "Mum", search was cleared, and the composer took focus.
+- **Still limited:** Windows is untested. If WhatsApp changes those Accessibility identifiers, search falls back to leaving the query in the field. Accessibility permission is required.
 
 ### 2026-11-14 (late): miko-keys permissions fixed (owner confirmed)
 - **Debugging:** I ran the helper on its own via `open --stdout`. It printed `{"error":"permission"}` twice: Input Monitoring (`IOHIDManagerOpen`) and Accessibility (event tap).

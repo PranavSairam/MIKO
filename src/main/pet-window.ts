@@ -390,7 +390,20 @@ function relayout(pickSide: boolean): PanelLayout {
   return { panelOpen, panelSide, mode: panelMode, panelWidth: size.width, panelHeight: size.height }
 }
 
+let placementListener: (() => void) | null = null
+
+/** Called whenever MIKO moves or shows (the bird's tree follows it to its display). */
+export function setPlacementListener(listener: (() => void) | null): void {
+  placementListener = listener
+}
+
+/** Keep the pet above its companion windows (the bird's tree). */
+export function raisePetWindow(): void {
+  if (petWindow && !petWindow.isDestroyed() && petWindow.isVisible()) petWindow.moveTop()
+}
+
 function emitPlacement(): void {
+  placementListener?.()
   if (!motionMode || !petWindow || petWindow.isDestroyed() || !pageReady || !petWindow.isVisible()) return
   const work = workAreaFor(petOrigin)
   const span = Math.max(0, work.width - PET_WINDOW.width - EDGE_MARGIN * 2)

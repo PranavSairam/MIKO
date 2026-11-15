@@ -10,6 +10,10 @@ import {
   type BridgeUpdate,
   type ImportanceRules,
   type MailCorrectRequest,
+  type PetCommand,
+  type PetFlightInfo,
+  type PetId,
+  type PetListing,
   type MailCorrections,
   type MailSetupLink,
   type MailListRequest,
@@ -17,6 +21,8 @@ import {
   type MailReadResult,
   type MailStatusInfo,
   type OpenResult,
+  type OpenUrlResult,
+  type CloseWebsiteResult,
   type SavedChat,
   type ChatEditResult,
   type KeyEvent,
@@ -34,7 +40,15 @@ import {
   type PresenceEvent,
   type ShiftDelta,
   type SpeechEvent,
-  type TravelDelta
+  type TravelDelta,
+  type WhatsAppAlias,
+  type WhatsAppInsertResult,
+  type WhatsAppOpenResult,
+  type WhatsAppPeekResult,
+  type WhatsAppAttachmentsListResult,
+  type WhatsAppAttachmentSaveResult,
+  type ClipboardFileResult,
+  type PasteFileWhatsAppResult
 } from '../shared/api'
 import { parseActionId } from '../shared/commands'
 
@@ -44,6 +58,26 @@ const api: MikoApi = {
   },
   panelResize: (width: number, height: number, done: boolean): Promise<PanelLayout> =>
     ipcRenderer.invoke(IPC.panelResize, Number(width), Number(height), done === true) as Promise<PanelLayout>,
+  petList: async (): Promise<PetListing> => (await ipcRenderer.invoke(IPC.petList)) as PetListing,
+  petModel: async (id: PetId): Promise<ArrayBuffer | null> => {
+    const bytes: unknown = await ipcRenderer.invoke(IPC.petModel, String(id))
+    if (!(bytes instanceof Uint8Array)) return null
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  },
+  petSave: async (id: PetId): Promise<boolean> => (await ipcRenderer.invoke(IPC.petSave, String(id))) === true,
+  petActive: (id: PetId, unitPx: number): void => {
+    ipcRenderer.send(IPC.petActive, String(id), Number(unitPx))
+  },
+  petFlight: async (): Promise<PetFlightInfo> => (await ipcRenderer.invoke(IPC.petFlight)) as PetFlightInfo,
+  onPetCommand: (listener: (command: PetCommand) => void): (() => void) => {
+    const wrapped = (_event: unknown, payload: unknown): void => {
+      const p = payload as { kind?: unknown; pet?: unknown } | null
+      if (p?.kind === 'choose') listener({ kind: 'choose' })
+      else if (p?.kind === 'switch' && typeof p.pet === 'string') listener({ kind: 'switch', pet: p.pet as PetId })
+    }
+    ipcRenderer.on(IPC.petCommand, wrapped)
+    return () => ipcRenderer.removeListener(IPC.petCommand, wrapped)
+  },
   panelPreset: (preset: 'small' | 'medium' | 'large' | 'reset'): Promise<PanelLayout> =>
     ipcRenderer.invoke(IPC.panelPreset, String(preset)) as Promise<PanelLayout>,
   setPanelOpen: (open: boolean, mode?: 'chat' | 'mail'): Promise<PanelLayout> => {
@@ -89,6 +123,114 @@ const api: MikoApi = {
     parseEdit(await ipcRenderer.invoke(IPC.chatsRename, { from: String(from), to: String(to) })),
   removeChat: async (name: string): Promise<ChatEditResult> => parseEdit(await ipcRenderer.invoke(IPC.chatsRemove, String(name))),
   openChat: async (name: string): Promise<OpenResult> => parseOpen(await ipcRenderer.invoke(IPC.chatsOpen, String(name))),
+  openUrl: async (url: string, name?: string, browser?: string | null): Promise<OpenUrlResult> => {
+    const payload = await ipcRenderer.invoke(
+      IPC.openUrl,
+      String(url).slice(0, 2000),
+      typeof name === 'string' ? name.slice(0, 80) : '',
+      typeof browser === 'string' ? browser.slice(0, 40) : null
+    )
+    return parseOpenUrl(payload)
+  },
+  chromeProfilesList: async () => {
+    const payload = await ipcRenderer.invoke(IPC.chromeProfilesList)
+    return parseChromeProfilesList(payload)
+  },
+  chromeProfilesLaunch: async (request) => {
+    const directoryId = typeof request?.directoryId === 'string' ? request.directoryId.trim().slice(0, 40) : ''
+    const payload = await ipcRenderer.invoke(IPC.chromeProfilesLaunch, {
+      directoryId,
+      url: typeof request?.url === 'string' ? request.url.slice(0, 2000) : null,
+      displayName: typeof request?.displayName === 'string' ? request.displayName.slice(0, 80) : null
+    })
+    return parseChromeLaunch(payload)
+  },
+  chromeProfilesFallback: async (kind, url) => {
+    const mode = kind === 'profile-picker' || kind === 'normal' ? kind : 'normal'
+    const payload = await ipcRenderer.invoke(
+      IPC.chromeProfilesFallback,
+      mode,
+      typeof url === 'string' ? url.slice(0, 2000) : null
+    )
+    return parseChromeFallback(payload)
+  },
+  closeWebsite: async (request): Promise<CloseWebsiteResult> => {
+    const payload = await ipcRenderer.invoke(IPC.closeWebsite, {
+      host: typeof request?.host === 'string' ? request.host.slice(0, 200) : undefined,
+      url: typeof request?.url === 'string' ? request.url.slice(0, 2000) : undefined,
+      all: request?.all === true,
+      thisTab: request?.thisTab === true,
+      pick: request?.pick
+    })
+    return parseCloseWebsite(payload)
+  },
+  lastExternalApp: async () => {
+    const v = await ipcRenderer.invoke(IPC.lastExternalApp)
+    if (!v || typeof v !== 'object') return null
+    const o = v as { name?: unknown; bundleId?: unknown; pid?: unknown }
+    if (typeof o.name !== 'string' || typeof o.pid !== 'number') return null
+    return { name: o.name.slice(0, 80), bundleId: typeof o.bundleId === 'string' ? o.bundleId.slice(0, 200) : '', pid: o.pid }
+  },
+  prefsStructuredGet: async () => (await ipcRenderer.invoke(IPC.prefsStructuredGet)) as Awaited<ReturnType<MikoApi['prefsStructuredGet']>>,
+  prefsStructuredSet: async (prefs) => (await ipcRenderer.invoke(IPC.prefsStructuredSet, prefs)) === true,
+  examplesList: async () => ((await ipcRenderer.invoke(IPC.examplesList)) as Awaited<ReturnType<MikoApi['examplesList']>>) ?? [],
+  examplesAdd: async (example) => ((await ipcRenderer.invoke(IPC.examplesAdd, example)) as Awaited<ReturnType<MikoApi['examplesList']>>) ?? [],
+  examplesRemove: async (id) => ((await ipcRenderer.invoke(IPC.examplesRemove, String(id))) as Awaited<ReturnType<MikoApi['examplesList']>>) ?? [],
+  whatsappOpen: async (query: string, pickId?: string, taskId?: string): Promise<WhatsAppOpenResult> =>
+    parseWhatsApp(
+      await ipcRenderer.invoke(
+        IPC.whatsappOpen,
+        String(query).slice(0, 80),
+        typeof pickId === 'string' ? pickId.slice(0, 400) : '',
+        typeof taskId === 'string' ? taskId.slice(0, 80) : ''
+      )
+    ),
+  whatsappCancel: (): void => {
+    ipcRenderer.send(IPC.whatsappCancel)
+  },
+  whatsappAliases: async (): Promise<WhatsAppAlias[]> => parseAliases(await ipcRenderer.invoke(IPC.whatsappAliases)),
+  whatsappRemember: async (alias: string, name: string) =>
+    parseAliasEdit(await ipcRenderer.invoke(IPC.whatsappRemember, String(alias).slice(0, 80), String(name).slice(0, 80))),
+  whatsappForget: async (alias: string) => parseAliasEdit(await ipcRenderer.invoke(IPC.whatsappForget, String(alias).slice(0, 80))),
+  whatsappPeek: async (messages?: boolean, latest?: boolean): Promise<WhatsAppPeekResult> =>
+    parseWhatsAppPeek(await ipcRenderer.invoke(IPC.whatsappPeek, messages === true, latest === true)),
+  whatsappInsert: async (request: { expectHeader: string; text: string; mode: 'replace' | 'append' | 'ask' }): Promise<WhatsAppInsertResult> =>
+    parseWhatsAppInsert(
+      await ipcRenderer.invoke(IPC.whatsappInsert, {
+        expectHeader: String(request.expectHeader ?? '').slice(0, 80),
+        text: String(request.text ?? '').slice(0, 4000),
+        mode: request.mode === 'append' || request.mode === 'ask' ? request.mode : 'replace'
+      })
+    ),
+  whatsappMarkContextNotice: async (): Promise<boolean> => (await ipcRenderer.invoke(IPC.whatsappContextNotice)) === true,
+  whatsappAttachmentsList: async (): Promise<WhatsAppAttachmentsListResult> =>
+    (await ipcRenderer.invoke(IPC.whatsappAttachmentsList)) as WhatsAppAttachmentsListResult,
+  whatsappAttachmentSave: async (request: {
+    expectHeader: string
+    filename: string
+    id?: string
+    acceptCandidatePath?: string
+  }): Promise<WhatsAppAttachmentSaveResult> =>
+    (await ipcRenderer.invoke(IPC.whatsappAttachmentSave, {
+      expectHeader: String(request.expectHeader ?? '').slice(0, 80),
+      filename: String(request.filename ?? '').slice(0, 180),
+      id: typeof request.id === 'string' ? request.id.slice(0, 64) : undefined,
+      acceptCandidatePath:
+        typeof request.acceptCandidatePath === 'string' ? request.acceptCandidatePath.slice(0, 1024) : undefined
+    })) as WhatsAppAttachmentSaveResult,
+  clipboardFile: async (path: string): Promise<ClipboardFileResult> =>
+    (await ipcRenderer.invoke(IPC.clipboardFile, String(path).slice(0, 1024))) as ClipboardFileResult,
+  pasteFileWhatsApp: async (request: { expectHeader: string; path: string }): Promise<PasteFileWhatsAppResult> =>
+    (await ipcRenderer.invoke(IPC.pasteFileWhatsApp, {
+      expectHeader: String(request.expectHeader ?? '').slice(0, 80),
+      path: String(request.path ?? '').slice(0, 1024)
+    })) as PasteFileWhatsAppResult,
+  revealFile: async (path: string): Promise<boolean> =>
+    (await ipcRenderer.invoke(IPC.revealFile, String(path).slice(0, 1024))) === true,
+  openLocalFile: async (path: string): Promise<string> => {
+    const reason = await ipcRenderer.invoke(IPC.openLocalFile, String(path).slice(0, 1024))
+    return typeof reason === 'string' ? reason : ''
+  },
   copyText: async (text: string): Promise<boolean> => {
     if (typeof text !== 'string' || text.length === 0 || text.length > 4000) return false
     const payload: unknown = await ipcRenderer.invoke(IPC.copyText, text)
@@ -361,6 +503,106 @@ function parseOpen(value: unknown): OpenResult {
   return { ok: v.ok === true, target, appName: typeof v.appName === 'string' ? v.appName.slice(0, 80) : '' }
 }
 
+function parseOpenUrl(value: unknown): OpenUrlResult {
+  const v = (value ?? {}) as { ok?: unknown; url?: unknown; name?: unknown; browser?: unknown; reason?: unknown }
+  return {
+    ok: v.ok === true,
+    url: typeof v.url === 'string' ? v.url.slice(0, 2000) : '',
+    name: typeof v.name === 'string' ? v.name.slice(0, 80) : '',
+    browser: typeof v.browser === 'string' ? v.browser.slice(0, 80) : '',
+    reason: typeof v.reason === 'string' ? v.reason.slice(0, 200) : ''
+  }
+}
+
+function parseChromeProfilesList(value: unknown) {
+  const v = (value ?? {}) as {
+    status?: unknown
+    profiles?: unknown
+    reason?: unknown
+    fallbacks?: unknown
+    note?: unknown
+  }
+  if (v.status === 'ok' && Array.isArray(v.profiles)) {
+    return v.profiles
+      .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+      .map((p) => ({
+        directoryId: typeof p.directoryId === 'string' ? p.directoryId.slice(0, 40) : '',
+        displayName: typeof p.displayName === 'string' ? p.displayName.slice(0, 80) : '',
+        secondaryLabel: typeof p.secondaryLabel === 'string' ? p.secondaryLabel.slice(0, 40) : null,
+        initials: typeof p.initials === 'string' ? p.initials.slice(0, 4) : '?',
+        avatarDataUrl:
+          typeof p.avatarDataUrl === 'string' && p.avatarDataUrl.startsWith('data:image/')
+            ? p.avatarDataUrl.slice(0, 600_000)
+            : null,
+        accent: typeof p.accent === 'string' ? p.accent.slice(0, 40) : null,
+        isSavedDefault: p.isSavedDefault === true
+      }))
+      .filter((p) => p.directoryId && p.displayName)
+  }
+  const fallbacks = Array.isArray(v.fallbacks)
+    ? v.fallbacks
+        .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
+        .map((f) => ({
+          id: typeof f.id === 'string' ? f.id.slice(0, 40) : '',
+          label: typeof f.label === 'string' ? f.label.slice(0, 80) : ''
+        }))
+        .filter((f) => f.id && f.label)
+    : []
+  return {
+    status: typeof v.status === 'string' ? v.status : 'missing',
+    reason: typeof v.reason === 'string' ? v.reason.slice(0, 240) : 'Chrome profiles unavailable.',
+    fallbacks
+  }
+}
+
+function parseChromeLaunch(value: unknown) {
+  const v = (value ?? {}) as Record<string, unknown>
+  return {
+    ok: v.ok === true,
+    directoryId: typeof v.directoryId === 'string' ? v.directoryId.slice(0, 40) : '',
+    displayName: typeof v.displayName === 'string' ? v.displayName.slice(0, 80) : '',
+    url: typeof v.url === 'string' ? v.url.slice(0, 2000) : '',
+    reason: typeof v.reason === 'string' ? v.reason.slice(0, 240) : '',
+    verified: false as const,
+    verificationNote: typeof v.verificationNote === 'string' ? v.verificationNote.slice(0, 320) : ''
+  }
+}
+
+function parseChromeFallback(value: unknown) {
+  const v = (value ?? {}) as Record<string, unknown>
+  return {
+    ok: v.ok === true,
+    reason: typeof v.reason === 'string' ? v.reason.slice(0, 240) : '',
+    verified: false as const,
+    verificationNote: typeof v.verificationNote === 'string' ? v.verificationNote.slice(0, 320) : ''
+  }
+}
+
+function parseCloseWebsite(value: unknown): CloseWebsiteResult {
+  const v = (value ?? {}) as {
+    status?: unknown
+    closed?: unknown
+    tabs?: unknown
+    reason?: unknown
+  }
+  const tabs = Array.isArray(v.tabs)
+    ? v.tabs
+        .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+        .map((t) => ({
+          browser: t.browser === 'safari' ? 'safari' : 'chrome',
+          window: Number(t.window) || 0,
+          tab: Number(t.tab) || 0,
+          title: typeof t.title === 'string' ? t.title.slice(0, 120) : '',
+          url: typeof t.url === 'string' ? t.url.slice(0, 2000) : ''
+        }))
+    : []
+  if (v.status === 'closed') return { status: 'closed', closed: Number(v.closed) || 0, tabs }
+  if (v.status === 'choices') return { status: 'choices', tabs, reason: typeof v.reason === 'string' ? v.reason : 'Which tab?' }
+  if (v.status === 'unsupported') return { status: 'unsupported', reason: typeof v.reason === 'string' ? v.reason : 'Unsupported.' }
+  if (v.status === 'none') return { status: 'none', reason: typeof v.reason === 'string' ? v.reason : 'No matching tabs.' }
+  return { status: 'failed', reason: typeof v.reason === 'string' ? v.reason : 'I couldn’t close that.' }
+}
+
 function parseChats(value: unknown): SavedChat[] {
   if (!Array.isArray(value)) return []
   return value
@@ -442,6 +684,142 @@ function parseFollow(value: unknown): FollowEvent | null {
   if (kind !== 'approach' || typeof x !== 'number' || typeof y !== 'number') return null
   if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 100000 || Math.abs(y) > 100000) return null
   return { kind, x, y }
+}
+
+const WHATSAPP_STATUS = new Set([
+  'opened',
+  'assisted',
+  'none',
+  'choices',
+  'lost-focus',
+  'permission',
+  'failed',
+  'unsupported',
+  'cancelled',
+  'unverified'
+])
+
+function parseWhatsAppMatches(value: unknown): WhatsAppOpenResult['matches'] {
+  if (!Array.isArray(value)) return []
+  const out: WhatsAppOpenResult['matches'] = []
+  for (const row of value.slice(0, 12)) {
+    if (!row || typeof row !== 'object') continue
+    const { id, name, snippet, exact, kind } = row as Partial<WhatsAppOpenResult['matches'][number]>
+    if (typeof id !== 'string' || typeof name !== 'string' || !name.trim()) continue
+    const match: WhatsAppOpenResult['matches'][number] = {
+      id: id.slice(0, 400),
+      name: name.slice(0, 80),
+      snippet: typeof snippet === 'string' ? snippet.slice(0, 120) : '',
+      exact: exact === true
+    }
+    if (kind === 'contact' || kind === 'group') match.kind = kind
+    out.push(match)
+  }
+  return out
+}
+
+function parseWhatsApp(value: unknown): WhatsAppOpenResult {
+  const fallback: WhatsAppOpenResult = {
+    status: 'failed',
+    query: '',
+    names: [],
+    matches: [],
+    header: '',
+    reason: 'WhatsApp didn’t answer.',
+    composerReady: false
+  }
+  if (!value || typeof value !== 'object') return fallback
+  const row = value as Partial<WhatsAppOpenResult>
+  if (typeof row.status !== 'string' || !WHATSAPP_STATUS.has(row.status)) return fallback
+  const matches = parseWhatsAppMatches(row.matches)
+  const names = matches.length
+    ? matches.map((m) => m.name)
+    : Array.isArray(row.names)
+      ? row.names.filter((name): name is string => typeof name === 'string').slice(0, 12).map((name) => name.slice(0, 80))
+      : []
+  return {
+    status: row.status as WhatsAppOpenResult['status'],
+    query: typeof row.query === 'string' ? row.query.slice(0, 80) : '',
+    names,
+    matches,
+    header: typeof row.header === 'string' ? row.header.slice(0, 80) : '',
+    reason: typeof row.reason === 'string' ? row.reason.slice(0, 400) : '',
+    composerReady: row.composerReady === true
+  }
+}
+
+function parseAliases(value: unknown): WhatsAppAlias[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((row): row is WhatsAppAlias => Boolean(row) && typeof row === 'object' && typeof (row as WhatsAppAlias).alias === 'string' && typeof (row as WhatsAppAlias).name === 'string')
+    .slice(0, 40)
+    .map((row) => ({ alias: row.alias.slice(0, 80), name: row.name.slice(0, 80) }))
+}
+
+function parseWhatsAppPeek(value: unknown): WhatsAppPeekResult {
+  const fallback: WhatsAppPeekResult = {
+    status: 'failed',
+    header: '',
+    messages: [],
+    composerText: '',
+    composerReady: false,
+    reason: 'WhatsApp didn’t answer.',
+    contextNotice: false
+  }
+  if (!value || typeof value !== 'object') return fallback
+  const row = value as Partial<WhatsAppPeekResult>
+  const known = new Set(['peeked', 'lost-focus', 'permission', 'failed', 'cancelled', 'unsupported'])
+  if (typeof row.status !== 'string' || !known.has(row.status)) return fallback
+  const messages = Array.isArray(row.messages)
+    ? row.messages
+        .filter((m): m is WhatsAppPeekResult['messages'][number] => Boolean(m) && typeof m === 'object' && typeof (m as { text?: unknown }).text === 'string')
+        .slice(0, 12)
+        .map((m) => ({
+          sender: typeof m.sender === 'string' ? m.sender.slice(0, 80) : 'Contact',
+          text: m.text.slice(0, 500),
+          mine: m.mine === true,
+          raw: typeof m.raw === 'string' ? m.raw.slice(0, 600) : m.text.slice(0, 600)
+        }))
+    : []
+  return {
+    status: row.status as WhatsAppPeekResult['status'],
+    header: typeof row.header === 'string' ? row.header.slice(0, 80) : '',
+    messages,
+    composerText: typeof row.composerText === 'string' ? row.composerText.slice(0, 4000) : '',
+    composerReady: row.composerReady === true,
+    reason: typeof row.reason === 'string' ? row.reason.slice(0, 400) : '',
+    contextNotice: row.contextNotice === true,
+    atLatest: row.atLatest !== false,
+    diag: typeof row.diag === 'string' ? row.diag.slice(0, 240) : ''
+  }
+}
+
+function parseWhatsAppInsert(value: unknown): WhatsAppInsertResult {
+  const fallback: WhatsAppInsertResult = {
+    status: 'failed',
+    header: '',
+    composerText: '',
+    verified: false,
+    reason: 'WhatsApp didn’t answer.'
+  }
+  if (!value || typeof value !== 'object') return fallback
+  const row = value as Partial<WhatsAppInsertResult>
+  const known = new Set(['inserted', 'empty', 'has-text', 'switched', 'lost-focus', 'permission', 'failed', 'cancelled', 'unsupported'])
+  if (typeof row.status !== 'string' || !known.has(row.status)) return fallback
+  return {
+    status: row.status as WhatsAppInsertResult['status'],
+    header: typeof row.header === 'string' ? row.header.slice(0, 80) : '',
+    composerText: typeof row.composerText === 'string' ? row.composerText.slice(0, 4000) : '',
+    verified: row.verified === true,
+    reason: typeof row.reason === 'string' ? row.reason.slice(0, 400) : '',
+    diag: typeof row.diag === 'string' ? row.diag.slice(0, 240) : ''
+  }
+}
+
+function parseAliasEdit(value: unknown): { ok: boolean; reason: string; list: WhatsAppAlias[] } {
+  if (!value || typeof value !== 'object') return { ok: false, reason: 'Couldn’t save that.', list: [] }
+  const row = value as { ok?: unknown; reason?: unknown; list?: unknown }
+  return { ok: row.ok === true, reason: typeof row.reason === 'string' ? row.reason.slice(0, 200) : '', list: parseAliases(row.list) }
 }
 
 function parseLaunchResult(value: unknown): LaunchResult {

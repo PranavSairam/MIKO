@@ -7,6 +7,7 @@ import {
   planVoice,
   parseActionId,
   routeCommand,
+  routeDiagnostics,
   type CatalogApp
 } from './commands.ts'
 
@@ -208,7 +209,7 @@ describe('assistant routing', () => {
     assert.equal(routeCommand('Write a two-line poem about rain', 'typed', catalog).type, 'question')
     assert.equal(routeCommand('summarize the benefits of sleep', 'voice', catalog).type, 'question')
     assert.equal(routeCommand('move left', 'typed', catalog, [], { assistantActive: true }).type, 'move')
-    assert.equal(routeCommand('open chrome', 'typed', catalog, [], { assistantActive: true }).type, 'launch')
+    assert.equal(routeCommand('open chrome', 'typed', catalog, [], { assistantActive: true }).type, 'chrome-profiles')
     assert.deepEqual(routeCommand('check mail', 'typed', catalog, [], { assistantActive: true }), { type: 'mail', intent: { kind: 'recent' } })
   })
   it('treats other text as a follow-up while a conversation is active', () => {
@@ -279,6 +280,86 @@ describe('type into ChatGPT', () => {
   })
 })
 
+describe('WhatsApp contacts', () => {
+  const apps = [
+    ...catalog,
+    { id: 'whatsapp', name: 'WhatsApp', installed: true, familiar: true, aliases: ['whatsapp', 'whats app'] },
+    { id: 'calculator', name: 'Calculator', installed: true, familiar: true, aliases: ['calculator', 'calc'] }
+  ]
+  const chats = [
+    { name: 'FreshNet', url: 'https://chatgpt.com/c/6735a1b2-0c1d' },
+    { name: 'Major project', url: 'https://chatgpt.com/g/g-p-67a0b1c2d3e4-major/project' },
+    { name: 'Major exam prep', url: 'https://chatgpt.com/c/aaaaaaaa-bbbb' }
+  ]
+  it('sends an explicit WhatsApp person to WhatsApp and still launches the app', () => {
+    assert.deepEqual(routeCommand('open Mum in WhatsApp', 'typed', apps, chats), { type: 'whatsapp', query: 'Mum' })
+    assert.deepEqual(routeCommand('open WhatsApp chat with Mum', 'voice', apps, chats), { type: 'whatsapp', query: 'Mum' })
+    assert.deepEqual(routeCommand('find Mukundan on WhatsApp', 'voice', apps, chats), { type: 'whatsapp', query: 'Mukundan' })
+    assert.deepEqual(routeCommand('open WhatsApp', 'typed', apps, chats), { type: 'launch', appId: 'whatsapp', name: 'WhatsApp' })
+    assert.equal(planVoice(routeCommand('open Mum in WhatsApp', 'voice', apps, chats), true).kind, 'run')
+    assert.equal(routeCommand('How do I open Mum in WhatsApp?', 'typed', apps, chats).type, 'question')
+  })
+  it('routes open-and-search compounds through WhatsApp, not the app catalog', () => {
+    for (const source of ['typed', 'voice'] as const) {
+      const compound = routeCommand('Open WhatsApp and search for Mukundan.', source, apps, chats)
+      assert.equal(compound.type, 'whatsapp', source)
+      if (compound.type === 'whatsapp') assert.equal(compound.query, 'Mukundan')
+      const openOpen = routeCommand('Open WhatsApp and open Mukundan.', source, apps, chats)
+      assert.equal(openOpen.type, 'whatsapp', source)
+      if (openOpen.type === 'whatsapp') assert.equal(openOpen.query, 'Mukundan')
+      const searchIn = routeCommand('Search for Mukundan in WhatsApp.', source, apps, chats)
+      assert.equal(searchIn.type, 'whatsapp', source)
+      if (searchIn.type === 'whatsapp') assert.equal(searchIn.query, 'Mukundan')
+      const typo = routeCommand('Open Mukundan in Whatsaappp.', source, apps, chats)
+      assert.equal(typo.type, 'whatsapp', source)
+      if (typo.type === 'whatsapp') assert.equal(typo.query, 'Mukundan')
+      assert.equal(planVoice(compound, true).kind, 'run')
+    }
+    // Follow-up after WhatsApp is active — not mail-or-app.
+    const follow = routeCommand('search for Mukundan', 'typed', apps, chats, { messaging: 'whatsapp' })
+    assert.equal(follow.type, 'whatsapp')
+    if (follow.type === 'whatsapp') assert.equal(follow.query, 'Mukundan')
+    // Bare “open Gayu Sis” after Open WhatsApp → contact (catalog apps still win).
+    const gayu = routeCommand('Open Gayu Sis.', 'typed', apps, chats, { messaging: 'whatsapp' })
+    assert.equal(gayu.type, 'whatsapp')
+    if (gayu.type === 'whatsapp') assert.equal(gayu.query, 'Gayu Sis')
+    assert.equal(routeCommand('open calculator', 'typed', apps, chats, { messaging: 'whatsapp' }).type, 'launch')
+    assert.equal(routeCommand('open Chrome', 'typed', apps, chats, { messaging: 'whatsapp' }).type, 'chrome-profiles')
+    // Unknown product name with messaging → contact search (not a silent alias).
+    const photoWhileWa = routeCommand('open photoshop', 'typed', apps, chats, { messaging: 'whatsapp' })
+    assert.equal(photoWhileWa.type, 'whatsapp')
+    // Genuine missing app still reports correctly without messaging context.
+    const missing = routeCommand('open photoshop', 'typed', apps, chats)
+    assert.equal(missing.type, 'missing')
+    const routed = routeCommand('Open WhatsApp and search for Mukundan.', 'typed', apps, chats)
+    const diag = routeDiagnostics('Open WhatsApp and search for Mukundan.', routed)
+    assert.equal(diag.capability, 'open_whatsapp_chat')
+    assert.match(diag.action, /whatsapp:Mukundan/)
+    assert.doesNotMatch(diag.normalized, /I can.?t find/i)
+  })
+  it('keeps an exact saved chat, and asks when a bare chat could be either', () => {
+    assert.deepEqual(routeCommand('open my FreshNet chat', 'typed', apps, chats), {
+      type: 'open-chat',
+      name: 'FreshNet',
+      url: 'https://chatgpt.com/c/6735a1b2-0c1d'
+    })
+    assert.deepEqual(routeCommand('open FreshNet chat', 'typed', apps, chats), {
+      type: 'open-chat',
+      name: 'FreshNet',
+      url: 'https://chatgpt.com/c/6735a1b2-0c1d'
+    })
+    assert.deepEqual(routeCommand('open Muku chat', 'typed', apps, chats), { type: 'chat-or-whatsapp', name: 'Muku' })
+    assert.equal(planVoice(routeCommand('open Muku chat', 'voice', apps, chats), true).kind, 'review')
+    assert.deepEqual(routeCommand('open Muku chat', 'typed', apps, chats, { messaging: 'whatsapp' }), { type: 'whatsapp', query: 'Muku' })
+    assert.equal(routeCommand('open my major chat', 'typed', apps, chats).type, 'chat-choices')
+    assert.equal(routeCommand('open my biology chat', 'typed', apps, chats).type, 'missing')
+  })
+  it('forgets a WhatsApp alias by name', () => {
+    assert.deepEqual(routeCommand('forget WhatsApp alias Muku', 'typed', apps), { type: 'whatsapp-forget', alias: 'Muku' })
+    assert.deepEqual(routeCommand('show WhatsApp aliases', 'voice', apps), { type: 'whatsapp-aliases' })
+  })
+})
+
 describe('clear', () => {
   it('clears the panel on "clear" and similar', () => {
     for (const t of ['clear', 'Clear.', 'clear chat', 'clear all', 'clear the screen', 'clear everything'])
@@ -288,5 +369,259 @@ describe('clear', () => {
   it('does not swallow other uses of the word', () => {
     assert.notEqual(routeCommand('clear my calendar for friday', 'typed', catalog).type, 'clear')
     assert.equal(routeCommand('type clear in gpt', 'typed', catalog).type, 'type-in-gpt')
+  })
+})
+
+describe('screenshot command routing regressions', () => {
+  const apps = [...catalog, { id: 'whatsapp', name: 'WhatsApp', installed: true, familiar: true, aliases: ['whatsapp', 'whats app'] }]
+
+  it('opens YouTube locally even after ok/please and with an active assistant thread', () => {
+    const open = routeCommand('ok open youtube', 'typed', apps, [], { assistantActive: true })
+    assert.equal(open.type, 'open-url')
+    if (open.type === 'open-url') {
+      assert.equal(open.url, 'https://www.youtube.com/')
+      assert.equal(open.name, 'YouTube')
+      assert.equal(open.browser ?? null, null)
+    }
+    const chrome = routeCommand('open YouTube in Chrome', 'typed', apps)
+    assert.equal(chrome.type, 'open-url')
+    if (chrome.type === 'open-url') assert.equal(chrome.browser, 'chrome')
+  })
+
+  it('resolves a follow-up “in chrome” against the pending site', () => {
+    const follow = routeCommand('in chrome', 'typed', apps, [], {
+      pendingUrl: { url: 'https://www.youtube.com/', name: 'YouTube' }
+    })
+    assert.equal(follow.type, 'open-url')
+    if (follow.type === 'open-url') {
+      assert.equal(follow.url, 'https://www.youtube.com/')
+      assert.equal(follow.name, 'YouTube')
+      assert.equal(follow.browser, 'chrome')
+    }
+    const alone = routeCommand('in chrome', 'typed', apps)
+    assert.equal(alone.type, 'unknown')
+    if (alone.type === 'unknown') assert.match(alone.text, /Open what/i)
+  })
+
+  it('splits open+type so the message stays out of contact lookup', () => {
+    const open = routeCommand(
+      "open Me in WhatsApp and type hi Anna I'll be starting to Chennai tmrw",
+      'typed',
+      apps
+    )
+    assert.equal(open.type, 'whatsapp')
+    if (open.type === 'whatsapp') {
+      assert.equal(open.query, 'Me')
+      assert.equal(open.pendingDraft, "hi Anna I'll be starting to Chennai tmrw")
+    }
+  })
+
+  it('types into the verified WhatsApp chat after open, including formal polish', () => {
+    const typed = routeCommand('type tht ill be goin chennai tmrw mrng in a formal way', 'typed', apps, [], {
+      messaging: 'whatsapp',
+      waChat: 'Me'
+    })
+    assert.equal(typed.type, 'whatsapp-reply')
+    if (typed.type === 'whatsapp-reply') {
+      assert.equal(typed.intent.replyHere, true)
+      assert.equal(typed.intent.autoInsert, true)
+      assert.equal(typed.intent.literal, false)
+      assert.match(typed.intent.instruction, /formal/i)
+      assert.match(typed.intent.instruction, /tht ill be goin chennai tmrw mrng/i)
+      assert.doesNotMatch(typed.intent.instruction, /in a formal way$/i)
+    }
+    const noTarget = routeCommand('type tht ill be goin chennai tmrw mrng in a formal way', 'typed', apps)
+    assert.notEqual(noTarget.type, 'whatsapp-reply')
+  })
+
+  it('cancels pending workflow phrases locally', () => {
+    for (const phrase of [
+      'ok leave it',
+      'leave it',
+      'never mind',
+      'cancel that',
+      'scratch that',
+      'abort that',
+      'drop it',
+      'skip that'
+    ]) {
+      assert.equal(routeCommand(phrase, 'typed', apps, [], { assistantActive: true }).type, 'cancel-workflow', phrase)
+    }
+  })
+
+  it('routes Chrome profile open / choose / explicit profile commands', () => {
+    const open = routeCommand('open Chrome', 'typed', apps)
+    assert.equal(open.type, 'chrome-profiles')
+    if (open.type === 'chrome-profiles') {
+      assert.equal(open.forceChooser, false)
+      assert.equal(open.profileQuery ?? null, null)
+    }
+    const choose = routeCommand('choose chrome profile', 'typed', apps)
+    assert.equal(choose.type, 'chrome-profiles')
+    if (choose.type === 'chrome-profiles') assert.equal(choose.forceChooser, true)
+    const withProfile = routeCommand('open Chrome with Work', 'typed', apps)
+    assert.equal(withProfile.type, 'chrome-profiles')
+    if (withProfile.type === 'chrome-profiles') assert.equal(withProfile.profileQuery, 'Work')
+    const yt = routeCommand('open YouTube in Chrome', 'typed', apps)
+    assert.equal(yt.type, 'open-url')
+    if (yt.type === 'open-url') {
+      assert.equal(yt.browser, 'chrome')
+      assert.match(yt.url, /youtube/i)
+    }
+    const gmail = routeCommand('open gmail.com in my Personal Chrome profile', 'typed', apps)
+    assert.equal(gmail.type, 'open-url')
+    if (gmail.type === 'open-url') {
+      assert.equal(gmail.browser, 'chrome')
+      assert.equal(gmail.chromeProfileQuery, 'Personal')
+      assert.match(gmail.url, /mail\.google|gmail/i)
+    }
+  })
+
+  it('opens/closes sites with slang verbs and strips for-me trailers', () => {
+    const boot = routeCommand('can you boot up that video site for me', 'typed', apps)
+    assert.equal(boot.type, 'open-url')
+    if (boot.type === 'open-url') assert.match(boot.url, /youtube/i)
+    const fire = routeCommand('fire up netflix for me', 'typed', apps)
+    assert.equal(fire.type, 'open-url')
+    if (fire.type === 'open-url') assert.match(fire.url, /netflix/i)
+    const kill = routeCommand('get rid of every youtube tab', 'voice', apps)
+    assert.equal(kill.type, 'close-website')
+    if (kill.type === 'close-website') assert.equal(kill.all, true)
+    const ditch = routeCommand('ditch every github tab', 'voice', apps)
+    assert.equal(ditch.type, 'close-website')
+  })
+
+  it('routes browser-instead follow-ups, mail slang search, and WA paraphrases', () => {
+    const safari = routeCommand('actually use safari instead', 'typed', apps, [], {
+      pendingUrl: { url: 'https://www.youtube.com/', name: 'YouTube' }
+    })
+    assert.equal(safari.type, 'open-url')
+    if (safari.type === 'open-url') assert.equal(safari.browser, 'safari')
+    const chrome = routeCommand('switch that to chrome', 'typed', apps, [], {
+      pendingUrl: { url: 'https://www.youtube.com/', name: 'YouTube' }
+    })
+    assert.equal(chrome.type, 'open-url')
+    if (chrome.type === 'open-url') assert.equal(chrome.browser, 'chrome')
+
+    const invoice = routeCommand('dig up that invoice mail from last week', 'typed', apps)
+    assert.equal(invoice.type, 'mail')
+    if (invoice.type === 'mail') assert.equal(invoice.intent.kind, 'search')
+
+    const scoop = routeCommand("what's the scoop on that chat", 'typed', apps, [], {
+      waChat: 'Mum',
+      messaging: 'whatsapp'
+    })
+    assert.equal(scoop.type, 'whatsapp-summarize')
+
+    const gist = routeCommand('gimme the gist of this chat', 'typed', apps, [], { waChat: 'Dad' })
+    assert.equal(gist.type, 'whatsapp-summarize')
+
+    const trim = routeCommand('trim that down a bit', 'typed', apps, [], { waDraftActive: true })
+    assert.equal(trim.type, 'whatsapp-reply')
+    if (trim.type === 'whatsapp-reply') {
+      assert.equal(trim.intent.refine, true)
+      assert.equal(trim.intent.instruction, 'shorter')
+    }
+    const briefer = routeCommand('make the draft briefer', 'typed', apps, [], { waDraftActive: true })
+    assert.equal(briefer.type, 'whatsapp-reply')
+    if (briefer.type === 'whatsapp-reply') assert.equal(briefer.intent.refine, true)
+
+    const tell = routeCommand('tell them hi from me', 'voice', apps, [], {
+      waChat: 'Me 2',
+      messaging: 'whatsapp'
+    })
+    assert.equal(tell.type, 'whatsapp-reply')
+  })
+
+  it('keeps ordinary questions on the assistant and gates WA shorthand without a verified chat', () => {
+    assert.equal(routeCommand('how tall is the eiffel tower roughly', 'typed', apps).type, 'question')
+    assert.equal(routeCommand('why is the sky blue', 'typed', apps).type, 'question')
+    // “say …” only binds when a WA target is verified; pronoun “tell them …” still routes but insert revalidates.
+    assert.notEqual(routeCommand('say thanks and that I will look tomorrow', 'typed', apps).type, 'whatsapp-reply')
+    const tell = routeCommand('tell them hi from me', 'typed', apps)
+    assert.equal(tell.type, 'whatsapp-reply')
+    if (tell.type === 'whatsapp-reply') {
+      assert.equal(tell.intent.pronoun, 'them')
+      assert.equal(tell.intent.replyHere, true)
+    }
+  })
+
+  it('summarizes the open WhatsApp chat instead of the assistant thread', () => {
+    const sum = routeCommand('summarize', 'typed', apps, [], { waChat: 'Me', messaging: 'whatsapp', assistantActive: true })
+    assert.equal(sum.type, 'whatsapp-summarize')
+    if (sum.type === 'whatsapp-summarize') assert.equal(sum.intent.scope, 'incoming')
+    const noWa = routeCommand('summarize', 'typed', apps, [], { assistantActive: true })
+    assert.equal(noWa.type, 'question')
+  })
+
+  it('routes reply saying into WhatsApp when a chat is verified, not Mail', () => {
+    const reply = routeCommand("reply saying thanks, I'll check tomorrow", 'typed', apps, [], {
+      waChat: 'Me 2',
+      messaging: 'whatsapp'
+    })
+    assert.equal(reply.type, 'whatsapp-reply')
+    if (reply.type === 'whatsapp-reply') {
+      assert.match(reply.intent.instruction, /thanks/i)
+      assert.equal(reply.intent.autoInsert, true)
+    }
+    const mailish = routeCommand("reply saying thanks, I'll check tomorrow", 'typed', apps, [])
+    assert.equal(mailish.type, 'mail')
+  })
+
+  it('refines an active WhatsApp draft with make it shorter', () => {
+    const refine = routeCommand('make it shorter', 'typed', apps, [], {
+      waChat: 'Me 2',
+      messaging: 'whatsapp',
+      waDraftActive: true
+    })
+    assert.equal(refine.type, 'whatsapp-reply')
+    if (refine.type === 'whatsapp-reply') {
+      assert.equal(refine.intent.refine, true)
+      assert.equal(refine.intent.instruction, 'shorter')
+    }
+  })
+
+  it('closes a website by host without quitting the browser app', () => {
+    const close = routeCommand('close YouTube', 'typed', apps)
+    assert.equal(close.type, 'close-website')
+    if (close.type === 'close-website') {
+      assert.equal(close.name, 'YouTube')
+      assert.match(close.host || '', /youtube/i)
+    }
+    const closeIt = routeCommand('close it', 'typed', apps, [], {
+      lastWebsite: { url: 'https://www.youtube.com/', name: 'YouTube' }
+    })
+    assert.equal(closeIt.type, 'close-website')
+  })
+
+  it('parses open Dad and tell him without eating the message into the contact name', () => {
+    const open = routeCommand(
+      "Open Dad in WhatsApp and tell him I'll visit next month, professionally.",
+      'typed',
+      apps
+    )
+    assert.equal(open.type, 'whatsapp')
+    if (open.type === 'whatsapp') {
+      assert.equal(open.query, 'Dad')
+      assert.match(open.pendingDraft || '', /visit next month/i)
+    }
+  })
+
+  it('preserves original casing and negations for questions', () => {
+    const q = routeCommand("please don't open that", 'typed', apps, [], { assistantActive: true })
+    // Not an open command after lead strip — “don't open that” is not matchOpen.
+    assert.notEqual(q.type, 'open-url')
+    assert.notEqual(q.type, 'launch')
+  })
+})
+
+describe('pet commands in the router', () => {
+  it('switches pets by name and leaves other switch commands alone', () => {
+    assert.deepEqual(routeCommand('switch to the cat', 'typed', catalog), { type: 'pet', pet: 'cat' })
+    assert.deepEqual(routeCommand('make miko a koala', 'voice', catalog), { type: 'pet', pet: 'koala' })
+    assert.deepEqual(routeCommand('be a dog again', 'typed', catalog), { type: 'pet', pet: 'doberman' })
+    assert.deepEqual(routeCommand('change pet', 'typed', catalog), { type: 'pet-choose' })
+    assert.notEqual(routeCommand('switch to chrome', 'typed', catalog).type, 'pet')
+    assert.equal(planVoice({ type: 'pet', pet: 'bird' }, true).kind, 'run')
   })
 })

@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "description": "Second held-out unfamiliar set, frozen before interpretation improvements. Separate from development (10) and holdout-unfamiliar v1. Deterministic scoring and any real-model scoring must be reported separately. Never treat mocked/fixture parses as model accuracy.",
+  "frozenBefore": "interpretation-improvements-2026-11-15",
+  "examples": [
+    {
+      "id": "uf2-fire-up-netflix",
+      "input": "fire up netflix for me",
+      "source": "typed",
+      "expect": { "kinds": ["open_website"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-ditch-github-tabs",
+      "input": "ditch every github tab",
+      "source": "voice",
+      "expect": { "kinds": ["close_website"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-nudge-mum-dinner",
+      "input": "nudge Mum on whatsapp that dinner is at 8, keep it polite",
+      "source": "typed",
+      "expect": { "kinds": ["open_whatsapp_chat", "draft_whatsapp"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-gist-of-chat",
+      "input": "gimme the gist of this chat",
+      "context": { "waChat": "Dad" },
+      "source": "typed",
+      "expect": { "kinds": ["summarize_whatsapp"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-draft-briefer",
+      "input": "make the draft briefer",
+      "context": { "waDraftActive": true },
+      "source": "typed",
+      "expect": { "kinds": ["refine_draft"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-abort-that",
+      "input": "abort that",
+      "source": "typed",
+      "expect": { "kinds": ["cancel_task"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-hunt-receipt",
+      "input": "hunt down the receipt email from tuesday",
+      "source": "typed",
+      "expect": { "kinds": ["search_mail"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-switch-to-chrome",
+      "input": "switch that to chrome",
+      "context": { "pendingUrl": true },
+      "source": "typed",
+      "expect": { "kinds": ["open_website"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-tell-them-hi",
+      "input": "tell them hi from me",
+      "context": { "waChat": "Me 2" },
+      "source": "voice",
+      "expect": { "kinds": ["draft_whatsapp"], "needsInterpret": true }
+    },
+    {
+      "id": "uf2-ordinary-sky",
+      "input": "why is the sky blue",
+      "source": "typed",
+      "expect": { "kinds": ["ask_assistant"], "needsInterpret": false }
+    }
+  ]
+}

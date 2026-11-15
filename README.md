@@ -1,8 +1,8 @@
-# MIKO — Phase 1
+# MIKO
 
-A small desktop puppy for Windows. This phase is the overlay only: a frameless always-on-top window, a placeholder puppy, a local note panel, and a tray menu. The realistic puppy is Phase 2. Notes are not saved and are not sent anywhere.
+A desktop companion for macOS and Windows. A 3D Doberman sits above your other windows. You talk to it by typing or with push-to-talk. It can walk, open and close apps, open/close websites, follow the active window, search WhatsApp contacts and draft/insert replies on the Mac, summarize the open chat, read Gmail, and answer through the MIKO assistant or ChatGPT.
 
-Development and the production bundle both run on macOS. Windows still needs the smoke test below; this repo does not build an installer.
+Development and the production bundle both run on macOS. Windows still needs the smoke test below. This repo does not build an installer. WhatsApp search, reply insert, and browser-tab close are macOS-only until Windows adapters are tested.
 
 Requires Node.js 22.12 or newer.
 
@@ -36,6 +36,10 @@ npm test
 | Click the puppy | A short pet reaction, then the app fan opens above MIKO (macOS). A brief pause lets a double-click cancel it. |
 | Tab + Q (macOS) | Opens or closes the app fan: every running app as a card. Click a card or use ←/→ and Enter to switch; type to filter; 1–9 picks directly; × quits an app; Tab (or the Tabs chip) on Chrome/Safari lists its tabs. Esc closes. |
 | "open ChatGPT" | Launches or focuses the ChatGPT desktop app; opens chatgpt.com in your default browser if the app isn't installed. MIKO says which happened. |
+| "open YouTube", "open YouTube in Chrome", "in Chrome", "close YouTube", "close it" | Opens a known site locally (optional browser). Follow-up “in Chrome” finishes the last site. Close matches browser tabs by host — does not quit the browser (macOS). |
+| "open Mum in WhatsApp", "open Dad in WhatsApp and tell him…", "summarize", "type … in a formal way", "leave it" | On macOS: contact search, compound open+draft (message kept separate from the name), summarize latest incoming text inside MIKO (composer unchanged), formal type/insert unsent, cancel pending work. Windows reports WhatsApp features as unsupported. |
+| "open Muku chat" | Opens a saved ChatGPT chat when that name matches exactly. Otherwise asks "WhatsApp or a saved ChatGPT chat?" After you choose WhatsApp, a later "open Name chat" uses WhatsApp. |
+| "show WhatsApp aliases", "forget WhatsApp alias Muku" | Short names you asked MIKO to remember, stored only on this Mac. MIKO checks the saved WhatsApp name is still in the results before opening it. |
 | Saved chats | Panel → **Saved chats**: Add (name + chatgpt.com conversation, Project or custom GPT link), Open, Rename (✎), Remove (×). Say or type "open my FreshNet chat" or "show saved chats". Links open through the system's normal handler (your default browser unless that's ChatGPT). |
 | Questions and writing requests ("what…", "write…", "translate…", "give me…") | Answered by the **MIKO assistant**, which runs Codex with your ChatGPT sign-in in its own MIKO conversation (not your ChatGPT chats or memory). Shows "Thinking… N s", Cancel, follow-ups in the same conversation, **New conversation** (or say "new conversation"), and **Ask in ChatGPT app**. The paw menu can turn it off. |
 | ⚙ MIKO preferences | Chat tab → ⚙: text you want MIKO to remember, stored only on this Mac and added to new assistant conversations. Separate from ChatGPT's memory. |
@@ -84,12 +88,12 @@ A work area narrower than the puppy (220px) cannot contain it. A work area narro
 
 ```text
 src/main        window, tray, IPC
-src/preload     the four methods on window.miko
+src/preload     window.miko, the typed bridge to the main process
 src/renderer    React UI, PetView, local note state
 src/shared      window geometry shared by the main process and the UI
 resources       tray icons
 ```
 
-The renderer has `nodeIntegration` off, `contextIsolation` on, and `sandbox` on. `window.miko` exposes `moveBy`, `setPanelOpen`, `setHitRects`, and `setDragActive` only.
+The renderer has `nodeIntegration` off, `contextIsolation` on, and `sandbox` on. `window.miko` is the typed preload bridge. It does not expose Node.
 
 Replace `src/renderer/src/components/PetView.tsx` and `src/renderer/src/assets/puppy.svg` when the real puppy arrives. Keep the outer box so the hit target still matches the drawing.

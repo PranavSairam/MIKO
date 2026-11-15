@@ -3,6 +3,12 @@ export const IPC = {
   setPanelOpen: 'miko:set-panel-open',
   panelResize: 'miko:panel-resize',
   panelPreset: 'miko:panel-preset',
+  petList: 'miko:pet-list',
+  petModel: 'miko:pet-model',
+  petSave: 'miko:pet-save',
+  petActive: 'miko:pet-active',
+  petFlight: 'miko:pet-flight',
+  petCommand: 'miko:pet-command',
   setHitRects: 'miko:set-hit-rects',
   setDragActive: 'miko:set-drag-active',
   setReducedMotion: 'miko:set-reduced-motion',
@@ -72,8 +78,48 @@ export const IPC = {
   switcherTabs: 'miko:switcher-tabs',
   switcherFocusTab: 'miko:switcher-focus-tab',
   switcherClose: 'miko:switcher-close',
-  switcherOpened: 'miko:switcher-opened'
+  switcherOpened: 'miko:switcher-opened',
+  whatsappOpen: 'miko:whatsapp-open',
+  whatsappCancel: 'miko:whatsapp-cancel',
+  whatsappAliases: 'miko:whatsapp-aliases',
+  whatsappRemember: 'miko:whatsapp-remember',
+  whatsappForget: 'miko:whatsapp-forget',
+  whatsappPeek: 'miko:whatsapp-peek',
+  whatsappInsert: 'miko:whatsapp-insert',
+  whatsappContextNotice: 'miko:whatsapp-context-notice',
+  whatsappAttachmentsList: 'miko:whatsapp-attachments-list',
+  whatsappAttachmentSave: 'miko:whatsapp-attachment-save',
+  clipboardFile: 'miko:clipboard-file',
+  pasteFileWhatsApp: 'miko:paste-file-whatsapp',
+  revealFile: 'miko:reveal-file',
+  openLocalFile: 'miko:open-local-file',
+  openUrl: 'miko:open-url',
+  closeWebsite: 'miko:close-website',
+  chromeProfilesList: 'miko:chrome-profiles-list',
+  chromeProfilesLaunch: 'miko:chrome-profiles-launch',
+  chromeProfilesFallback: 'miko:chrome-profiles-fallback',
+  prefsStructuredGet: 'miko:prefs-structured-get',
+  prefsStructuredSet: 'miko:prefs-structured-set',
+  examplesList: 'miko:examples-list',
+  examplesAdd: 'miko:examples-add',
+  examplesRemove: 'miko:examples-remove',
+  lastExternalApp: 'miko:last-external-app'
 } as const
+
+export type OpenUrlResult = {
+  ok: boolean
+  url: string
+  name: string
+  browser: string
+  reason: string
+}
+
+export type CloseWebsiteResult =
+  | { status: 'closed'; closed: number; tabs: { browser: string; window: number; tab: number; title: string; url: string }[] }
+  | { status: 'choices'; tabs: { browser: string; window: number; tab: number; title: string; url: string }[]; reason: string }
+  | { status: 'none'; reason: string }
+  | { status: 'unsupported'; reason: string }
+  | { status: 'failed'; reason: string }
 
 export type InsertResult =
   | { state: 'inserted'; mode: string }
@@ -273,6 +319,61 @@ export interface MailCorrectRequest {
   scope: 'message' | 'sender'
 }
 import type { SavedChat } from './chatgpt'
+import type { WhatsAppAlias, WhatsAppMatch, WhatsAppOpenResult } from './whatsapp'
+import type { WhatsAppInsertResult, WhatsAppPeekResult } from './whatsapp-reply'
+import type { ParsedAttachmentBubble } from './whatsapp-attachments'
+export type { WhatsAppAlias, WhatsAppMatch, WhatsAppOpenResult, WhatsAppPeekResult, WhatsAppInsertResult }
+
+export type WhatsAppAttachmentsListResult =
+  | {
+      status: 'listed'
+      header: string
+      attachments: ParsedAttachmentBubble[]
+      atLatest: boolean
+      visibleOnly: true
+      reason: string
+      composerText: string
+    }
+  | { status: 'failed' | 'permission' | 'lost-focus' | 'cancelled' | 'unsupported'; header: string; reason: string; attachments: [] }
+
+export type WhatsAppAttachmentSaveResult = {
+  status:
+    | 'saved'
+    | 'candidate'
+    | 'failed'
+    | 'switched'
+    | 'missing'
+    | 'cancelled'
+    | 'permission'
+    | 'lost-focus'
+    | 'unsupported'
+  header: string
+  reason: string
+  path: string
+  filename: string
+  bytes: number
+  verified: boolean
+  provenance: 'ax-new-file' | 'user-accepted-candidate' | 'unverified-candidate' | 'none'
+}
+
+export type ClipboardFileResult = {
+  status: 'copied' | 'failed'
+  reason: string
+  path: string
+  filename: string
+  bytes: number
+  verified: boolean
+}
+
+export type PasteFileWhatsAppResult = {
+  status: 'attached' | 'failed' | 'switched' | 'cancelled' | 'permission' | 'lost-focus'
+  header: string
+  reason: string
+  path: string
+  filename: string
+  verified: boolean
+  composerText: string
+}
 import type { KeyEvent } from './keys'
 
 /** Preload surface. The renderer has no Node integration. */
@@ -285,6 +386,18 @@ export interface MikoApi {
   panelResize: (width: number, height: number, done: boolean) => Promise<PanelLayout>
   /** Small / Medium / Large for the open tab, or reset to its default. */
   panelPreset: (preset: 'small' | 'medium' | 'large' | 'reset') => Promise<PanelLayout>
+  /** Pets whose assets exist (Doberman first) and the saved choice. */
+  petList: () => Promise<PetListing>
+  /** A pet's .glb bytes (null for the bundled Doberman, or when the file is missing). */
+  petModel: (id: PetId) => Promise<ArrayBuffer | null>
+  /** Remember a pet after it loaded on screen. */
+  petSave: (id: PetId) => Promise<boolean>
+  /** Tell main which pet is on screen and its scale (shows the bird's tree). */
+  petActive: (id: PetId, unitPx: number) => void
+  /** Flight geometry for the bird: where it is, the ground, and its perch. */
+  petFlight: () => Promise<PetFlightInfo>
+  /** Paw-menu pet choices. */
+  onPetCommand: (listener: (command: PetCommand) => void) => () => void
   /** Window-local DIP rectangles that should receive clicks. */
   setHitRects: (rects: HitRect[]) => void
   /** Keep the window clickable for the whole Alt/Option drag, including outside the graphic. */
@@ -310,6 +423,78 @@ export interface MikoApi {
   removeChat: (name: string) => Promise<ChatEditResult>
   /** Open a saved chat through the system URL handler. */
   openChat: (name: string) => Promise<OpenResult>
+  /** Open a website in the default browser, or a named browser when given. */
+  openUrl: (url: string, name?: string, browser?: string | null) => Promise<OpenUrlResult>
+  /** Discover local Chrome profiles (names/avatars/directory ids only). */
+  chromeProfilesList: () => Promise<import('./chrome-profiles').ChromeProfileView[] | { status: string; reason: string; fallbacks?: { id: string; label: string }[] }>
+  /** Launch Chrome with a validated profile directory id (optional http(s) URL). */
+  chromeProfilesLaunch: (request: {
+    directoryId: string
+    url?: string | null
+    displayName?: string | null
+  }) => Promise<{
+    ok: boolean
+    directoryId: string
+    displayName: string
+    url: string
+    reason: string
+    verified: false
+    verificationNote: string
+  }>
+  /** When metadata is unreadable: Chrome’s picker or a normal launch. */
+  chromeProfilesFallback: (kind: 'profile-picker' | 'normal', url?: string | null) => Promise<{
+    ok: boolean
+    reason: string
+    verified: false
+    verificationNote: string
+  }>
+  /** Close matching browser tabs without quitting the browser. */
+  closeWebsite: (request: {
+    host?: string
+    url?: string
+    all?: boolean
+    thisTab?: boolean
+    pick?: { browser: 'chrome' | 'safari'; window: number; tab: number }
+  }) => Promise<CloseWebsiteResult>
+  /** Last non-MIKO front app (for “this tab” / context). */
+  lastExternalApp: () => Promise<{ name: string; bundleId: string; pid: number } | null>
+  prefsStructuredGet: () => Promise<import('./preferences').MikoStructuredPreferences | null>
+  prefsStructuredSet: (prefs: import('./preferences').MikoStructuredPreferences) => Promise<boolean>
+  examplesList: () => Promise<import('./preferences').CorrectionExample[]>
+  examplesAdd: (example: {
+    wording: string
+    actionKind: string
+    targetAlias?: string
+    note?: string
+  }) => Promise<import('./preferences').CorrectionExample[]>
+  examplesRemove: (id: string) => Promise<import('./preferences').CorrectionExample[]>
+  /** Search WhatsApp for a contact. Pass pickId to reopen a chooser result after revalidation. */
+  whatsappOpen: (query: string, pickId?: string, taskId?: string) => Promise<WhatsAppOpenResult>
+  whatsappCancel: () => void
+  whatsappAliases: () => Promise<WhatsAppAlias[]>
+  whatsappRemember: (alias: string, name: string) => Promise<{ ok: boolean; reason: string; list: WhatsAppAlias[] }>
+  whatsappForget: (alias: string) => Promise<{ ok: boolean; reason: string; list: WhatsAppAlias[] }>
+  /** Read the open WhatsApp chat header (and optional visible messages). Pass latest to scroll to newest first. */
+  whatsappPeek: (messages?: boolean, latest?: boolean) => Promise<WhatsAppPeekResult>
+  /** Insert a reviewed draft into the verified chat composer. Never sends. */
+  whatsappInsert: (request: { expectHeader: string; text: string; mode: 'replace' | 'append' | 'ask' }) => Promise<WhatsAppInsertResult>
+  whatsappMarkContextNotice: () => Promise<boolean>
+  /** List visible WhatsApp document attachments in the open chat. */
+  whatsappAttachmentsList: () => Promise<WhatsAppAttachmentsListResult>
+  /** Save a WhatsApp attachment via Save to Downloads (or reuse an existing Downloads copy). */
+  whatsappAttachmentSave: (request: {
+    expectHeader: string
+    filename: string
+    id?: string
+    /** Explicit owner accept of an unverified Downloads candidate path. */
+    acceptCandidatePath?: string
+  }) => Promise<WhatsAppAttachmentSaveResult>
+  /** Put a real file reference on the pasteboard (not path text). */
+  clipboardFile: (path: string) => Promise<ClipboardFileResult>
+  /** Paste a file into the verified WhatsApp composer. Never sends. */
+  pasteFileWhatsApp: (request: { expectHeader: string; path: string }) => Promise<PasteFileWhatsAppResult>
+  revealFile: (path: string) => Promise<boolean>
+  openLocalFile: (path: string) => Promise<string>
   /** Copy reviewed prompt text. This does not run it. */
   copyText: (text: string) => Promise<boolean>
   /** Clipboard text for Paste reply, length capped. */
@@ -385,3 +570,19 @@ export interface MikoApi {
   /** Global pointer while MIKO is visible. Returns an unsubscribe. */
   onPointer: (listener: (sample: PointerSample) => void) => () => void
 }
+
+import type { PetId } from './pets'
+export type { PetId }
+
+export interface PetListing {
+  available: { id: PetId; name: string; blurb: string }[]
+  selected: PetId
+}
+
+export interface PetFlightInfo {
+  origin: { x: number; y: number }
+  groundY: number
+  perch: { x: number; y: number } | null
+}
+
+export type PetCommand = { kind: 'switch'; pet: PetId } | { kind: 'choose' }

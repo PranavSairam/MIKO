@@ -13,9 +13,19 @@ export type FrontRead =
   | { ok: true; window: FrontWindow | null }
   | { ok: false; permission: string }
 
+/** Last non-MIKO front window. Opening the panel must not erase this. */
+let lastExternal: FrontWindow | null = null
+
 /** Read the front app's name and window bounds. Nothing else is collected. */
 export function readForeground(ownPid: number): FrontRead {
-  return process.platform === 'win32' ? readWindows(ownPid) : readMac(ownPid)
+  const result = process.platform === 'win32' ? readWindows(ownPid) : readMac(ownPid)
+  if (result.ok && result.window) lastExternal = result.window
+  return result
+}
+
+/** Snapshot of the last external app before MIKO took focus. */
+export function lastExternalApp(): FrontWindow | null {
+  return lastExternal
 }
 
 function readMac(ownPid: number): FrontRead {

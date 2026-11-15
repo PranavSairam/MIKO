@@ -15,6 +15,10 @@ export interface TrayActions {
   setBridge: (enabled: boolean) => void
   autoPaste: () => boolean
   setAutoPaste: (enabled: boolean) => void
+  /** Pets whose assets exist, and the one on screen. */
+  pets?: () => { available: { id: string; name: string }[]; selected: string }
+  choosePet?: (id: string) => void
+  openPetChooser?: () => void
 }
 
 let tray: Tray | null = null
@@ -62,6 +66,30 @@ export function createTray(next: TrayActions): { refresh: () => void } {
 export function refreshTrayMenu(): void {
   if (!tray || tray.isDestroyed()) return
   tray.setContextMenu(buildMenu())
+}
+
+/** "Pet" submenu: one radio item per pet whose asset exists, plus the chooser. */
+function petMenu(): Electron.MenuItemConstructorOptions[] {
+  const pets = actions.pets?.()
+  if (!pets) return []
+  return [
+    { type: 'separator' },
+    {
+      label: 'Pet',
+      submenu: [
+        ...pets.available.map(
+          (pet): Electron.MenuItemConstructorOptions => ({
+            label: pet.name,
+            type: 'radio',
+            checked: pet.id === pets.selected,
+            click: () => actions.choosePet?.(pet.id)
+          })
+        ),
+        { type: 'separator' },
+        { label: 'Choose your pet…', click: () => actions.openPetChooser?.() }
+      ]
+    }
+  ]
 }
 
 function buildMenu(): Menu {
@@ -114,6 +142,7 @@ function buildMenu(): Menu {
         refreshTrayMenu()
       }
     },
+    ...petMenu(),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ])

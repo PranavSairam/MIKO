@@ -47,7 +47,7 @@ function run(argv) {
   return a.terminate ? 'ok' : 'no'
 }`
 
-const TAB_SCRIPTS: Record<BrowserId, { list: string; focus: string }> = {
+const TAB_SCRIPTS: Record<BrowserId, { list: string; focus: string; close: string }> = {
   chrome: {
     list: `function run() {
   const c = Application('Google Chrome'); const out = []
@@ -56,7 +56,10 @@ const TAB_SCRIPTS: Record<BrowserId, { list: string; focus: string }> = {
   return JSON.stringify(out) }`,
     focus: `function run(argv) {
   const c = Application('Google Chrome'); const w = c.windows[Number(argv[0]) - 1]
-  w.activeTabIndex = Number(argv[1]); w.index = 1; c.activate(); return 'ok' }`
+  w.activeTabIndex = Number(argv[1]); w.index = 1; c.activate(); return 'ok' }`,
+    close: `function run(argv) {
+  const c = Application('Google Chrome'); const w = c.windows[Number(argv[0]) - 1]
+  w.tabs[Number(argv[1]) - 1].close(); return 'ok' }`
   },
   safari: {
     list: `function run() {
@@ -66,7 +69,10 @@ const TAB_SCRIPTS: Record<BrowserId, { list: string; focus: string }> = {
   return JSON.stringify(out) }`,
     focus: `function run(argv) {
   const s = Application('Safari'); const w = s.windows[Number(argv[0]) - 1]
-  w.currentTab = w.tabs[Number(argv[1]) - 1]; w.index = 1; s.activate(); return 'ok' }`
+  w.currentTab = w.tabs[Number(argv[1]) - 1]; w.index = 1; s.activate(); return 'ok' }`,
+    close: `function run(argv) {
+  const s = Application('Safari'); const w = s.windows[Number(argv[0]) - 1]
+  w.tabs[Number(argv[1]) - 1].close(); return 'ok' }`
   }
 }
 
@@ -127,6 +133,25 @@ export async function focusTab(browser: BrowserId, window: number, tab: number):
   }
   const result = await jxa(TAB_SCRIPTS[browser].focus, [String(window), String(tab)], 4000)
   return result.ok
+}
+
+/** Close one tab. Does not quit the browser. Re-list afterwards to verify. */
+export async function closeTab(browser: BrowserId, window: number, tab: number): Promise<boolean> {
+  if (process.platform !== 'darwin') return false
+  if (!isListed(browser)) return false
+  if (!Number.isInteger(window) || !Number.isInteger(tab) || window < 1 || tab < 1 || window > 500 || tab > 5000) {
+    return false
+  }
+  const result = await jxa(TAB_SCRIPTS[browser].close, [String(window), String(tab)], 4000)
+  return result.ok
+}
+
+/** Force a browser into lastListing so tab APIs work even if the switcher never opened. */
+export async function ensureBrowserListed(browser: BrowserId): Promise<boolean> {
+  if (process.platform !== 'darwin') return false
+  if (isListed(browser)) return true
+  await listRunning()
+  return isListed(browser)
 }
 
 function isListed(browser: BrowserId): boolean {

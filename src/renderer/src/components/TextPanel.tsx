@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import type { SavedChat } from '../../../shared/api'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import type { PetId, SavedChat } from '../../../shared/api'
 import { SavedChats, type SavedChatsProps } from './SavedChats'
 
 export const COMMANDS_LATER = 'Commands are coming next.'
@@ -8,6 +8,10 @@ export interface PanelChoice {
   id: string
   name: string
   familiar: boolean
+  /** Secondary line for WhatsApp results (last-message preview). */
+  detail?: string
+  kind?: 'contact' | 'group'
+  exact?: boolean
 }
 
 export type PanelEntry =
@@ -28,8 +32,74 @@ export type PanelEntry =
       /** Auto-paste happened unchecked: offer the click + ⌃⌥V route. */
       pasteAgain?: boolean
     }
-  | { id: number; kind: 'choices'; purpose: 'open' | 'close' | 'chat' | 'mail-or-app' | 'free-text'; text: string; options: PanelChoice[]; payload?: string }
-  | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close'; text: string; appId: string; name: string }
+  | {
+      id: number
+      kind: 'choices'
+      purpose:
+        | 'open'
+        | 'close'
+        | 'chat'
+        | 'mail-or-app'
+        | 'free-text'
+        | 'chat-or-whatsapp'
+        | 'whatsapp'
+        | 'whatsapp-forget'
+        | 'close-tab'
+        | 'wa-summarize-range'
+        | 'wa-attachment'
+        | 'wa-attach-dest'
+        | 'wa-download-candidate'
+        | 'chrome-fallback'
+      text: string
+      options: PanelChoice[]
+      payload?: string
+    }
+  | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close' | 'alias'; text: string; appId: string; name: string; alias?: string; destination?: string }
+  | { id: number; kind: 'whatsapp'; text: string }
+  | {
+      id: number
+      kind: 'wa-reply'
+      chatName: string
+      instruction: string
+      context: string
+      draft: string
+      /** Last text MIKO inserted; used to detect manual edits before refine overwrite. */
+      insertedText: string
+      status:
+        | 'capturing'
+        | 'review'
+        | 'drafting'
+        | 'question'
+        | 'clarify-time'
+        | 'ready'
+        | 'choose-insert'
+        | 'inserting'
+        | 'switched'
+        | 'inserted'
+        | 'failed'
+      autoInsert: boolean
+      contextNotice: boolean
+      notice?: string
+      question?: string
+      answer?: string
+      followUp?: string
+      requestId?: string
+      error?: string
+      pendingHeader?: string
+      /** From “tell her/him/them” — used only for drafting POV. */
+      pronoun?: 'him' | 'her' | 'them'
+      /** Insertion result vs later observation of Send. */
+      sendStatus?: 'not-sent' | 'unverified' | 'sent'
+      /** Ambiguous time choices (clarify-time). */
+      timeChoices?: string[]
+      ambiguousTimeToken?: string
+      /** Voice/typed source kept while clarifying times. */
+      originalTranscript?: string
+      /** Additive instruction waiting on time clarification. */
+      pendingAdditive?: string
+      /** True when clarifying before merging into an unsent draft. */
+      pendingAdditiveRefine?: boolean
+    }
   | { id: number; kind: 'closing'; appId: string; name: string; text: string }
   | {
       id: number
@@ -60,6 +130,22 @@ export type PanelEntry =
       canReplace: boolean
       reason: string
     }
+  | {
+      id: number
+      kind: 'wa-file'
+      chatName: string
+      filename: string
+      fileKind: string
+      bytes: number
+      path: string
+      status: 'listing' | 'downloading' | 'ready' | 'failed' | 'cancelled'
+      scopeLabel: string
+      detail?: string
+      verified: boolean
+      attachmentId: string
+      taskId: string
+      notice?: string
+    }
 
 interface TextPanelProps {
   onClose: () => void
@@ -73,6 +159,42 @@ interface TextPanelProps {
   onChoose?: (entryId: number, appId: string) => void
   onConfirm?: (id: number) => void
   onDismiss?: (id: number) => void
+  onWhatsAppCancel?: () => void
+  onWhatsAppRefine?: (entryId: number) => void
+  onWaReply?: (
+    entryId: number,
+    action:
+      | { type: 'use-context' }
+      | { type: 'skip-context' }
+      | { type: 'go-latest' }
+      | { type: 'set-context'; context: string }
+      | { type: 'set-instruction'; instruction: string }
+      | { type: 'set-draft'; draft: string }
+      | { type: 'set-follow-up'; followUp: string }
+      | { type: 'set-answer'; answer: string }
+      | { type: 'draft' }
+      | { type: 'refine'; change: string }
+      | { type: 'answer' }
+      | { type: 'resolve-time'; choice: string }
+      | { type: 'insert'; mode: 'replace' | 'append' }
+      | { type: 'retry' }
+      | { type: 'copy' }
+      | { type: 'cancel' }
+      | { type: 'return-chat' }
+      | { type: 'keep-here' }
+  ) => void
+  onWaFile?: (
+    entryId: number,
+    action:
+      | { type: 'open' }
+      | { type: 'reveal' }
+      | { type: 'copy-file' }
+      | { type: 'copy-filename' }
+      | { type: 'copy-path' }
+      | { type: 'attach-here' }
+      | { type: 'attach-elsewhere' }
+      | { type: 'cancel' }
+  ) => void
   listening?: boolean
   listenDetail?: string
   onListen?: () => void
@@ -106,6 +228,20 @@ interface TextPanelProps {
     onSave: (text: string) => Promise<void>
     shortcut: string
     onSaveShortcut: (value: string) => Promise<void>
+    structured: import('../../../shared/preferences').MikoStructuredPreferences
+    onSaveStructured: (prefs: import('../../../shared/preferences').MikoStructuredPreferences) => Promise<void>
+    aliases: { alias: string; name: string }[]
+    onForgetAlias: (alias: string) => Promise<void>
+    examples: import('../../../shared/preferences').CorrectionExample[]
+    onRemoveExample: (id: string) => Promise<void>
+    onAddExample: (example: {
+      wording: string
+      actionKind: string
+      targetAlias?: string
+      note?: string
+    }) => Promise<void>
+    onOpenChromeChooser?: () => void
+    pets?: PetChooserProps
   }
   /** Chat / Mail tabs. Mail content replaces the conversation. */
   tab?: 'chat' | 'mail'
@@ -140,6 +276,10 @@ export function TextPanel({
   onChoose,
   onConfirm,
   onDismiss,
+  onWhatsAppCancel,
+  onWhatsAppRefine,
+  onWaReply,
+  onWaFile,
   listening = false,
   listenDetail = '',
   onListen,
@@ -433,7 +573,29 @@ export function TextPanel({
                   <p className="panel-detail note">{ASSISTANT_NOTE}</p>
                 </>
               ) : null}
-              {entry.kind === 'choices' ? (
+              {entry.kind === 'whatsapp' ? (
+                <>
+                  <p>{entry.text}</p>
+                  <div className="panel-inline">
+                    <button type="button" className="text-button secondary" onClick={() => onWhatsAppCancel?.()}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : null}
+              {entry.kind === 'wa-reply' ? <WhatsAppReplyCard entry={entry} onAction={(action) => onWaReply?.(entry.id, action)} /> : null}
+              {entry.kind === 'wa-file' ? <WhatsAppFileCard entry={entry} onAction={(action) => onWaFile?.(entry.id, action)} /> : null}
+              {entry.kind === 'choices' && entry.purpose === 'whatsapp' ? (
+                <WhatsAppChooser
+                  entryId={entry.id}
+                  title={entry.text || 'Which chat did you mean?'}
+                  options={entry.options}
+                  onChoose={(optionId) => onChoose?.(entry.id, optionId)}
+                  onCancel={() => onWhatsAppCancel?.()}
+                  onRefine={() => onWhatsAppRefine?.(entry.id)}
+                />
+              ) : null}
+              {entry.kind === 'choices' && entry.purpose !== 'whatsapp' ? (
                 <>
                   <p>{entry.text}</p>
                   <div className="panel-inline">
@@ -461,7 +623,9 @@ export function TextPanel({
                           ? 'Quit MIKO'
                           : entry.purpose === 'close'
                             ? `Close ${entry.name}`
-                            : `Launch ${entry.name}`}
+                            : entry.purpose === 'alias'
+                              ? 'Remember'
+                              : `Launch ${entry.name}`}
                     </button>
                     <button type="button" className="text-button secondary" onClick={() => onDismiss?.(entry.id)}>
                       Not now
@@ -519,42 +683,315 @@ export function TextPanel({
   )
 }
 
+type PrefsProps = NonNullable<
+  {
+    text: string
+    message: string
+    onSave: (text: string) => Promise<void>
+    shortcut: string
+    onSaveShortcut: (value: string) => Promise<void>
+    structured: import('../../../shared/preferences').MikoStructuredPreferences
+    onSaveStructured: (prefs: import('../../../shared/preferences').MikoStructuredPreferences) => Promise<void>
+    aliases: { alias: string; name: string }[]
+    onForgetAlias: (alias: string) => Promise<void>
+    examples: import('../../../shared/preferences').CorrectionExample[]
+    onRemoveExample: (id: string) => Promise<void>
+    onAddExample: (example: {
+      wording: string
+      actionKind: string
+      targetAlias?: string
+      note?: string
+    }) => Promise<void>
+    onOpenChromeChooser?: () => void
+    /** Choose your pet: only pets whose assets exist are listed. */
+    pets?: PetChooserProps
+  }
+>
+
+export interface PetChooserProps {
+  available: { id: PetId; name: string; blurb: string }[]
+  selected: PetId
+  busy: PetId | null
+  message: string
+  thumbs: Partial<Record<PetId, string>>
+  /** Bumped to scroll the chooser into view (paw menu, "change pet"). */
+  focus: number
+  onChoose: (id: PetId) => void
+}
+
+function PetChooser({
+  available,
+  selected,
+  busy,
+  message,
+  thumbs,
+  focus,
+  onChoose
+}: PetChooserProps) {
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (focus > 0) ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [focus])
+  return (
+    <section className="pet-chooser" ref={ref} aria-label="Choose your pet">
+      <p className="prefs-section">Choose your pet</p>
+      <div className="pet-grid" role="radiogroup" aria-label="Pet">
+        {available.map((pet) => {
+          const on = pet.id === selected
+          const loading = busy === pet.id
+          return (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              key={pet.id}
+              className={`pet-card${on ? ' is-on' : ''}${loading ? ' is-loading' : ''}`}
+              disabled={busy !== null}
+              onClick={() => onChoose(pet.id)}
+              title={pet.blurb}
+            >
+              <span className="pet-portrait">
+                {thumbs[pet.id] ? <img src={thumbs[pet.id]} alt="" draggable={false} /> : <span className="pet-portrait-wait" aria-hidden="true" />}
+                {on ? <span className="pet-check" aria-hidden="true">✓</span> : null}
+              </span>
+              <span className="pet-name">{pet.name}</span>
+              <span className="pet-blurb">{loading ? 'Loading…' : pet.blurb}</span>
+            </button>
+          )
+        })}
+      </div>
+      <p className="pet-note" role="status">
+        {message || 'Switching keeps MIKO where it is, and keeps your drafts and anything in progress. Or say “switch to the cat”.'}
+      </p>
+    </section>
+  )
+}
+
 function Preferences({
   text,
   message,
   onSave,
   shortcut,
-  onSaveShortcut
-}: {
-  text: string
-  message: string
-  onSave: (text: string) => Promise<void>
-  shortcut: string
-  onSaveShortcut: (value: string) => Promise<void>
-}) {
+  onSaveShortcut,
+  structured,
+  onSaveStructured,
+  aliases,
+  onForgetAlias,
+  examples,
+  onRemoveExample,
+  onAddExample,
+  onOpenChromeChooser,
+  pets
+}: PrefsProps) {
   const [draft, setDraft] = useState(text)
   const [key, setKey] = useState(shortcut)
+  const [browser, setBrowser] = useState(structured.preferredBrowser ?? 'default')
+  const [tone, setTone] = useState(structured.writingTone ?? 'natural')
+  const [language, setLanguage] = useState(structured.preferredLanguage ?? '')
+  const [notes, setNotes] = useState(structured.notes ?? '')
+  const [exWording, setExWording] = useState('')
+  const [exKind, setExKind] = useState('open_whatsapp_chat')
+  const [exAlias, setExAlias] = useState('')
+
+  useEffect(() => {
+    setDraft(text)
+  }, [text])
+  useEffect(() => {
+    setBrowser(structured.preferredBrowser ?? 'default')
+    setTone(structured.writingTone ?? 'natural')
+    setLanguage(structured.preferredLanguage ?? '')
+    setNotes(structured.notes ?? '')
+  }, [structured])
+
   return (
     <div className="prefs">
+      {pets ? <PetChooser {...pets} /> : null}
       <p className="panel-detail">
-        <strong>MIKO preferences</strong>: things you want MIKO to remember (name, tone, context). Stored only on this Mac and
-        added to new MIKO assistant conversations. Separate from ChatGPT&apos;s memory.
+        <strong>MIKO preferences</strong> — stored only on this Mac. These are approved preferences and aliases, not trained
+        model weights. Separate from ChatGPT&apos;s memory.
       </p>
+
+      <p className="prefs-section">Structured</p>
+      <label className="prefs-field">
+        Preferred browser
+        <select
+          value={browser || 'default'}
+          aria-label="Preferred browser"
+          onChange={(e) => setBrowser(e.target.value as 'chrome' | 'safari' | 'default')}
+        >
+          <option value="default">System default</option>
+          <option value="chrome">Chrome</option>
+          <option value="safari">Safari</option>
+        </select>
+      </label>
+      <label className="prefs-field">
+        Writing tone
+        <select
+          value={tone || 'natural'}
+          aria-label="Writing tone"
+          onChange={(e) => setTone(e.target.value as 'natural' | 'formal' | 'friendly' | 'polite')}
+        >
+          <option value="natural">Natural</option>
+          <option value="formal">Formal</option>
+          <option value="friendly">Friendly</option>
+          <option value="polite">Polite</option>
+        </select>
+      </label>
+      <label className="prefs-field">
+        Preferred language
+        <input
+          value={language}
+          maxLength={40}
+          placeholder="e.g. English"
+          aria-label="Preferred language"
+          onChange={(e) => setLanguage(e.target.value)}
+        />
+      </label>
+      <label className="prefs-field">
+        Approved notes
+        <textarea
+          className="prefs-notes"
+          value={notes}
+          maxLength={2000}
+          placeholder="Short approved notes (not raw chat or mail bodies)."
+          aria-label="Approved preference notes"
+          onChange={(e) => setNotes(e.target.value)}
+        />
+      </label>
+      <div className="panel-inline">
+        <button
+          type="button"
+          className="text-button"
+          onClick={() =>
+            void onSaveStructured({
+              preferredBrowser: browser === 'default' ? null : browser,
+              writingTone: tone,
+              preferredLanguage: language.trim() || null,
+              notes: notes.slice(0, 2000),
+              defaultChromeProfileDirectory: structured.defaultChromeProfileDirectory,
+              defaultChromeProfileName: structured.defaultChromeProfileName,
+              chromeProfileAliases: structured.chromeProfileAliases
+            })
+          }
+        >
+          Save structured
+        </button>
+      </div>
+
+      <p className="prefs-section">Chrome profile default</p>
+      <p className="panel-detail">
+        {structured.defaultChromeProfileDirectory
+          ? `Saved default: “${structured.defaultChromeProfileName || structured.defaultChromeProfileDirectory}” (${structured.defaultChromeProfileDirectory}). “Choose Chrome profile” always shows the fan. Say “Open Chrome with …” to override.`
+          : 'No Chrome profile default saved. MIKO never auto-saves one — tick “Always use …” on the profile fan when choosing.'}
+      </p>
+      <div className="panel-inline">
+        <button
+          type="button"
+          className="text-button secondary"
+          disabled={!structured.defaultChromeProfileDirectory}
+          onClick={() =>
+            void onSaveStructured({
+              preferredBrowser: browser === 'default' ? null : (browser as 'chrome' | 'safari'),
+              writingTone: tone,
+              preferredLanguage: language.trim() || null,
+              notes: notes.slice(0, 2000),
+              defaultChromeProfileDirectory: null,
+              defaultChromeProfileName: null,
+              chromeProfileAliases: structured.chromeProfileAliases
+            })
+          }
+        >
+          Clear Chrome default
+        </button>
+        {onOpenChromeChooser ? (
+          <button type="button" className="text-button secondary" onClick={onOpenChromeChooser}>
+            Reopen Chrome chooser
+          </button>
+        ) : null}
+      </div>
+
+      <p className="prefs-section">Free-text (assistant conversations)</p>
       <textarea
         className="prefs-text"
         value={draft}
         maxLength={2000}
         placeholder="e.g. Call me Pranav. Keep answers short. I'm building MIKO, a desktop dog."
-        aria-label="MIKO preferences"
+        aria-label="MIKO free-text preferences"
         onChange={(event) => setDraft(event.target.value)}
       />
-      {message ? <p className="panel-detail" role="status">{message}</p> : null}
       <div className="panel-inline">
         <button type="button" className="text-button" onClick={() => void onSave(draft)} disabled={draft === text}>
-          Save
+          Save free-text
         </button>
         <span className="panel-detail">{draft.length}/2000</span>
       </div>
+
+      <p className="prefs-section">WhatsApp aliases</p>
+      {aliases.length === 0 ? (
+        <p className="panel-detail">No aliases saved.</p>
+      ) : (
+        <ul className="prefs-list">
+          {aliases.map((a) => (
+            <li key={a.alias}>
+              <span>
+                {a.alias} → {a.name}
+              </span>
+              <button type="button" className="text-button secondary" onClick={() => void onForgetAlias(a.alias)}>
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="prefs-section">Approved correction examples</p>
+      <p className="panel-detail">Optional routing hints for unfamiliar wording. Not private message content.</p>
+      {examples.length === 0 ? (
+        <p className="panel-detail">No examples yet.</p>
+      ) : (
+        <ul className="prefs-list">
+          {examples.map((ex) => (
+            <li key={ex.id}>
+              <span>
+                “{ex.wording}” → {ex.actionKind}
+                {ex.targetAlias ? ` (${ex.targetAlias})` : ''}
+              </span>
+              <button type="button" className="text-button secondary" onClick={() => void onRemoveExample(ex.id)}>
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="prefs-add-example">
+        <input value={exWording} placeholder="When I say…" aria-label="Example wording" onChange={(e) => setExWording(e.target.value)} />
+        <input value={exKind} placeholder="action kind" aria-label="Example action kind" onChange={(e) => setExKind(e.target.value)} />
+        <input value={exAlias} placeholder="target alias (optional)" aria-label="Example target alias" onChange={(e) => setExAlias(e.target.value)} />
+        <button
+          type="button"
+          className="text-button"
+          disabled={!exWording.trim() || !exKind.trim()}
+          onClick={() => {
+            void onAddExample({
+              wording: exWording.trim(),
+              actionKind: exKind.trim(),
+              targetAlias: exAlias.trim() || undefined
+            })
+            setExWording('')
+            setExAlias('')
+          }}
+        >
+          Add example
+        </button>
+      </div>
+
+      {message ? (
+        <p className="panel-detail" role="status">
+          {message}
+        </p>
+      ) : null}
+
+      <p className="prefs-section">Selection shortcut</p>
       <div className="selection-row">
         <input value={key} aria-label="Selection assistant shortcut" placeholder="Control+Option+S" onChange={(e) => setKey(e.target.value)} />
         <button type="button" className="text-button secondary" disabled={!key.trim() || key === shortcut} onClick={() => void onSaveShortcut(key)}>
@@ -710,5 +1147,445 @@ function ResultCard({
         ) : null}
       </div>
     </>
+  )
+}
+
+function formatFileBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10_240 ? 1 : 0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(n < 10_485_760 ? 1 : 0)} MB`
+}
+
+function WhatsAppFileCard({
+  entry,
+  onAction
+}: {
+  entry: Extract<PanelEntry, { kind: 'wa-file' }>
+  onAction: (
+    action:
+      | { type: 'open' }
+      | { type: 'reveal' }
+      | { type: 'copy-file' }
+      | { type: 'copy-filename' }
+      | { type: 'copy-path' }
+      | { type: 'attach-here' }
+      | { type: 'attach-elsewhere' }
+      | { type: 'cancel' }
+  ) => void
+}): ReactNode {
+  const busy = entry.status === 'listing' || entry.status === 'downloading'
+  return (
+    <div className="wa-file">
+      <p className="wa-file-name">{entry.filename || 'Attachment'}</p>
+      <p className="panel-detail">
+        {entry.fileKind ? entry.fileKind.toUpperCase() : 'FILE'}
+        {' · '}
+        {formatFileBytes(entry.bytes)}
+        {' · '}
+        {entry.chatName || 'WhatsApp'}
+      </p>
+      <p className="panel-detail">{entry.scopeLabel}</p>
+      <p className="panel-detail" role="status">
+        {entry.status === 'listing'
+          ? 'Looking for attachments…'
+          : entry.status === 'downloading'
+            ? 'Saving to Downloads…'
+            : entry.status === 'ready'
+              ? entry.verified
+                ? `Downloaded — verified on disk${entry.detail ? ` (${entry.detail})` : ''}.`
+                : 'File ready.'
+              : entry.status === 'cancelled'
+                ? entry.notice || 'Cancelled.'
+                : entry.notice || 'Couldn’t retrieve that file.'}
+      </p>
+      {entry.notice && entry.status === 'ready' ? <p className="panel-detail">{entry.notice}</p> : null}
+      <div className="panel-inline wrap">
+        {busy || entry.status === 'ready' ? (
+          <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+            Cancel
+          </button>
+        ) : null}
+        {entry.status === 'ready' && entry.path ? (
+          <>
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'open' })}>
+              Open
+            </button>
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'reveal' })}>
+              Show in Finder
+            </button>
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'copy-file' })}>
+              Copy file
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'copy-filename' })}>
+              Copy filename
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'copy-path' })}>
+              Copy path
+            </button>
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'attach-here' })}>
+              Attach it here
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'attach-elsewhere' })}>
+              Attach elsewhere…
+            </button>
+          </>
+        ) : null}
+      </div>
+      <p className="panel-detail note">Downloading doesn’t send the document to the assistant. Ask separately to read or summarize it.</p>
+    </div>
+  )
+}
+
+function WhatsAppReplyCard({
+  entry,
+  onAction
+}: {
+  entry: Extract<PanelEntry, { kind: 'wa-reply' }>
+  onAction: (
+    action:
+      | { type: 'use-context' }
+      | { type: 'skip-context' }
+      | { type: 'go-latest' }
+      | { type: 'set-context'; context: string }
+      | { type: 'set-instruction'; instruction: string }
+      | { type: 'set-draft'; draft: string }
+      | { type: 'set-follow-up'; followUp: string }
+      | { type: 'set-answer'; answer: string }
+      | { type: 'draft' }
+      | { type: 'refine'; change: string }
+      | { type: 'answer' }
+      | { type: 'resolve-time'; choice: string }
+      | { type: 'insert'; mode: 'replace' | 'append' }
+      | { type: 'retry' }
+      | { type: 'copy' }
+      | { type: 'cancel' }
+      | { type: 'return-chat' }
+      | { type: 'keep-here' }
+  ) => void
+}): ReactNode {
+  return (
+    <div className="wa-reply">
+      <p className="wa-chooser-title">Replying to {entry.chatName || '…'}</p>
+      {entry.status === 'capturing' ? <p className="panel-detail">Preparing draft…</p> : null}
+      {entry.status === 'drafting' ? <p className="panel-detail">Preparing draft…</p> : null}
+      {entry.status === 'inserting' ? <p className="panel-detail">Inserting…</p> : null}
+      {entry.notice && entry.status !== 'choose-insert' && entry.status !== 'inserted' ? (
+        <p className="panel-detail note">{entry.notice}</p>
+      ) : null}
+      {entry.status === 'capturing' || entry.status === 'drafting' ? (
+        <p>{entry.status === 'capturing' ? 'Reading the open WhatsApp chat…' : 'Drafting…'}</p>
+      ) : null}
+      {entry.status === 'review' ? (
+        <>
+          {entry.contextNotice ? (
+            <p className="panel-detail note">
+              Before the first draft: the chat text below is sent to MIKO’s assistant (ChatGPT via Codex). Edit or clear it if you don’t want something included.
+            </p>
+          ) : null}
+          <label className="wa-reply-label" htmlFor={`wa-ctx-${entry.id}`}>
+            Visible chat context
+          </label>
+          <textarea
+            id={`wa-ctx-${entry.id}`}
+            className="wa-reply-area"
+            rows={6}
+            value={entry.context}
+            onChange={(e) => onAction({ type: 'set-context', context: e.target.value })}
+          />
+          <label className="wa-reply-label" htmlFor={`wa-ins-${entry.id}`}>
+            Instruction
+          </label>
+          <textarea
+            id={`wa-ins-${entry.id}`}
+            className="wa-reply-area"
+            rows={2}
+            value={entry.instruction}
+            onChange={(e) => onAction({ type: 'set-instruction', instruction: e.target.value })}
+          />
+          <div className="panel-inline">
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'use-context' })}>
+              Use visible messages
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'go-latest' })}>
+              Go to latest
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'skip-context' })}>
+              Draft without chat context
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : null}
+      {entry.status === 'question' ? (
+        <>
+          <p>{entry.question}</p>
+          <input
+            value={entry.answer ?? ''}
+            placeholder="Your answer"
+            aria-label="Answer"
+            onChange={(e) => onAction({ type: 'set-answer', answer: e.target.value })}
+          />
+          <div className="panel-inline">
+            <button type="button" className="text-button" disabled={!entry.answer?.trim()} onClick={() => onAction({ type: 'answer' })}>
+              Answer and draft
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : null}
+      {entry.status === 'clarify-time' ? (
+        <>
+          <p>{entry.question}</p>
+          {entry.originalTranscript ? (
+            <p className="panel-detail note">Original: {entry.originalTranscript}</p>
+          ) : null}
+          <div className="panel-inline wrap">
+            {(entry.timeChoices ?? []).map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                className="text-button secondary"
+                onClick={() => onAction({ type: 'resolve-time', choice })}
+              >
+                {choice}
+              </button>
+            ))}
+          </div>
+          <input
+            value={entry.answer ?? ''}
+            placeholder="Or type the intended times…"
+            aria-label="Custom time clarification"
+            onChange={(e) => onAction({ type: 'set-answer', answer: e.target.value })}
+          />
+          <div className="panel-inline">
+            <button
+              type="button"
+              className="text-button"
+              disabled={!entry.answer?.trim()}
+              onClick={() => onAction({ type: 'resolve-time', choice: entry.answer?.trim() || '' })}
+            >
+              Use this
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : null}
+      {entry.status === 'choose-insert' ? (
+        <>
+          <p className="panel-detail">Draft ready — waiting for Replace / Append / Cancel.</p>
+          <p>WhatsApp’s message box already has text. Replace it, append the draft, or cancel?</p>
+          <pre className="wa-reply-draft">{entry.draft}</pre>
+          <div className="panel-inline">
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'insert', mode: 'replace' })}>
+              Replace
+            </button>
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'insert', mode: 'append' })}>
+              Append
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : null}
+      {entry.status === 'switched' ? (
+        <>
+          <p>
+            You switched chats while I drafted. The draft was for “{entry.chatName}”
+            {entry.pendingHeader ? `; WhatsApp is on “${entry.pendingHeader}”` : ''}. Return to the original chat to insert it?
+          </p>
+          <pre className="wa-reply-draft">{entry.draft}</pre>
+          <div className="panel-inline">
+            <button type="button" className="text-button" onClick={() => onAction({ type: 'return-chat' })}>
+              Open {entry.chatName}
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'keep-here' })}>
+              Keep draft here
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'copy' })}>
+              Copy
+            </button>
+          </div>
+        </>
+      ) : null}
+      {(entry.status === 'ready' || entry.status === 'inserted' || entry.status === 'failed') && entry.draft ? (
+        <>
+          {entry.status === 'ready' ? <p className="panel-detail">Draft ready.</p> : null}
+          {entry.status === 'inserted' ? (
+            <p className="panel-detail">
+              {entry.sendStatus === 'sent'
+                ? `Inserted earlier; later send observed${entry.chatName ? ` (in ${entry.chatName})` : ''}.`
+                : entry.sendStatus === 'unverified'
+                  ? `Inserted as a draft; current send status unverified${entry.chatName ? ` (in ${entry.chatName})` : ''}.`
+                  : `Inserted — not sent${entry.chatName ? ` (in ${entry.chatName})` : ''}.`}
+            </p>
+          ) : null}
+          {entry.status === 'failed' && entry.error ? <p className="panel-detail note">{entry.error}</p> : null}
+          <label className="wa-reply-label" htmlFor={`wa-draft-${entry.id}`}>
+            Draft
+          </label>
+          <textarea
+            id={`wa-draft-${entry.id}`}
+            className="wa-reply-area"
+            rows={5}
+            value={entry.draft}
+            onChange={(e) => onAction({ type: 'set-draft', draft: e.target.value })}
+          />
+          <div className="panel-inline">
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'refine', change: 'shorter' })}>
+              Shorter
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'refine', change: 'more formal' })}>
+              More formal
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'copy' })}>
+              Copy
+            </button>
+            {entry.status === 'failed' || entry.status === 'ready' ? (
+              <button type="button" className="text-button" onClick={() => onAction({ type: 'retry' })}>
+                {entry.insertedText ? 'Retry insertion' : 'Insert'}
+              </button>
+            ) : (
+              <button type="button" className="text-button" onClick={() => onAction({ type: 'retry' })}>
+                Retry insertion
+              </button>
+            )}
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+              Cancel
+            </button>
+          </div>
+          <div className="panel-inline wrap">
+            <input
+              value={entry.followUp ?? ''}
+              placeholder="Edit instruction…"
+              aria-label="Edit instruction"
+              onChange={(e) => onAction({ type: 'set-follow-up', followUp: e.target.value })}
+            />
+            <button
+              type="button"
+              className="text-button"
+              disabled={!entry.followUp?.trim()}
+              onClick={() => onAction({ type: 'refine', change: entry.followUp?.trim() || '' })}
+            >
+              Edit instruction
+            </button>
+          </div>
+        </>
+      ) : null}
+      {entry.status === 'failed' && !entry.draft && entry.error ? (
+        <>
+          <p className="panel-detail note">{entry.error}</p>
+          <div className="panel-inline">
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
+              Dismiss
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+function WhatsAppChooser({
+  entryId,
+  title,
+  options,
+  onChoose,
+  onCancel,
+  onRefine
+}: {
+  entryId: number
+  title: string
+  options: PanelChoice[]
+  onChoose: (optionId: string) => void
+  onCancel: () => void
+  onRefine: () => void
+}): ReactNode {
+  const [active, setActive] = useState(0)
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    setActive(0)
+    listRef.current?.focus()
+  }, [entryId, options])
+  useEffect(() => {
+    if (active < 0 || active >= options.length) setActive(0)
+  }, [active, options.length])
+
+  function onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (options.length === 0) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActive((i) => (i + 1) % options.length)
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActive((i) => (i - 1 + options.length) % options.length)
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      const option = options[active]
+      if (option) onChoose(option.id)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onCancel()
+    }
+  }
+
+  return (
+    <div className="wa-chooser">
+      <p className="wa-chooser-title">{title}</p>
+      <div
+        ref={listRef}
+        className="wa-chooser-list"
+        role="listbox"
+        tabIndex={0}
+        aria-label="WhatsApp chats"
+        aria-activedescendant={options[active] ? `wa-choice-${entryId}-${active}` : undefined}
+        onKeyDown={onKeyDown}
+      >
+        {options.map((option, index) => {
+          const label = option.kind === 'group' ? 'Group' : option.kind === 'contact' ? 'Contact' : ''
+          return (
+            <button
+              type="button"
+              role="option"
+              id={`wa-choice-${entryId}-${index}`}
+              key={option.id}
+              aria-selected={index === active}
+              className={index === active ? 'wa-choice is-active' : 'wa-choice'}
+              onMouseEnter={() => setActive(index)}
+              onClick={() => onChoose(option.id)}
+            >
+              <span className="wa-choice-index">{index + 1}</span>
+              <span className="wa-choice-body">
+                <span className="wa-choice-name">{option.name}</span>
+                {label ? <span className="wa-choice-kind">{label}</span> : null}
+                {option.detail ? <span className="wa-choice-detail">{option.detail}</span> : null}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <p className="panel-detail">Use ↑↓ and Enter, or say “the second one”. Say a shorter name to refine.</p>
+      <div className="panel-inline">
+        <button type="button" className="text-button secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="text-button secondary" onClick={onRefine}>
+          Refine search
+        </button>
+      </div>
+    </div>
   )
 }

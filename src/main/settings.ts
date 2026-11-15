@@ -2,8 +2,10 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { parseSavedChats, type SavedChat } from '../shared/chatgpt'
+import { parseAliases, type WhatsAppAlias } from '../shared/whatsapp'
 import { parsePanelSize, type PanelKind } from '../shared/layout'
 import { parseCorrections, parseRules, type ImportanceRules, type MailCorrections } from '../shared/mail'
+import { parseExamples, parsePreferences, type CorrectionExample, type MikoStructuredPreferences } from '../shared/preferences'
 
 /** Small persisted preferences in userData/miko-settings.json. Unknown keys (e.g. summonShortcut) are kept. */
 
@@ -100,6 +102,15 @@ export function setMailRules(rules: ImportanceRules): boolean {
   return writeKey('mailRules', parseRules(rules))
 }
 
+/** The chosen pet id as stored (validated by the caller). Absent = the Doberman. */
+export function selectedPet(): unknown {
+  return readAll().pet
+}
+
+export function setSelectedPet(id: string): boolean {
+  return writeKey('pet', id)
+}
+
 /** Chosen Chat / Mail panel sizes (null = default size). */
 export function panelSizeSetting(kind: PanelKind): { width: number; height: number } | null {
   const all = readAll().panelSizes
@@ -112,6 +123,63 @@ export function setPanelSizeSetting(kind: PanelKind, size: { width: number; heig
   if (size) next[kind] = parsePanelSize(kind, size)
   else delete next[kind]
   return writeKey('panelSizes', next)
+}
+
+/** Short names for WhatsApp chats, on this Mac only. */
+export function whatsAppAliases(): WhatsAppAlias[] {
+  return parseAliases(readAll().whatsappAliases)
+}
+
+export function setWhatsAppAliases(list: WhatsAppAlias[]): boolean {
+  return writeKey('whatsappAliases', parseAliases(list))
+}
+
+/** First-use notice: WhatsApp reply context is sent to MIKO’s model. */
+export function whatsAppContextNoticeSeen(): boolean {
+  return readAll().whatsappContextNoticeSeen === true
+}
+
+export function setWhatsAppContextNoticeSeen(seen: boolean): boolean {
+  return writeKey('whatsappContextNoticeSeen', seen === true)
+}
+
+/** Structured approved preferences (browser, tone, …) — not model weights. */
+export function structuredPreferences(): MikoStructuredPreferences {
+  return parsePreferences(readAll().structuredPreferences)
+}
+
+export function setStructuredPreferences(prefs: MikoStructuredPreferences): boolean {
+  return writeKey('structuredPreferences', parsePreferences(prefs))
+}
+
+/** Owner-approved routing correction examples for the interpreter. */
+export function correctionExamples(): CorrectionExample[] {
+  return parseExamples(readAll().correctionExamples)
+}
+
+export function setCorrectionExamples(list: CorrectionExample[]): boolean {
+  return writeKey('correctionExamples', parseExamples(list))
+}
+
+export function addCorrectionExample(example: Omit<CorrectionExample, 'id' | 'createdAt'> & { id?: string }): CorrectionExample[] {
+  const list = correctionExamples()
+  const next: CorrectionExample = {
+    id: example.id || `ex-${Date.now().toString(36)}`,
+    wording: example.wording.slice(0, 200),
+    actionKind: example.actionKind.slice(0, 64),
+    targetAlias: example.targetAlias?.slice(0, 80),
+    note: example.note?.slice(0, 200),
+    createdAt: Date.now()
+  }
+  const deduped = list.filter((e) => e.wording.toLowerCase() !== next.wording.toLowerCase() || e.actionKind !== next.actionKind)
+  deduped.unshift(next)
+  setCorrectionExamples(deduped.slice(0, 50))
+  return correctionExamples()
+}
+
+export function removeCorrectionExample(id: string): CorrectionExample[] {
+  setCorrectionExamples(correctionExamples().filter((e) => e.id !== id))
+  return correctionExamples()
 }
 
 /** The owner's mail category corrections. */
