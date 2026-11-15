@@ -2049,7 +2049,7 @@ export function MotionApp() {
       patchWaReply(entryId, { status: 'question', question: parsed.text, requestId: '', draft: entry.draft })
       return
     }
-    if (parsed.kind === 'empty') {
+    if (parsed.kind === 'empty' || parsed.kind === 'unrelated') {
       patchWaReply(entryId, { status: 'failed', error: 'No draft came back.', requestId: '' })
       return
     }

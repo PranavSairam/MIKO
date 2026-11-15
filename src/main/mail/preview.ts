@@ -70,6 +70,20 @@ export function previewMessages(): MailMessage[] {
       text: `Hello,\n\n${snippet}\n\nThanks,\n${fromName}`
     })
   }
+  // An automated sender (no-reply) for the "may not accept replies" note.
+  const auto = out[3]
+  out[3] = {
+    ...auto,
+    from: 'Jobs Alerts',
+    fromEmail: 'notifications-noreply@example.com',
+    replyTo: '',
+    subject: '[Sample] New jobs for you this week',
+    snippet: '5 new jobs match your preferences.',
+    text: 'Hello,\n\n5 new jobs match your preferences.\n\nYou are receiving this because you subscribed.',
+    html: '',
+    labels: ['INBOX', 'CATEGORY_UPDATES'],
+    unread: false
+  }
   // One message only findable by search beyond the first pages.
   const old = out[out.length - 1]
   out[out.length - 1] = {

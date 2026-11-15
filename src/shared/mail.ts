@@ -2,8 +2,8 @@
 
 export type MailProvider = 'gmail'
 /** Mail tabs. 'all' = All mail (inbox, or the whole mailbox for a search). */
-export type MailFilter = 'all' | 'unread' | 'action' | 'fyi' | 'updates' | 'promotions'
-export const MAIL_FILTERS: MailFilter[] = ['all', 'unread', 'action', 'fyi', 'updates', 'promotions']
+export type MailFilter = 'all' | 'unread' | 'important' | 'action' | 'fyi' | 'updates' | 'promotions'
+export const MAIL_FILTERS: MailFilter[] = ['all', 'unread', 'important', 'action', 'fyi', 'updates', 'promotions']
 export type MailCategory = 'action' | 'fyi' | 'updates' | 'promotions' | 'other'
 export const CATEGORY_LABELS: Record<MailCategory, string> = {
   action: 'Action needed',
@@ -61,7 +61,7 @@ export type MailIntent =
   | { kind: 'recent' }
   | { kind: 'unread' }
   | { kind: 'important'; unreadOnly: boolean }
-  | { kind: 'category'; category: Exclude<MailFilter, 'all' | 'unread'> }
+  | { kind: 'category'; category: Exclude<MailFilter, 'all' | 'unread' | 'important'> }
   | { kind: 'search'; query: string }
   /** 1-based position in the displayed results; -1 = last, 0 = unclear ("that one"). */
   | { kind: 'open'; index: number }
@@ -364,6 +364,8 @@ export function categorize(message: MailSummary, rules: ImportanceRules, correct
 export function inFilter(filter: MailFilter, message: MailSummary, category: MailCategory): boolean {
   if (filter === 'all') return true
   if (filter === 'unread') return message.unread
+  // Important = Action needed + Important FYI.
+  if (filter === 'important') return category === 'action' || category === 'fyi'
   return category === filter
 }
 

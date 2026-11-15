@@ -2006,3 +2006,541 @@ pre.mail-body.text {
     transition: none;
   }
 }
+
+/* ---------- Mail, simplified (one step at a time) ---------- */
+/* A near-solid surface so text behind MIKO never competes with mail. The desktop outside stays transparent. */
+.panel.glass.is-mail {
+  --glass-bg: rgba(23, 20, 19, 0.995);
+  background:
+    linear-gradient(170deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0) 30%),
+    var(--glass-bg);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.panel.is-mail .mail {
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.m-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.m-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.m-account {
+  max-width: 220px;
+}
+
+.m-account-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(246, 239, 230, 0.6);
+}
+
+.m-head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.m-icon {
+  min-width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(246, 239, 230, 0.85);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.m-icon:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.m-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.m-icon:focus-visible,
+.m-link:focus-visible,
+.m-item:focus-visible,
+.m-disclose:focus-visible,
+.mail-row:focus-visible {
+  outline: 2px solid rgba(196, 132, 74, 0.9);
+  outline-offset: 1px;
+}
+
+.m-search {
+  position: relative;
+}
+
+.m-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 34px 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #f6efe6;
+  font-size: 13.5px;
+}
+
+.m-search input:focus-visible {
+  outline: none;
+  border-color: rgba(196, 132, 74, 0.8);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.m-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: rgba(246, 239, 230, 0.7);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.m-filters {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.m-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.m-menu-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 12px;
+  background: #2a2320;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.m-menu-list.at-left {
+  left: 0;
+  right: auto;
+}
+
+/* Menus that open near the bottom (draft actions) open upward. */
+.m-actions .m-menu-list {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.m-item {
+  text-align: left;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  color: #f6efe6;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.m-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.m-item.is-on {
+  color: #e7b07a;
+  font-weight: 650;
+}
+
+.m-menu-label {
+  padding: 6px 10px 2px;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(246, 239, 230, 0.5);
+}
+
+.m-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #e7b07a;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.m-link:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.m-resume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(196, 132, 74, 0.14);
+  font-size: 12.5px;
+}
+
+.m-resume span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-results {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: rgba(246, 239, 230, 0.65);
+}
+
+.panel.is-mail .mail-list {
+  gap: 0;
+}
+
+.panel.is-mail .mail-row {
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+
+.panel.is-mail .mail-row + .mail-row {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.panel.is-mail .mail-subject {
+  font-size: 13px;
+}
+
+.m-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border-radius: 50%;
+  border: 2px solid rgba(231, 176, 122, 0.25);
+  border-top-color: #e7b07a;
+  animation: pet-spin 0.9s linear infinite;
+}
+
+.m-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.m-settings .m-bar {
+  justify-content: flex-start;
+}
+
+.m-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 2px;
+}
+
+.m-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.m-section h3 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(246, 239, 230, 0.6);
+}
+
+.m-section .mail-pop.adv,
+.m-section .mail-pop.rules {
+  background: rgba(255, 255, 255, 0.04);
+  border: 0;
+}
+
+.panel.is-mail .mail-reader {
+  gap: 10px;
+}
+
+.panel.is-mail .mail-head h2 {
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.m-from {
+  overflow-wrap: anywhere;
+}
+
+.panel.is-mail .mail-body {
+  flex: 1 1 auto;
+  min-height: 140px;
+}
+
+.m-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.m-actions .glass-button {
+  padding: 8px 14px;
+  font-size: 12.5px;
+}
+
+/* Reply */
+.m-reply {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.m-reply-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.m-disclose {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: #f6efe6;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.m-details {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12.5px;
+}
+
+.m-details p {
+  margin: 0 0 2px;
+  overflow-wrap: anywhere;
+}
+
+.m-key {
+  display: inline-block;
+  min-width: 58px;
+  color: rgba(246, 239, 230, 0.55);
+}
+
+.m-note {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(246, 239, 230, 0.6);
+}
+
+.m-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: rgba(246, 239, 230, 0.85);
+}
+
+.m-input,
+.m-refine input,
+.m-card input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #f6efe6;
+  padding: 9px 11px;
+  font: 13px/1.5 -apple-system, 'Segoe UI', sans-serif;
+  resize: vertical;
+}
+
+.m-input:focus-visible,
+.m-refine input:focus-visible,
+.m-card input:focus-visible {
+  outline: none;
+  border-color: rgba(196, 132, 74, 0.85);
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.m-input::placeholder,
+.m-refine input::placeholder,
+.m-card input::placeholder,
+.m-search input::placeholder {
+  color: rgba(246, 239, 230, 0.42);
+}
+
+/* The draft is the main content: it takes the free height, in the panel's own dark theme. */
+.m-draft {
+  flex: 1 1 160px;
+  min-height: 120px;
+  resize: none;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.m-context {
+  font-size: 12px;
+}
+
+.m-share {
+  font-size: 12px;
+  color: rgba(246, 239, 230, 0.65);
+}
+
+.m-share summary {
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.m-share[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.m-share .m-link {
+  align-self: flex-start;
+}
+
+.m-refine {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.m-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 210, 120, 0.1);
+}
+
+.m-card p {
+  margin: 0;
+}
+
+.m-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.m-row input {
+  flex: 1;
+  min-width: 140px;
+  width: auto;
+}
+
+.m-answers {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
+
+.m-foot {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(246, 239, 230, 0.45);
+}
+
+@media (max-width: 860px) {
+  .m-account {
+    max-width: 150px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-spinner {
+    animation: none;
+  }
+}
+
+/* Plain-text mail reads in the panel's own theme; HTML mail keeps a soft light page (it is designed for one). */
+.panel.is-mail .mail-body {
+  box-sizing: border-box;
+  border-radius: 12px;
+}
+
+.panel.is-mail iframe.mail-body {
+  background: #fbf8f4;
+}
+
+.panel.is-mail pre.mail-body.text {
+  background: rgba(255, 255, 255, 0.045);
+  color: #f1e9de;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* The chat input's `.panel textarea` sizing must not apply to the mail editors. */
+.panel .m-reply textarea.m-input {
+  height: auto;
+  flex: 0 0 auto;
+  resize: vertical;
+}
+
+.panel .m-reply textarea.m-draft {
+  flex: 1 1 160px;
+  height: auto;
+  min-height: 120px;
+  resize: none;
+}
+
+/* Before a draft: the note field takes the spare height (capped), so Create draft sits near the bottom. */
+.panel .m-reply textarea.m-input.m-grow {
+  flex: 1 1 96px;
+  min-height: 72px;
+  max-height: 460px;
+  resize: none;
+}

@@ -88,6 +88,57 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-15: Mail UI simplified (inbox, message, reply)
+- **Kept:** connections, search, categories and corrections, reading, thread context, read-only provider, reply drafting via MIKO's assistant, and the no-send rule. There's no backend rewrite: only shared prompt helpers, one new filter, and the hook's reply state changed.
+- **Inbox:**
+  - **Header:** "Mail", account selector (plain text with one account), ↻, ⚙.
+  - **Search and filters:** one field "Search your mail"; **All / Unread / Important** (new filter = Action needed + Important FYI); **More ▾** for Action needed, Important FYI, Updates, Promotions (the button shows the active one).
+  - **Rows:** sender, subject, preview, time, unread dot (plus an account badge only for "All accounts" with several accounts).
+  - **⚙ Mail settings:** holds Accounts, Advanced search and "What counts as Important" (rules).
+  - **States:** loading spinner, empty, error with Try again, and a "Results for … · Clear" line while searching.
+- **Message:**
+  - ← Back, subject, sender, date (account only when several), body using the available height, primary **Reply**, secondary **Open in Gmail** (provider label).
+  - Copy text and category change sit in a ⋯ menu.
+  - Search/filters are hidden.
+  - Plain text uses the dark theme; HTML mail keeps a soft light page.
+- **Reply:**
+  - **Before a draft:** "Reply to <sender>" (▸ shows To/Subject/From), one field "What would you like to say?" (⌘↵ works), primary **Create draft**, and a collapsed "Review what's shared" (editable context).
+  - **After the draft:** the dark editable draft is the main content, one field "Ask MIKO to change it…", primary **Copy reply**, secondary **Open in Gmail**, **More ▾** (Regenerate, tones), and "View instruction" collapsed (instruction, your answers, "Create a new draft from this").
+  - **One route per action:** live check found 1 Copy, 1 Open in Gmail, and Regenerate only in More.
+- **Clarifications:**
+  - Answers are stored in `clarifications[]` and sent as their own `<answers>` block. The instruction stays exactly as written; the old "(You asked: … My answer: …)" append is gone.
+  - Questions appear in one inline card ("Continue").
+  - The prompt forbids inferring facts from a sender's name or brand.
+  - An `UNRELATED:` reply shows "Reply to this email / Write a new message". Standalone doesn't send the email to the model.
+  - No-reply / notification addresses show "may not accept replies" (`isNoReplyAddress`); copying still works.
+- **Readability:**
+  - Near-solid mail panel (the desktop outside MIKO stays transparent), fewer borders, consistent spacing.
+  - The draft and the message body take the free height; the actions stay at the bottom.
+  - **Fixed along the way:**
+    - The chat input's `.panel textarea` rule pinned the draft at 120 px.
+    - A plain-text body overflowed the panel by 28 px (content-box).
+    - An old notice followed you into the message view.
+- **Checks:** typecheck pass, **242** tests pass (+5 reply prompt and no-reply tests, Important filter), build pass.
+
+#### Live (preview mailbox, real drafts from MIKO's assistant; no mail sent)
+| Check | Result |
+|---|---|
+| Inbox layout | Header, "Search your mail", All/Unread/Important + More (4 items); Advanced, Rules and accounts not in the inbox; settings has the 3 sections |
+| Search → open → back | "invoice" → 4 rows → open → Back: query and results unchanged; 20-row list Back restored scrollTop 300 |
+| Message view | Search/filters hidden; actions = Reply, Open in Gmail; Open in Gmail targeted `…/u/preview%40example.com/#all/18f0001003` for message (2) (openExternal intercepted, no browser) |
+| Read → Reply → draft | Heading "Reply to Imran Khan", Create draft disabled when empty, draft in 6 s, dark editor (rgb 20,18,17), instruction collapsed |
+| Edit then refine | Manual "P.S. Thanks again…" kept after "add that I'll send the signed form tomorrow" |
+| More | Regenerate + Shorter / More polite / More formal / Friendlier; Shorter applied |
+| Copy | Clipboard equals the draft (owner's clipboard restored after) |
+| Close/reopen panel | Draft kept |
+| Stop / Cancel | "Drafting stopped." with the draft kept; Cancel → "Reply cancelled. Nothing was sent." |
+| Clarification | "What time on Tuesday works for you?" → "Tuesday 1 pm" → draft; instruction still "suggest a time that works for me"; no "You asked / My answer" leak |
+| Unrelated note | "remind me to buy milk…" → card → Write a new message → "New message" draft |
+| No-reply sender | Note shown for notifications-noreply@ |
+| Sizes | Draft 125 / 225 / 405 px at Small / Medium / Large, Copy visible, 9 px below, no inner scroll; before a draft the note field fills (Large 453 px), 9 px below |
+
+- **Not covered live:** a real Gmail failure; the error/Try again path is the same code as before. The voice dictation route into the new fields is unchanged in the hook.
+
 ### 2026-11-15: Pet customization (Doberman, cat, bird with tree, koala)
 - **Picked up from Cursor:** Cursor's uncommitted work (WhatsApp, browser tabs, Chrome profiles, actions/interpreter, preferences, about 7,000 lines) was preserved untouched.
   - There was no partial pet code in `src/`.

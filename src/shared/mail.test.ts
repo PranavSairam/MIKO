@@ -99,6 +99,7 @@ describe('gmailQuery', () => {
     assert.equal(gmailQuery('unread', ''), 'in:inbox is:unread')
     assert.equal(gmailQuery('action', ''), 'in:inbox')
     assert.equal(gmailQuery('fyi', ''), 'in:inbox')
+    assert.equal(gmailQuery('important', ''), 'in:inbox')
     assert.equal(gmailQuery('updates', ''), 'in:inbox category:updates')
     assert.equal(gmailQuery('promotions', ''), 'in:inbox category:promotions')
     assert.equal(gmailQuery('all', 'invoice'), 'invoice -in:spam -in:trash')
@@ -151,6 +152,9 @@ describe('categorize', () => {
     assert.equal(inFilter('all', msg(), 'other'), true)
     assert.equal(inFilter('unread', msg({ unread: false }), 'action'), false)
     assert.equal(inFilter('action', msg(), 'fyi'), false)
+    assert.equal(inFilter('important', msg(), 'fyi'), true)
+    assert.equal(inFilter('important', msg(), 'action'), true)
+    assert.equal(inFilter('important', msg(), 'updates'), false)
   })
 })
 

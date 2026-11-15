@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
-import { draftPrompt, htmlToText, missingDetail, parseDraft, replyContext, replyRecipient, replySubject, stripQuoted } from './mail-reply.ts'
+import { draftPrompt, htmlToText, isNoReplyAddress, missingDetail, parseDraft, replyContext, replyRecipient, replySubject, stripQuoted } from './mail-reply.ts'
 import type { MailMessage } from './mail.ts'
 
 const message = (over: Partial<MailMessage> = {}): MailMessage => ({
@@ -76,5 +76,36 @@ describe('draft prompt', () => {
     assert.deepEqual(parseDraft('  '), { kind: 'empty' })
     assert.match(missingDetail('') ?? '', /What should the reply say/)
     assert.equal(missingDetail('yes'), null)
+  })
+})
+
+describe('clarifications, relatedness and automated senders', () => {
+  const base = { account: 'me@x.com', to: 'LinkedIn <notifications-noreply@linkedin.com>', subject: 'Re: New jobs', context: 'From: LinkedIn\n\nJobs for you', instruction: 'tell them I can come on Friday' }
+  it('keeps answers in their own block and never in the instruction', () => {
+    const p = draftPrompt({ ...base, clarifications: [{ question: 'Which Friday?', answer: 'Nov 20' }] })
+    assert.match(p, /<instruction>\ntell them I can come on Friday\n<\/instruction>/)
+    assert.match(p, /<answers>\nQ: Which Friday\?\nA: Nov 20\n<\/answers>/)
+    assert.doesNotMatch(p, /You asked:|My answer:/)
+  })
+  it('warns against inferring facts from the sender name and checks relatedness once', () => {
+    const p = draftPrompt(base)
+    assert.match(p, /Do not infer real-world facts from a sender's name/)
+    assert.match(p, /UNRELATED:/)
+    assert.doesNotMatch(draftPrompt({ ...base, confirmedRelated: true }), /UNRELATED:/)
+    assert.doesNotMatch(draftPrompt({ ...base, previous: 'Hi', change: 'shorter' }), /UNRELATED:/)
+  })
+  it('writes a standalone message without sending the email', () => {
+    const p = draftPrompt({ ...base, mode: 'standalone' })
+    assert.match(p, /standalone email/)
+    assert.doesNotMatch(p, /<email>/)
+    assert.doesNotMatch(p, /Jobs for you/)
+  })
+  it('reads the unrelated signal and one-line questions', () => {
+    assert.deepEqual(parseDraft('UNRELATED: this is not about the email'), { kind: 'unrelated' })
+    assert.deepEqual(parseDraft('QUESTION: Which day works?\nAlso extra text'), { kind: 'question', text: 'Which day works?' })
+  })
+  it('spots automated senders that may not accept replies', () => {
+    for (const a of ['noreply@x.com', 'no-reply@x.com', 'notifications-noreply@linkedin.com', 'donotreply@bank.com', 'mailer-daemon@googlemail.com', 'notifications@github.com']) assert.equal(isNoReplyAddress(a), true, a)
+    for (const a of ['asha@co.com', 'replies@co.com', 'noah@x.com']) assert.equal(isNoReplyAddress(a), false, a)
   })
 })

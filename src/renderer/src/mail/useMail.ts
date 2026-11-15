@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ImportanceRules, ListedMail, MailCategory, MailCorrections, MailFilter, MailMessage, MailStatusInfo, ThreadEntry } from '../../../shared/api'
 import { CATEGORY_LABELS, EMPTY_CORRECTIONS, categorize, type MailIntent } from '../../../shared/mail'
-import { bodyText, draftPrompt, missingDetail, parseDraft, replyContext, replyRecipient, replySubject, type DraftRequest } from '../../../shared/mail-reply'
+import { bodyText, draftPrompt, isNoReplyAddress, parseDraft, replyContext, replyRecipient, replySubject, type Clarification, type DraftRequest } from '../../../shared/mail-reply'
 
 const SEARCH_DEBOUNCE_MS = 350
 /** Text that starts like a command waits for Enter instead of live-searching (so "reply to the second email" keeps the results it refers to). */
@@ -16,6 +16,8 @@ export interface ReplyTarget {
   toEmail: string
   subject: string
   original: { subject: string; from: string; date: number }
+  /** The recipient looks automated (no-reply, notifications): it may not accept replies. */
+  noReply: boolean
 }
 
 export interface ReplyState {
@@ -27,9 +29,15 @@ export interface ReplyState {
   instruction: string
   draft: string
   followUp: string
+  /** The open clarification question, and the answer being typed for it. */
   question: string
   answer: string
-  status: 'idle' | 'drafting' | 'done' | 'question' | 'failed'
+  /** Answered clarifications: sent as their own block, never merged into `instruction`. */
+  clarifications: Clarification[]
+  /** 'standalone' after the owner chose "a new message" for an unrelated note. */
+  mode: 'reply' | 'standalone'
+  confirmedRelated: boolean
+  status: 'idle' | 'drafting' | 'done' | 'question' | 'unrelated' | 'failed'
   error: string
   requestId: string
   /** The last request, for Regenerate. */
@@ -89,6 +97,8 @@ export interface MailActions {
   refine: (change: string) => Promise<void>
   regenerate: () => Promise<void>
   answerQuestion: () => Promise<void>
+  /** The note didn't look related to the email: reply to it anyway, or write a new message. */
+  resolveUnrelated: (choice: 'reply' | 'standalone') => Promise<void>
   stopDrafting: () => void
   cancelReply: () => void
   copyReply: () => Promise<void>
@@ -115,7 +125,8 @@ function targetFor(message: MailMessage): ReplyTarget {
     to: to.name ? `${to.name} <${to.email}>` : to.email,
     toEmail: to.email,
     subject: replySubject(message.subject),
-    original: { subject: message.subject, from: message.from, date: message.date }
+    original: { subject: message.subject, from: message.from, date: message.date },
+    noReply: isNoReplyAddress(to.email)
   }
 }
 
@@ -219,6 +230,7 @@ export function useMail(): [MailState, MailActions] {
       }
       const result = parseDraft(u.reply ?? '')
       if (result.kind === 'question') patchReply({ status: 'question', question: result.text, answer: '', reviewed: true })
+      else if (result.kind === 'unrelated') patchReply({ status: 'unrelated', reviewed: true })
       else if (result.kind === 'draft') patchReply({ status: 'done', draft: result.text, question: '', reviewed: true, drafts: current.drafts + 1, followUp: '' })
       else patchReply({ status: 'failed', error: 'MIKO returned an empty draft. Try Regenerate.' })
     })
@@ -241,6 +253,9 @@ export function useMail(): [MailState, MailActions] {
       followUp: '',
       question: '',
       answer: '',
+      clarifications: [],
+      mode: 'reply',
+      confirmedRelated: false,
       status: 'idle',
       error: '',
       requestId: '',
@@ -287,6 +302,7 @@ export function useMail(): [MailState, MailActions] {
   )
 
   const open = useCallback((key: string) => {
+    setNotice('')
     if (readingRef.current?.key === key && readingRef.current.message) {
       // Already open: re-run the binding effect for a pending reply.
       setReading({ ...readingRef.current })
@@ -350,7 +366,10 @@ export function useMail(): [MailState, MailActions] {
     to: r.target.to,
     subject: r.target.subject,
     context: r.context,
-    instruction: r.instruction.trim()
+    instruction: r.instruction.trim(),
+    clarifications: r.clarifications,
+    mode: r.mode,
+    confirmedRelated: r.confirmedRelated
   })
 
   const stopDrafting = useCallback(() => {
@@ -405,7 +424,10 @@ export function useMail(): [MailState, MailActions] {
       void load(false)
     },
     open,
-    back: () => setReading(null),
+    back: () => {
+      setNotice('')
+      setReading(null)
+    },
     openOriginal: async (key) => {
       const ok = await window.miko.mailOpenOriginal(key)
       setNotice(ok ? 'Opened in Gmail. Gmail may mark it as read.' : 'Couldn’t open the original message.')
@@ -474,8 +496,8 @@ export function useMail(): [MailState, MailActions] {
         return say('Showing unread mail.')
       }
       if (intent.kind === 'important') {
-        browse('action', intent.unreadOnly)
-        return say(`Showing Action needed${intent.unreadOnly ? ' (unread)' : ''}. Important FYI has the rest.`)
+        browse('important', intent.unreadOnly)
+        return say(`Showing important mail${intent.unreadOnly ? ' (unread)' : ''}.`)
       }
       if (intent.kind === 'category') {
         browse(intent.category, false)
@@ -520,12 +542,11 @@ export function useMail(): [MailState, MailActions] {
     draftReply: async () => {
       const r = replyRef.current
       if (!r || r.status === 'drafting') return
-      const missing = missingDetail(r.instruction)
-      if (missing) {
-        patchReply({ status: 'question', question: missing, answer: '' })
+      if (!r.instruction.trim()) {
+        patchReply({ status: r.draft ? 'done' : 'idle', error: 'Write what you’d like to say first. A rough line is enough.' })
         return
       }
-      if (!r.context.trim()) {
+      if (!r.context.trim() && r.mode === 'reply') {
         patchReply({ status: 'failed', error: 'The email context is empty. Use Reset context, or write the reply yourself.' })
         return
       }
@@ -551,11 +572,18 @@ export function useMail(): [MailState, MailActions] {
     answerQuestion: async () => {
       const r = replyRef.current
       if (!r || !r.answer.trim()) return
-      const instruction = r.instruction.trim() ? `${r.instruction.trim()}\n(You asked: “${r.question}” My answer: ${r.answer.trim()})` : r.answer.trim()
-      const next = { ...r, instruction, question: '', answer: '' }
+      // The answer is stored beside the instruction, which stays exactly as the owner wrote it.
+      const next: ReplyState = { ...r, clarifications: [...r.clarifications, { question: r.question, answer: r.answer.trim() }].slice(-5), question: '', answer: '' }
       setReplyState(next)
       replyRef.current = next
-      if (!next.context.trim()) return
+      await send(baseRequest(next))
+    },
+    resolveUnrelated: async (choice) => {
+      const r = replyRef.current
+      if (!r || r.status !== 'unrelated') return
+      const next: ReplyState = choice === 'reply' ? { ...r, confirmedRelated: true } : { ...r, mode: 'standalone' }
+      setReplyState(next)
+      replyRef.current = next
       await send(baseRequest(next))
     },
     stopDrafting,
