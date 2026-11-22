@@ -91,6 +91,26 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-22: Windows Tab + Q switcher and Shift + A hold-to-talk (Mac unchanged)
+- **Owner ask:** "a tab q tab switcher and a shift a for talk in windows and dont change for mac". Built on the Mac, so not run on Windows yet.
+- **New `resources/keys-win.ps1`.** A long-lived PowerShell process that compiles a small C# 5 class (`Add-Type -IgnoreWarnings`, no admin). It installs a `WH_KEYBOARD_LL` hook.
+  - **Tab + Q:** Tab passes through as on the Mac; only Q is swallowed. Emits `{"event":"switcher"}`.
+  - **Shift + A (no Ctrl/Alt/Win):** the A is held back. Still held after 350 ms → `talk-start`; releasing A or Shift → `talk-stop`. Let go sooner → the A is replayed with SendInput (shift kept), so typing "A" still works.
+  - Fast typing: another key during the wait replays the A first, then that key, in order. Injected keys are ignored by the hook.
+  - On stdin it answers `list` (visible, unowned, non-tool, non-cloaked windows in z-order; Store apps resolved through ApplicationFrameHost to the real process), `focus` (restore + AttachThreadInput + SetForegroundWindow, Alt-tap fallback) and `close` (WM_CLOSE).
+  - Exits on stdin close or parent exit.
+- **`src/main/win-keys.ts`:** runs the helper (relaunch once), maps events to the same `KeyHandlers` as the Mac, and handles request/reply by id. `src/shared/win-keys.ts`: line parser and `groupWindows` (one card per app, front-most first, skips MIKO's exe and shell surfaces).
+- **Mac kept unchanged:** `startKeys` gains a `win32` branch only; `keys-mac.swift` is untouched. `running.ts` switcher functions (list / focus / quit / graceful quit / pidAlive) gain `win32` branches only. `switcher-window.ts` opens on Windows too; the macOS-only window calls (`setHiddenInMissionControl`, `setWindowButtonVisibility`, `setVisibleOnAllWorkspaces`) are now inside a darwin check, which is the same behavior on the Mac. On Windows, if focus didn't move to the fan, the helper focuses it.
+- **Hold-to-talk speech:** `listen-win.ps1 -Mode hold` uses RecognizeMode.Multiple with silence timeouts off. It joins phrases until `stop`, capped at 58 s. `startListening(true)` uses it on Windows. Copy says "let go of Shift + A"; the Mac copy still says Caps Lock + A. Releasing before recognition is ready cancels quietly. On Windows, start errors from the keys path carry the reason and settings link.
+- **Copy and docs:** Setup voice step, Mail dictation hint (Windows: Shift + A), `docs/WINDOWS_SETUP.md`, `docs/WINDOWS_USER_GUIDE.md`.
+- **Trade-offs to know:**
+  - Holding Shift + A to auto-repeat "AAAA" now talks.
+  - Keys typed into an admin window can't be replayed (UIPI).
+  - Windows needs ~0.5–1.5 s to start recognition; speak after "Listening" appears.
+  - Browser tab lists in the switcher remain Mac-only.
+- **Checks (Mac):** typecheck pass; `npm test` **381** pass (new `win-keys.test.ts`, including C# 5 syntax and `-IgnoreWarnings` static guards); build pass; `pack:win-check` pass; Mac startup smoke clean. **The C# was not compiled** (no PowerShell or C# compiler on this Mac).
+- **Live on Windows:** Tab + Q opens the fan / click switches / quit asks politely — UNTESTED. Shift + A hold talks and the transcript runs once; a quick Shift + A types "A"; fast "AB" typing order kept — UNTESTED. Mac Caps Lock + A and Tab + Q unchanged — UNTESTED live (code path untouched).
+
 ### 2026-11-22: Windows fixes (code-level, made on the Mac) — apps, voice, shortcuts, Interactive GPT, setup
 - **Owner ask:** Fix MIKO on the Windows PC: voice dead, shortcuts dead, "Open Calculator/WhatsApp" → "I can't find …", Interactive GPT opens Chrome. Keep the Mac working. Local changes only, no commit.
 - **Important:** this session ran on the MacBook, not the Windows PC (owner chose "fix code from Mac"). Causes below come from reading the code. **None were reproduced on Windows**, so every live Windows check is UNTESTED. Not done until those pass on the PC.

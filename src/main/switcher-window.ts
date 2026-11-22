@@ -15,8 +15,9 @@ import {
   requestGracefulQuitPid,
   waitUntilPidGone
 } from './running'
+import { winFocusWindow } from './win-keys'
 
-/** The running-apps fan: a second transparent window anchored above MIKO (macOS only). */
+/** The running-apps fan: a second transparent window anchored above MIKO (macOS; Windows via Tab + Q too). */
 
 export const SWITCHER = { width: 760, height: 430 } as const
 /** How far the fan's bottom edge sits below the top of MIKO's box, so the cards rise from the dog. */
@@ -35,13 +36,13 @@ function applySwitcherIgnore(ignore: boolean): void {
   if (!win || win.isDestroyed()) return
   if (ignore === switcherIgnoring) return
   switcherIgnoring = ignore
-  // forward: true is macOS-only here (switcher never opens on Windows).
+  // forward: true lets hover reach the page while clicks pass through (macOS and Windows).
   if (ignore) win.setIgnoreMouseEvents(true, { forward: true })
   else win.setIgnoreMouseEvents(false)
 }
 
 export function openSwitcher(): void {
-  if (process.platform !== 'darwin') return
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return
   const current = ensureWindow()
   if (!ready) {
     openWhenReady = true
@@ -53,6 +54,16 @@ export function openSwitcher(): void {
   current.show()
   current.focus()
   current.webContents.send(IPC.switcherOpened)
+  if (process.platform === 'win32') {
+    // Tab + Q was typed into another app, and Windows may refuse to hand focus to MIKO.
+    // Without focus the fan can't take typing and would close on the first click elsewhere.
+    setTimeout(() => {
+      if (current.isDestroyed() || !current.isVisible() || current.isFocused()) return
+      const handle = current.getNativeWindowHandle()
+      const hwnd = handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0)
+      void winFocusWindow(hwnd)
+    }, 120)
+  }
 }
 
 export function toggleSwitcher(): void {
@@ -247,9 +258,12 @@ function ensureWindow(): BrowserWindow {
   win = created
   created.setBackgroundColor('#00000000')
   created.setAlwaysOnTop(true, 'pop-up-menu')
-  created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  created.setHiddenInMissionControl(true)
-  created.setWindowButtonVisibility(false)
+  if (process.platform === 'darwin') {
+    // macOS-only window APIs (not defined on Windows).
+    created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    created.setHiddenInMissionControl(true)
+    created.setWindowButtonVisibility(false)
+  }
   switcherIgnoring = false
   applySwitcherIgnore(true)
   created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -271,5 +285,5 @@ function ensureWindow(): BrowserWindow {
 
 /** Build the window early so the first Tab + Q is instant. */
 export function warmSwitcher(): void {
-  if (process.platform === 'darwin') ensureWindow()
+  if (process.platform === 'darwin' || process.platform === 'win32') ensureWindow()
 }

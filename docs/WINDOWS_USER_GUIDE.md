@@ -27,7 +27,9 @@ That is expected for this private beta. Do not turn off SmartScreen permanently.
 
 - Pet on screen, drag, tray menu  
 - Panel commands that open apps / websites when Windows can find them  
-- Microphone via **Try microphone** / panel mic (System.Speech) — allow mic privacy if Windows asks  
+- Microphone via **Try microphone** / panel mic / tray **Talk to MIKO** (System.Speech) — allow mic privacy if Windows asks  
+- **Hold Shift + A** to talk, let go to stop (a quick tap still types "A")  
+- **Tab + Q** opens the app switcher (click an app to switch to it)  
 - **Interactive GPT** floating window (separate from the Codex assistant)  
 - Preferences, feedback export, manual update download link when configured  
 
@@ -35,7 +37,7 @@ That is expected for this private beta. Do not turn off SmartScreen permanently.
 
 These features are unavailable or limited on Windows:
 
-- Caps Lock+A voice hold and the MIKO app switcher  
+- Caps Lock+A voice hold (Windows uses Shift + A) and browser tab lists in the switcher  
 - Selected-text assistant shortcut  
 - WhatsApp Accessibility automation (search / open chat / insert draft)  
 - Lens / live window control and browser-tab automation  

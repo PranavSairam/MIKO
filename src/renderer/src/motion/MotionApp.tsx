@@ -1512,7 +1512,11 @@ export function MotionApp() {
       if (event.kind === 'talk-start') {
         // Main already started listening; show it in the panel.
         if (!panelRef.current) void applyPanel(true)
-        setListenDetail('Listening\u2026 let go of Caps Lock + A to stop.')
+        setListenDetail(
+          /win/i.test(navigator.platform || '')
+            ? 'Listening\u2026 let go of Shift + A to stop.'
+            : 'Listening\u2026 let go of Caps Lock + A to stop.'
+        )
         setListening(true)
         return
       }

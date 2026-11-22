@@ -1,5 +1,6 @@
 import { parseKeyEvent } from '../shared/keys'
 import { compileHelper, launchHelper, type HelperHandle, type HelperSpec } from './helper-app'
+import { startWinKeys } from './win-keys'
 
 const KEYS_HELPER: HelperSpec = {
   source: 'keys-mac.swift',
@@ -18,10 +19,12 @@ export interface KeyHandlers {
 }
 
 /**
- * Runs the "MIKO Keys" helper for as long as MIKO runs (macOS only).
+ * Runs the "MIKO Keys" helper for as long as MIKO runs (macOS: keys-mac.swift; Windows: keys-win.ps1).
  * If it dies unexpectedly it is relaunched once. Returns a stop function.
  */
 export function startKeys(handlers: KeyHandlers): () => void {
+  // Windows: Shift + A hold-to-talk and Tab + Q (keys-win.ps1). The Mac path below is unchanged.
+  if (process.platform === 'win32') return startWinKeys(handlers)
   if (process.platform !== 'darwin') return () => undefined
   let stopped = false
   let restarts = 0

@@ -530,7 +530,11 @@ function ReplyComposer({ reply, actions, openLabel }: { reply: ReplyState; actio
       rows={3}
       value={reply.instruction}
       placeholder={`A rough line is enough, e.g. “yes, Thursday 3 pm works, I’ll bring the documents”.${
-        /mac/i.test(navigator.platform || '') ? ' Hold Caps Lock + A to dictate.' : ''
+        /mac/i.test(navigator.platform || '')
+          ? ' Hold Caps Lock + A to dictate.'
+          : /win/i.test(navigator.platform || '')
+            ? ' Hold Shift + A to dictate.'
+            : ''
       }`}
       onChange={(e) => actions.setReply({ instruction: e.target.value })}
       onKeyDown={(e) => {

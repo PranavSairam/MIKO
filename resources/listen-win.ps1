@@ -1,5 +1,5 @@
 # MIKO Windows speech helper (System.Speech, on this PC only).
-# Modes: listen (default) | test | devices
+# Modes: listen (default) | hold (Shift + A held: keeps listening until "stop") | test | devices
 # Output: one JSON object per line on stdout.
 #   {"ready":true,"recognizer":"en-US"}       recognition really started (only then does MIKO show "Listening")
 #   {"text":"...","level":42}                 final transcript
@@ -36,7 +36,9 @@ if ($Mode -eq 'devices') {
   exit 0
 }
 
-$limitSeconds = if ($Mode -eq 'test') { 8 } else { 11 }
+$limitSeconds = if ($Mode -eq 'test') { 8 } elseif ($Mode -eq 'hold') { 58 } else { 11 }
+$hold = $Mode -eq 'hold'
+$parts = New-Object System.Collections.Generic.List[string]
 $engine = $null
 
 function Cleanup {
@@ -91,13 +93,20 @@ try {
 
 try {
   $script:engine.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar))
-  $script:engine.InitialSilenceTimeout = [TimeSpan]::FromSeconds(5)
-  $script:engine.BabbleTimeout = [TimeSpan]::FromSeconds(3)
+  if ($hold) {
+    # Held keys decide when to stop; never end early on silence.
+    $script:engine.InitialSilenceTimeout = [TimeSpan]::Zero
+    $script:engine.BabbleTimeout = [TimeSpan]::Zero
+  } else {
+    $script:engine.InitialSilenceTimeout = [TimeSpan]::FromSeconds(5)
+    $script:engine.BabbleTimeout = [TimeSpan]::FromSeconds(3)
+  }
   $script:engine.EndSilenceTimeout = [TimeSpan]::FromSeconds(0.8)
   $null = Register-ObjectEvent -InputObject $script:engine -EventName SpeechRecognized -SourceIdentifier 'miko.recognized'
   $null = Register-ObjectEvent -InputObject $script:engine -EventName RecognizeCompleted -SourceIdentifier 'miko.completed'
   $null = Register-ObjectEvent -InputObject $script:engine -EventName AudioLevelUpdated -SourceIdentifier 'miko.level'
-  $script:engine.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Single)
+  $recognizeMode = if ($hold) { [System.Speech.Recognition.RecognizeMode]::Multiple } else { [System.Speech.Recognition.RecognizeMode]::Single }
+  $script:engine.RecognizeAsync($recognizeMode)
 } catch {
   $message = $_.Exception.Message
   Cleanup
@@ -145,7 +154,9 @@ while (-not $done -and ((Get-Date) - $start).TotalSeconds -lt $limitSeconds) {
     switch ($ev.SourceIdentifier) {
       'miko.recognized' {
         $result = $ev.SourceEventArgs.Result
-        if ($result -and $result.Text) { $text = [string]$result.Text }
+        if ($result -and $result.Text) {
+          if ($hold) { $parts.Add([string]$result.Text) } else { $text = [string]$result.Text }
+        }
       }
       'miko.completed' {
         $done = $true
@@ -165,6 +176,7 @@ while (-not $done -and ((Get-Date) - $start).TotalSeconds -lt $limitSeconds) {
 
 Cleanup
 
+if ($hold -and $parts.Count -gt 0) { $text = ($parts -join ' ') }
 $clean = ([string]$text).Trim()
 if ($clean) {
   if ($clean.Length -gt 400) { $clean = $clean.Substring(0, 400) }

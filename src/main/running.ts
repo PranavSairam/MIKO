@@ -9,6 +9,8 @@ import {
   type BrowserTab,
   type SwitcherApp
 } from '../shared/switcher'
+import type { WinSwitcherEntry } from '../shared/win-keys'
+import { winCloseWindows, winFocusWindow, winListApps } from './win-keys'
 
 /**
  * Running apps for the switcher (macOS). Reads names, bundle ids, paths and
@@ -20,6 +22,8 @@ const HELPER_NAMES = new Set(['MIKO', 'MIKO Listen', 'MIKO Keys', 'Electron'])
 const ICON_SIZE = 128
 const iconCache = new Map<string, string>()
 let lastListing = new Map<number, SwitcherApp>()
+/** Windows: the windows behind each listed pid (focus / close targets). */
+let winListing = new Map<number, WinSwitcherEntry>()
 
 const LIST_SCRIPT = `
 ObjC.import('AppKit')
@@ -85,6 +89,7 @@ const TAB_SCRIPTS: Record<BrowserId, { list: string; focus: string; close: strin
 }
 
 export async function listRunning(): Promise<SwitcherApp[]> {
+  if (process.platform === 'win32') return listRunningWindows()
   if (process.platform !== 'darwin') return []
   const result = await jxa(LIST_SCRIPT, [], 4000)
   if (!result.ok) return []
@@ -106,6 +111,10 @@ export async function listRunning(): Promise<SwitcherApp[]> {
 
 /** Bring a listed app forward. LaunchServices (`open -a`) also unhides it and is not blocked by activation rules. */
 export async function focusPid(pid: number): Promise<boolean> {
+  if (process.platform === 'win32') {
+    const entry = winListing.get(pid)
+    return entry ? winFocusWindow(entry.hwnd) : false
+  }
   const target = lastListing.get(pid)
   if (!target || !target.path.endsWith('.app')) return false
   return run('/usr/bin/open', ['-a', target.path], 4000).then((result) => result.ok)
@@ -113,6 +122,10 @@ export async function focusPid(pid: number): Promise<boolean> {
 
 /** Polite quit: the app's own save prompts still protect unsaved work. */
 export async function quitPid(pid: number): Promise<boolean> {
+  if (process.platform === 'win32') {
+    const entry = winListing.get(pid)
+    return entry ? winCloseWindows(entry.hwnds) : false
+  }
   const listed = lastListing.get(pid)
   if (!listed) return false
   const result = await jxa(QUIT_SCRIPT, [String(pid)], 4000)
@@ -127,6 +140,15 @@ export async function requestGracefulQuitPid(
 ): Promise<{ ok: boolean; name: string; alreadyGone: boolean }> {
   const listed = lastListing.get(pid)
   if (!listed) return { ok: false, name: 'That app', alreadyGone: true }
+  if (process.platform === 'win32') {
+    if (!(await pidAlive(pid))) {
+      lastListing.delete(pid)
+      return { ok: true, name: listed.name, alreadyGone: true }
+    }
+    const entry = winListing.get(pid)
+    const ok = entry ? await winCloseWindows(entry.hwnds) : false
+    return { ok, name: listed.name, alreadyGone: false }
+  }
   const alive = await pidAlive(pid)
   if (!alive) {
     lastListing.delete(pid)
@@ -144,6 +166,15 @@ export async function requestGracefulQuitPid(
 
 export async function pidAlive(pid: number): Promise<boolean> {
   if (!Number.isInteger(pid) || pid <= 0) return false
+  if (process.platform === 'win32') {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      // EPERM: exists but belongs to another user/elevated — still alive.
+      return (error as NodeJS.ErrnoException).code === 'EPERM'
+    }
+  }
   const result = await jxa(ALIVE_SCRIPT, [String(pid)], 2000)
   return result.ok && result.out.trim() === 'alive'
 }
@@ -283,4 +314,23 @@ function run(command: string, args: string[], timeoutMs: number): Promise<{ ok: 
     proc.once('error', () => done(false))
     proc.once('close', (code) => done(code === 0))
   })
+}
+
+/** Windows switcher listing from the MIKO Keys helper (visible app windows, front-most first). */
+async function listRunningWindows(): Promise<SwitcherApp[]> {
+  const entries = await winListApps()
+  winListing = new Map(entries.map((entry) => [entry.pid, entry]))
+  const listing = await Promise.all(
+    entries.map(async (entry) => ({
+      pid: entry.pid,
+      name: entry.name,
+      bundleId: '',
+      path: entry.path,
+      hidden: entry.minimized,
+      active: entry.active,
+      icon: await iconFor(entry.path)
+    }))
+  )
+  lastListing = new Map(listing.map((item) => [item.pid, item]))
+  return listing
 }

@@ -46,9 +46,14 @@ describe('listen-win.ps1 (static guards against the old bugs)', () => {
   })
 
   it('reports ready only after RecognizeAsync started', () => {
-    const recognize = code.indexOf('RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Single)')
+    const recognize = code.indexOf('$script:engine.RecognizeAsync($recognizeMode)')
     const ready = code.indexOf('Emit @{ ready = $true')
     assert.ok(recognize > 0 && ready > recognize)
+  })
+
+  it('hold mode (Shift + A) keeps listening until stop instead of ending on silence', () => {
+    assert.match(code, /RecognizeMode\]::Multiple/)
+    assert.match(code, /InitialSilenceTimeout = \[TimeSpan\]::Zero/)
   })
 
   it('releases the microphone on cancel and at the end', () => {

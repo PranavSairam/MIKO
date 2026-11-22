@@ -219,12 +219,19 @@ if (!gotLock) {
     warmSwitcher()
     stopSelection = startSelectionShortcut(() => presence.show())
     stopKeys = startKeys({
-      // Caps Lock + A held: show MIKO, listen until release, put the words in the chat box.
+      // Caps Lock + A (Mac) / Shift + A (Windows) held: show MIKO, listen until release, words go to the chat box.
       talkStart: () => {
         presence.show()
         void startListening(true).then((result) => {
           if (result.ok) postToPet(IPC.keys, { kind: 'talk-start' })
-          else postToPet(IPC.speech, { phase: 'unavailable' })
+          // Empty reason: keys let go before recognition started (quiet cancel).
+          else if (result.reason || process.platform === 'darwin') {
+            postToPet(IPC.speech, {
+              phase: 'unavailable',
+              ...(result.reason && process.platform === 'win32' ? { detail: result.reason } : {}),
+              ...(result.help ? { help: result.help } : {})
+            })
+          }
         })
       },
       talkStop: () => stopListening(),

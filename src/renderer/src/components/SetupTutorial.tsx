@@ -328,7 +328,7 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
           title="Optional voice"
           body={
             win
-              ? 'Click the mic button in the panel (or the tray\u2019s Talk to MIKO) and say a command, for example \u201copen Calculator\u201d.'
+              ? 'Hold Shift + A and speak, then let go (a quick tap still types A). Or click the mic button in the panel, or the tray\u2019s Talk to MIKO. Try \u201copen Calculator\u201d. Tab + Q opens the app switcher.'
               : 'Hold Caps Lock+A to talk, or use the mic button. Recognition stays on this Mac.'
           }
         >

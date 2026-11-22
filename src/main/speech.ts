@@ -55,6 +55,7 @@ let killTimer: NodeJS.Timeout | null = null
 let sessionCount = 0
 
 export function listeningDetail(hold = false): string {
+  if (hold && process.platform === 'win32') return 'Listening… let go of Shift + A to stop.'
   if (hold) return 'Listening… let go of Caps Lock + A to stop.'
   return process.platform === 'win32'
     ? 'Listening. Recognition stays on this PC and is not saved.'
@@ -245,7 +246,7 @@ export async function startListening(hold = false): Promise<{ ok: boolean; reaso
     if (!launchMac(helper.root, hold)) return { ok: false, reason: 'On-device speech recognition is not available.' }
     return { ok: true, reason: listeningDetail(hold) }
   }
-  if (process.platform === 'win32') return startWindowsSession()
+  if (process.platform === 'win32') return startWindowsSession(hold)
   return { ok: false, reason: 'Speech recognition is not available.' }
 }
 
@@ -355,7 +356,7 @@ function powershellPath(): string {
 
 /** Spawns listen-win.ps1 in a mode and parses its JSON lines. Null when the script file is missing. */
 function spawnWinHelper(
-  mode: 'listen' | 'test' | 'devices',
+  mode: 'listen' | 'hold' | 'test' | 'devices',
   onLine: (line: WinSpeechLine) => void,
   onExit: (code: number | null, stderr: string) => void
 ): WinHelper | null {
@@ -431,7 +432,7 @@ function spawnWinHelper(
   }
 }
 
-function startWindowsSession(): Promise<{ ok: boolean; reason: string; help?: SpeechHelp }> {
+function startWindowsSession(hold = false): Promise<{ ok: boolean; reason: string; help?: SpeechHelp }> {
   return new Promise((resolve) => {
     cancelled = false
     sessionCount += 1
@@ -467,18 +468,18 @@ function startWindowsSession(): Promise<{ ok: boolean; reason: string; help?: Sp
     }, WIN_READY_MS)
 
     helper = spawnWinHelper(
-      'listen',
+      hold ? 'hold' : 'listen',
       (line) => {
         if (line.kind === 'ready') {
           if (started || session !== current) return
           ready = true
           logDiag('speech', 'listening', { recognizer: line.recognizer })
           clearKillTimer()
-          // The helper ends itself at 11 s; this is only a safety net.
+          // The helper ends itself (11 s, or 58 s while Shift + A is held); this is only a safety net.
           killTimer = setTimeout(() => {
             if (session === current) cancelListening()
-          }, LISTEN_MS + 2000)
-          startDone({ ok: true, reason: listeningDetail() })
+          }, (hold ? HOLD_MS : LISTEN_MS) + 2000)
+          startDone({ ok: true, reason: listeningDetail(hold) })
           return
         }
         if (!ready) {

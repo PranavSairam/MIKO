@@ -94,8 +94,7 @@ In the pet panel → Preferences → Feedback → export a report. If no endpoin
 
 These remain macOS-only unless a real Windows hook is implemented later:
 
-- Caps Lock+A hold-to-talk  
-- App switcher (MIKO Keys helper)  
+- Caps Lock+A hold-to-talk (Windows uses **Shift+A** instead — see below)  
 - Selected-text shortcut / Accessibility replace  
 - WhatsApp native AX automation  
 - Lens window control / browser-tab automation  
@@ -109,6 +108,12 @@ Button-driven `System.Speech` mic, transparent click-through, tray behavior, Sto
 - **Voice:** `resources/listen-win.ps1` picks an installed recognizer (UI language, then en-US / any English). MIKO shows "Listening" only after the helper reports it started. Failures name the fix: Microphone privacy ("Let desktop apps access your microphone"), Sound → Input (default device — System.Speech always uses it), or Speech language (no recognizer installed). Panel failures have **Retry**. Tray → **Talk to MIKO (mic)** works without any shortcut.
 - **Shortcut:** default Ctrl+Shift+R. If another app owns it, Setup & Help → shortcut step offers Ctrl+Alt+M, Ctrl+Shift+M or Alt+Shift+M and a live press test. Tray Show / Hide always works.
 - **ChatGPT:** "open ChatGPT" and the Interactive GPT button open MIKO's embedded workspace. Load errors show **Retry** and a labelled **Open in browser**; links that leave chatgpt.com are held with an explicit **Open in browser** button — nothing opens Chrome silently.
+
+- **Keys (`resources/keys-win.ps1`):** a low-level keyboard hook in a background PowerShell process (C# compiled at start, no admin).
+  - **Hold Shift + A** to talk, let go to stop. A quick Shift + A tap still types "A" (held back ~0.35 s, then replayed). Holding Shift + A to auto-repeat "AAAA" now talks instead.
+  - **Tab + Q** opens the app switcher. Tab still works normally; only the Q is swallowed.
+  - The switcher lists visible app windows (Store apps included), switches with a click/Enter, and "quit" sends a normal close (apps still ask to save). Browser tab lists are Mac-only.
+  - Keys typed into an **administrator** window can't be replayed by a normal-user MIKO (Windows UIPI), and focus switching follows Windows' foreground rules.
 
 ### Quick manual check (PowerShell)
 
