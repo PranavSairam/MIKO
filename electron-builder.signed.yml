@@ -1,0 +1,74 @@
+# Signed + notarized Mac release config (standalone — does not inherit identity: null).
+# Used only when: MIKO_SIGN=1 npm run release:beta -- ...
+# Secrets stay in the environment — never committed.
+#
+# Required env (see beta/env.example):
+#   CSC_LINK, CSC_KEY_PASSWORD
+#   notarization: APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID
+#             or: APPLE_API_KEY + APPLE_API_KEY_ID + APPLE_API_ISSUER
+appId: com.pranavsairam.miko
+productName: MIKO
+copyright: Copyright © PRANAV SAIRAM
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - "!**/*.{md,map}"
+  - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
+extraResources:
+  - from: resources
+    to: resources
+    filter:
+      - "**/*"
+  - from: pet_animals
+    to: pet_animals
+    filter:
+      - "**/*.glb"
+      - "**/*.png"
+      - "!**/_*"
+      - "!**/.DS_Store"
+  - from: build/app-update.yml
+    to: app-update.yml
+asar: true
+asarUnpack:
+  - out/renderer/**/*.glb
+publish:
+  provider: generic
+  url: http://127.0.0.1:8791/beta/
+  channel: beta
+  publishAutoUpdate: true
+mac:
+  # Do not set identity: null — CSC_LINK / Keychain selects Developer ID Application.
+  # Optional: CSC_NAME="Developer ID Application: PRANAV SAIRAM (TEAMID)"
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+  artifactName: MIKO-${version}-${arch}-mac.${ext}
+  extendInfo:
+    LSUIElement: true
+    NSMicrophoneUsageDescription: MIKO needs microphone access for voice input.
+dmg:
+  artifactName: MIKO-${version}-${arch}.${ext}
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: MIKO-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: true
+  perMachine: false

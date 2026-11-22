@@ -17,6 +17,7 @@ import {
 } from '../shared/layout'
 import { movementBlocked, placeAtWorkAreaRight } from '../shared/movement'
 import { panelSizeSetting, setPanelSizeSetting } from './settings'
+import { hardenWindow } from './security-window'
 
 /**
  * Cursor polling interval. Click-through uses setIgnoreMouseEvents without
@@ -57,6 +58,11 @@ export function setQuitting(next: boolean): void {
 
 export function isPetVisible(): boolean {
   return petWindow !== null && !petWindow.isDestroyed() && petWindow.isVisible()
+}
+
+/** Pet BrowserWindow for trusted main-process checks (never exposed to guests). */
+export function getPetBrowserWindow(): BrowserWindow | null {
+  return petWindow && !petWindow.isDestroyed() ? petWindow : null
 }
 
 export function createPetWindow(options: {
@@ -106,7 +112,9 @@ export function createPetWindow(options: {
       webSecurity: true,
       allowRunningInsecureContent: false,
       experimentalFeatures: false,
-      spellcheck: false
+      spellcheck: false,
+      // Packaged beta: no DevTools. This does not claim to prevent reverse engineering.
+      devTools: !app.isPackaged
     }
   })
 
@@ -114,9 +122,12 @@ export function createPetWindow(options: {
   applied = initial.bounds
   win.setContentBounds(initial.bounds, false)
   win.setAlwaysOnTop(true, 'floating')
-  win.setIgnoreMouseEvents(true)
+  // Start click-through; macOS forward keeps WidgetInputHandler healthy across toggles.
+  if (process.platform === 'darwin') win.setIgnoreMouseEvents(true, { forward: true })
+  else win.setIgnoreMouseEvents(true)
   ignoringMouse = true
   win.setMenuBarVisibility(false)
+  hardenWindow(win)
 
   if (process.platform === 'darwin') {
     win.setWindowButtonVisibility(false)
@@ -197,6 +208,7 @@ export function summonAtPointer(): void {
   relayout(false)
   petWindow.showInactive()
   petWindow.setAlwaysOnTop(true, 'floating')
+  restorePetPointerState()
   emitPlacement()
   onVisibility()
 }
@@ -205,6 +217,7 @@ export function revealWithoutMoving(): void {
   if (!petWindow || petWindow.isDestroyed() || !pageReady) return
   petWindow.showInactive()
   petWindow.setAlwaysOnTop(true, 'floating')
+  restorePetPointerState()
   onVisibility()
 }
 
@@ -247,7 +260,25 @@ export function setPanelOpen(open: boolean, mode: PanelMode = 'chat'): PanelLayo
   panelOpen = open
   panelMode = open ? mode : 'chat'
   liveSize = null
+  if (open) {
+    // Opening the panel must never leave a stuck drag/pointerHeld eating clicks.
+    dragActive = false
+    pointerHeld = false
+    applyIgnore(false)
+    // Keep the companion window above Interactive GPT so panel buttons stay hittable.
+    raisePetWindow()
+    onPanelOpened?.()
+  } else {
+    updateHitTesting()
+  }
   return relayout(open)
+}
+
+/** Optional hook (e.g. hide the app switcher) so pet-window stays free of that import cycle. */
+let onPanelOpened: (() => void) | null = null
+
+export function setPanelOpenedListener(listener: (() => void) | null): void {
+  onPanelOpened = listener
 }
 
 /** A size being dragged right now (not saved until the drag ends). */
@@ -348,6 +379,23 @@ export function setDragActive(active: boolean): void {
   else updateHitTesting()
 }
 
+/**
+ * Clear stuck drag/pointer flags and refresh click-through.
+ * Call after voice/local commands, summon/dismiss, and when opening the panel
+ * under Interactive GPT so a transparent always-on-top region cannot keep eating clicks.
+ */
+export function restorePetPointerState(): void {
+  dragActive = false
+  pointerHeld = false
+  if (!petWindow || petWindow.isDestroyed() || !petWindow.isVisible()) return
+  // Brief ignore cycle recovers some Chromium WidgetInputHandler stalls after rapid toggles.
+  if (process.platform === 'darwin') petWindow.setIgnoreMouseEvents(true, { forward: true })
+  else petWindow.setIgnoreMouseEvents(true)
+  ignoringMouse = true
+  if (panelOpen) applyIgnore(false)
+  else updateHitTesting()
+}
+
 export function isTrustedSender(senderId: number): boolean {
   return petWindow !== null && !petWindow.isDestroyed() && petWindow.webContents.id === senderId
 }
@@ -397,9 +445,15 @@ export function setPlacementListener(listener: (() => void) | null): void {
   placementListener = listener
 }
 
-/** Keep the pet above its companion windows (the bird's tree). */
+/** Keep the pet above its companion windows (the bird's tree / Interactive GPT). */
 export function raisePetWindow(): void {
-  if (petWindow && !petWindow.isDestroyed() && petWindow.isVisible()) petWindow.moveTop()
+  if (!petWindow || petWindow.isDestroyed() || !petWindow.isVisible()) return
+  petWindow.moveTop()
+  // Raising must not leave a stale ignore-mouse / gesture lock.
+  if (!dragActive && !pointerHeld) {
+    if (panelOpen) applyIgnore(false)
+    else updateHitTesting()
+  }
 }
 
 function emitPlacement(): void {
@@ -415,12 +469,21 @@ function applyIgnore(ignore: boolean): void {
   if (!petWindow || petWindow.isDestroyed()) return
   if (ignore === ignoringMouse) return
   ignoringMouse = ignore
-  petWindow.setIgnoreMouseEvents(ignore)
+  // macOS: forward move events while click-through so Chromium’s input handler
+  // stays healthy across toggles (Switcher already uses this pattern).
+  if (process.platform === 'darwin') {
+    if (ignore) petWindow.setIgnoreMouseEvents(true, { forward: true })
+    else petWindow.setIgnoreMouseEvents(false)
+  } else {
+    petWindow.setIgnoreMouseEvents(ignore)
+  }
 }
 
 function updateHitTesting(): void {
   if (!petWindow || petWindow.isDestroyed() || !petWindow.isVisible()) return
-  if (dragActive || pointerHeld) {
+  // Panel open: always accept clicks so Chat / Send / card buttons never die
+  // under a stale ignore-mouse state or a higher always-on-top overlay race.
+  if (dragActive || pointerHeld || panelOpen) {
     applyIgnore(false)
     return
   }

@@ -6,6 +6,7 @@ import {
   detectAmbiguousTimes,
   formatVisibleContext,
   isAdditiveFollowUp,
+  isInstructionFramingBody,
   parseCompactClockDigits,
   parseDraft,
   parseMessageBubble,
@@ -13,6 +14,7 @@ import {
   parseWhatsAppSummarizeIntent,
   recipientMatchesOpenChat,
   resolveAdditiveFollowUpMode,
+  stripDraftInstructionFraming,
   stripFormalTone,
   whatsAppDraftPrompt
 } from './whatsapp-reply.ts'
@@ -131,6 +133,59 @@ describe('WhatsApp visible messages', () => {
     })
     assert.equal(exact?.literal, true)
     assert.equal(exact?.instruction, 'I’ll take you to the movie tomorrow.')
+  })
+
+  it('strips saying/reply wrappers — never pastes them as literal draft text', () => {
+    assert.equal(stripDraftInstructionFraming('saying good morning'), 'good morning')
+    assert.equal(stripDraftInstructionFraming('reply saying good morning'), 'good morning')
+    assert.equal(isInstructionFramingBody('saying good morning'), true)
+    assert.equal(isInstructionFramingBody('hello dad'), false)
+
+    const typedSaying = parseWhatsAppReplyIntent('type saying good morning', {
+      messaging: 'whatsapp',
+      waChat: 'Dad'
+    })
+    assert.equal(typedSaying?.literal, undefined)
+    assert.equal(typedSaying?.instruction, 'good morning')
+
+    const replySaying = parseWhatsAppReplyIntent('reply saying good morning', {
+      messaging: 'whatsapp',
+      waChat: 'Dad'
+    })
+    assert.equal(replySaying?.instruction, 'good morning')
+    assert.notEqual(replySaying?.literal, true)
+
+    const tell = parseWhatsAppReplyIntent('Tell him good morning', {
+      messaging: 'whatsapp',
+      waChat: 'Dad'
+    })
+    assert.equal(tell?.instruction, 'good morning')
+    assert.equal(tell?.pronoun, 'him')
+
+    const ask = parseWhatsAppReplyIntent('Ask him if he’s free', {
+      messaging: 'whatsapp',
+      waChat: 'Dad'
+    })
+    assert.equal(ask?.pronoun, 'him')
+    assert.match(ask?.instruction ?? '', /free/i)
+
+    const warmer = parseWhatsAppReplyIntent('Make it warmer', {
+      messaging: 'whatsapp',
+      waChat: 'Dad',
+      draftActive: true
+    })
+    assert.equal(warmer?.refine, true)
+    assert.match(warmer?.instruction ?? '', /warm/i)
+
+    const prompt = whatsAppDraftPrompt({
+      chatName: 'Dad',
+      instruction: 'saying good morning',
+      pronoun: 'him'
+    })
+    // Prompt strips wrappers before the instruction fence; framing rules still warn the model.
+    assert.match(prompt, /<instruction>\s*good morning\s*<\/instruction>/i)
+    assert.doesNotMatch(prompt, /<instruction>\s*saying good morning\s*<\/instruction>/i)
+    assert.match(prompt, /never paste that framing|Never paste the word “saying”/i)
   })
 
   it('routes Also tell / Add that / Let her know / Ask her as recipient-aware drafts (not literal)', () => {

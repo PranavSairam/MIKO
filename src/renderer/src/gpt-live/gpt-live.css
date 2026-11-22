@@ -1,0 +1,700 @@
+:root {
+  --lens-bg: #14181f;
+  --lens-header: #0e1218;
+  --lens-panel: #1a2028;
+  --lens-border: rgba(110, 220, 230, 0.42);
+  --lens-cyan: #6edce6;
+  --lens-cyan-soft: #9aeff6;
+  --lens-text: #e8eef2;
+  --lens-muted: rgba(232, 238, 242, 0.62);
+  --lens-danger: #f0a0a0;
+  --lens-radius: 18px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  color: var(--lens-text);
+}
+
+.lens-shell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 10px;
+  border-radius: var(--lens-radius);
+  border: 1px solid var(--lens-border);
+  background: var(--lens-bg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+
+.lens-shell *,
+.lens-shell *::before,
+.lens-shell *::after {
+  box-sizing: border-box;
+}
+
+.lens-shell.is-collapsed {
+  margin: 6px;
+  border-radius: 999px;
+}
+
+.lens-nodrag,
+.lens-header button,
+.lens-toolbar button,
+.lens-toolbar *,
+.lens-spotify,
+.lens-spotify *,
+.lens-footer,
+.lens-body,
+.lens-body *,
+.lens-menu,
+.lens-menu * {
+  -webkit-app-region: no-drag;
+}
+
+/* —— Header —— */
+.lens-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  background: var(--lens-header);
+  border-bottom: 1px solid rgba(110, 220, 230, 0.16);
+  z-index: 3;
+}
+
+.lens-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.lens-paw {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: #1c2630;
+  border: 1px solid rgba(110, 220, 230, 0.35);
+  display: grid;
+  place-items: center;
+  color: var(--lens-cyan);
+}
+
+.lens-paw svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.lens-titles {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lens-titles h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--lens-cyan-soft);
+  white-space: nowrap;
+}
+
+.lens-titles p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--lens-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lens-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(110, 220, 230, 0.28);
+  background: #182028;
+  color: var(--lens-cyan-soft);
+}
+
+.lens-status.is-frozen {
+  color: #d8dee6;
+  border-color: rgba(200, 210, 220, 0.28);
+}
+
+.lens-status.is-error {
+  color: var(--lens-danger);
+  border-color: rgba(240, 160, 160, 0.35);
+}
+
+.lens-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lens-cyan);
+}
+
+.lens-status.is-frozen .lens-status-dot {
+  background: #9aa7b5;
+}
+
+.lens-status.is-error .lens-status-dot {
+  background: var(--lens-danger);
+}
+
+.lens-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* —— Buttons —— */
+.lens-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(110, 220, 230, 0.28);
+  background: var(--lens-panel);
+  color: var(--lens-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lens-btn:hover:not(:disabled) {
+  border-color: rgba(110, 220, 230, 0.55);
+}
+
+.lens-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.lens-btn.is-active {
+  border-color: var(--lens-cyan);
+  color: var(--lens-cyan-soft);
+}
+
+.lens-btn.is-icon {
+  width: 30px;
+  padding: 0;
+}
+
+.lens-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* —— Toolbar —— */
+.lens-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 10px;
+  background: #10151c;
+  border-bottom: 1px solid rgba(110, 220, 230, 0.12);
+  z-index: 2;
+  overflow: hidden;
+}
+
+.lens-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lens-spotify {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  background: #0c1218;
+  border-bottom: 1px solid rgba(110, 220, 230, 0.14);
+}
+
+.lens-spotify-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.lens-spotify-meta strong {
+  font-size: 12px;
+  color: var(--lens-cyan-soft);
+}
+
+.lens-spotify-meta span {
+  font-size: 12px;
+  color: var(--lens-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.lens-spotify-meta em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--lens-muted);
+}
+
+.lens-spotify-note {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--lens-muted);
+}
+
+.lens-spotify-err {
+  color: var(--lens-danger) !important;
+}
+
+.lens-cap-note {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--lens-muted);
+  background: #0c1218;
+  border-bottom: 1px solid rgba(110, 220, 230, 0.1);
+}
+
+.lens-zoom-label {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--lens-muted);
+}
+
+.lens-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.lens-menu-wrap {
+  position: relative;
+}
+
+.lens-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--lens-border);
+  background: #121820;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lens-menu button {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--lens-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lens-menu button:hover:not(:disabled) {
+  background: #1c2630;
+}
+
+.lens-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.lens-menu hr {
+  border: 0;
+  border-top: 1px solid rgba(110, 220, 230, 0.12);
+  margin: 4px 0;
+}
+
+/* —— Body / viewport —— */
+.lens-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0b0e12;
+  position: relative;
+  z-index: 1;
+}
+
+.lens-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: #0b0e12;
+  cursor: grab;
+  position: relative;
+}
+
+.lens-stage.is-panning {
+  cursor: grabbing;
+}
+
+.lens-stage.is-cropping {
+  cursor: crosshair;
+}
+
+.lens-stage.is-control {
+  cursor: crosshair;
+  outline: none;
+}
+
+.lens-stage.is-control:focus {
+  box-shadow: inset 0 0 0 1px rgba(110, 220, 230, 0.35);
+}
+
+.lens-shelf {
+  flex: 0 0 auto;
+  max-height: 42%;
+  overflow: auto;
+  padding: 10px 12px;
+  border-top: 1px solid rgba(110, 220, 230, 0.16);
+  background: #10151c;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 4;
+}
+
+.lens-shelf-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lens-shelf-head strong {
+  font-size: 12px;
+  color: var(--lens-cyan-soft);
+}
+
+.lens-shelf-head span,
+.lens-shelf-empty,
+.lens-shelf-hint {
+  font-size: 11px;
+  color: var(--lens-muted);
+}
+
+.lens-shelf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lens-shelf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lens-shelf-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(110, 220, 230, 0.18);
+  background: #141a22;
+}
+
+.lens-shelf-drag {
+  flex: 0 0 auto;
+  width: 22px;
+  text-align: center;
+  cursor: grab;
+  color: var(--lens-cyan);
+  user-select: none;
+}
+
+.lens-shelf-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.lens-attach-zone {
+  border: 1px dashed rgba(110, 220, 230, 0.45);
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--lens-muted);
+  background: rgba(110, 220, 230, 0.04);
+}
+
+.lens-canvas {
+  position: relative;
+  margin: 0 auto;
+}
+
+.lens-canvas img {
+  display: block;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.lens-crop-rect {
+  position: absolute;
+  border: 2px solid var(--lens-cyan);
+  background: rgba(110, 220, 230, 0.12);
+  pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+
+.lens-crop-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #121820;
+  border-top: 1px solid rgba(110, 220, 230, 0.16);
+  font-size: 12px;
+  color: var(--lens-muted);
+}
+
+.lens-crop-bar .lens-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lens-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 28px 24px;
+  overflow: auto;
+}
+
+.lens-empty h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--lens-cyan-soft);
+}
+
+.lens-empty p {
+  margin: 0;
+  max-width: 40rem;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--lens-muted);
+}
+
+.lens-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* —— Picker —— */
+.lens-picker {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #0b0e12;
+}
+
+.lens-picker-head h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--lens-cyan-soft);
+}
+
+.lens-picker-head p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--lens-muted);
+}
+
+.lens-picker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+}
+
+.lens-pick {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(110, 220, 230, 0.22);
+  background: #181e26;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.lens-pick:hover {
+  border-color: rgba(110, 220, 230, 0.5);
+}
+
+.lens-pick.is-recommended {
+  border-color: rgba(110, 220, 230, 0.7);
+}
+
+.lens-pick img,
+.lens-pick-blank {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #151a21;
+  display: block;
+}
+
+.lens-pick strong {
+  font-size: 12px;
+  color: var(--lens-cyan-soft);
+}
+
+.lens-pick span {
+  font-size: 11px;
+  color: var(--lens-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lens-pick em {
+  font-size: 10px;
+  font-style: normal;
+  color: var(--lens-cyan);
+}
+
+/* —— Footer —— */
+.lens-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-top: 1px solid rgba(110, 220, 230, 0.12);
+  background: var(--lens-header);
+  font-size: 11px;
+  color: var(--lens-muted);
+  z-index: 3;
+}
+
+.lens-details {
+  flex: 0 0 auto;
+  max-height: 110px;
+  overflow: auto;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(110, 220, 230, 0.12);
+  background: #0c1016;
+  font-size: 11px;
+  color: var(--lens-muted);
+  white-space: pre-wrap;
+  z-index: 3;
+}
+
+/* —— Collapsed pill —— */
+.lens-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 10px;
+  -webkit-app-region: drag;
+}
+
+.lens-pill-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lens-cyan-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lens-pill .lens-btn {
+  -webkit-app-region: no-drag;
+}
+
+/* Narrow: hide expand label text handled in JSX via narrow flag */
+@media (max-width: 720px) {
+  .lens-hide-narrow {
+    display: none !important;
+  }
+}

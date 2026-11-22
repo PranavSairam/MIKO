@@ -72,7 +72,9 @@ export function parseBrowserOnly(raw: string): string | null {
     .trim()
   const m =
     /^(?:in|with|using)\s+(.+)$/i.exec(t) ||
-    /^(?:actually\s+)?(?:use|switch\s+(?:that|it|this)\s+to|open\s+(?:it|that|this)\s+(?:in|with))\s+(.+?)(?:\s+instead)?$/i.exec(t)
+    /^(?:actually\s+)?(?:use|switch\s+(?:that|it|this)\s+to|open\s+(?:it|that|this)\s+(?:in|with))\s+(.+?)(?:\s+instead)?$/i.exec(t) ||
+    // “Safari instead” / “Chrome instead” while a site open is pending.
+    /^(chrome|safari|firefox|edge|brave|google\s+chrome)(?:\s+instead)?$/i.exec(t)
   if (!m?.[1] || !BROWSER_WORDS.test(m[1].trim())) return null
   const browser = m[1].trim().toLowerCase().replace(/^google\s+/, '').replace(/^microsoft\s+/, '').replace(/^(?:the|my)\s+/, '')
   return browser === 'google chrome' ? 'chrome' : browser

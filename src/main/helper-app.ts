@@ -169,7 +169,14 @@ export function launchHelper(
 }
 
 export function sourcePath(name: string): string | null {
-  const candidates = [join(__dirname, '../../resources', name), join(process.cwd(), 'resources', name)]
+  const candidates = [
+    join(__dirname, '../../resources', name),
+    join(process.cwd(), 'resources', name),
+    // Packaged beta: electron-builder copies resources/ into process.resourcesPath.
+    ...(process.resourcesPath
+      ? [join(process.resourcesPath, 'resources', name), join(process.resourcesPath, name)]
+      : [])
+  ]
   return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 

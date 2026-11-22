@@ -6,6 +6,8 @@ import { parseAliases, type WhatsAppAlias } from '../shared/whatsapp'
 import { parsePanelSize, type PanelKind } from '../shared/layout'
 import { parseCorrections, parseRules, type ImportanceRules, type MailCorrections } from '../shared/mail'
 import { parseExamples, parsePreferences, type CorrectionExample, type MikoStructuredPreferences } from '../shared/preferences'
+import { parseSetupState, type SetupState } from '../shared/setup'
+import { chooseSummonShortcut, DEFAULT_SUMMON_SHORTCUT } from '../shared/shortcut'
 
 /** Small persisted preferences in userData/miko-settings.json. Unknown keys (e.g. summonShortcut) are kept. */
 
@@ -82,6 +84,81 @@ export function setChatgptAutoPaste(enabled: boolean): void {
   writeKey('chatgptAutoPaste', enabled)
 }
 
+/** Opt-in GPT Mode (persisted). Runtime always starts paused after relaunch. */
+export function gptModeOptedIn(): boolean {
+  return readAll().gptModeOptedIn === true
+}
+
+export function setGptModeOptedIn(enabled: boolean): void {
+  writeKey('gptModeOptedIn', enabled === true)
+}
+
+/** GPT Mode live viewer bounds (logical pixels). */
+export function gptLiveBoundsSetting(): { x: number; y: number; width: number; height: number } | null {
+  const value = readAll().gptLiveBounds
+  if (!value || typeof value !== 'object') return null
+  const v = value as Record<string, unknown>
+  const x = typeof v.x === 'number' ? v.x : null
+  const y = typeof v.y === 'number' ? v.y : null
+  const width = typeof v.width === 'number' ? v.width : null
+  const height = typeof v.height === 'number' ? v.height : null
+  if (x === null || y === null || width === null || height === null) return null
+  if (width < 320 || height < 240) return null
+  return { x, y, width, height }
+}
+
+export function setGptLiveBoundsSetting(bounds: { x: number; y: number; width: number; height: number }): boolean {
+  return writeKey('gptLiveBounds', {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height)
+  })
+}
+
+/** Interactive GPT (ChatGPT Web) workspace bounds. */
+export function chatgptWebBoundsSetting(): { x: number; y: number; width: number; height: number } | null {
+  const value = readAll().chatgptWebBounds
+  if (!value || typeof value !== 'object') return null
+  const v = value as Record<string, unknown>
+  const x = typeof v.x === 'number' ? v.x : null
+  const y = typeof v.y === 'number' ? v.y : null
+  const width = typeof v.width === 'number' ? v.width : null
+  const height = typeof v.height === 'number' ? v.height : null
+  if (x === null || y === null || width === null || height === null) return null
+  if (width < 420 || height < 320) return null
+  return { x, y, width, height }
+}
+
+export function setChatgptWebBoundsSetting(bounds: { x: number; y: number; width: number; height: number }): boolean {
+  return writeKey('chatgptWebBounds', {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height)
+  })
+}
+
+/** Last guest URL so reopen restores the same page (login/session still via partition). */
+export function chatgptWebLastUrlSetting(): string {
+  const value = readAll().chatgptWebLastUrl
+  return typeof value === 'string' && /^https:\/\//i.test(value) ? value.slice(0, 2000) : ''
+}
+
+export function setChatgptWebLastUrlSetting(url: string): boolean {
+  if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return writeKey('chatgptWebLastUrl', '')
+  return writeKey('chatgptWebLastUrl', url.slice(0, 2000))
+}
+
+/** Pin Interactive GPT above other apps (default on). */
+export function chatgptWebPinnedSetting(): boolean {
+  return readAll().chatgptWebPinned !== false
+}
+
+export function setChatgptWebPinnedSetting(pinned: boolean): boolean {
+  return writeKey('chatgptWebPinned', pinned === true)
+}
+
 /** Selected-text assistant shortcut (Electron accelerator). */
 export const DEFAULT_SELECTION_SHORTCUT = 'Control+Option+S'
 export function selectionShortcut(): string {
@@ -91,6 +168,28 @@ export function selectionShortcut(): string {
 
 export function setSelectionShortcut(value: string): boolean {
   return writeKey('selectionShortcut', value)
+}
+
+/** Show/hide shortcut. Registration is managed by summon-shortcut.ts. */
+export function summonShortcut(): string {
+  return chooseSummonShortcut(readAll().summonShortcut).shortcut || DEFAULT_SUMMON_SHORTCUT
+}
+
+export function setSummonShortcut(value: string): boolean {
+  return writeKey('summonShortcut', value)
+}
+
+/** Versioned first-run setup/tutorial state. */
+export function setupState(): SetupState {
+  return parseSetupState(readAll().setupTutorial)
+}
+
+export function hasSetupState(): boolean {
+  return Object.prototype.hasOwnProperty.call(readAll(), 'setupTutorial')
+}
+
+export function setSetupState(value: SetupState): boolean {
+  return writeKey('setupTutorial', parseSetupState(value))
 }
 
 /** Mail importance rules (adjustable in the Mail tab). */

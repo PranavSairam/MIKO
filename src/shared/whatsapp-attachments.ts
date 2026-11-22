@@ -141,7 +141,11 @@ export function parseAttachmentIntent(raw: string): WhatsAppAttachmentIntent | n
   const lower = text.toLowerCase()
 
   // Follow-ups that need an already-retrieved file in context.
-  if (/^(?:copy\s+(?:the\s+)?(?:file|document|pdf)|copy\s+it(?:\s+as\s+a\s+file)?)$/i.test(text)) {
+  if (
+    /^(?:copy\s+(?:the|this|that)\s+(?:file|document|pdf)|copy\s+(?:the\s+)?(?:file|document|pdf)|copy\s+it(?:\s+as\s+a\s+file)?)$/i.test(
+      text
+    )
+  ) {
     return { op: 'copy-file', kind: 'any', direction: 'any', latest: true }
   }
   if (/^(?:copy\s+(?:the\s+)?filename)$/i.test(text)) {

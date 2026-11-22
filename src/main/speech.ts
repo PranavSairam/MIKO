@@ -1,7 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { shell } from 'electron'
 import { IPC } from '../shared/api'
+import {
+  emptyMicTestStatus,
+  type MicTestStatus,
+  type PermissionState,
+  type VoicePermissionStatus
+} from '../shared/setup'
 import { compileHelper, launchHelper, sourcePath, type HelperSpec } from './helper-app'
-import { postToPet } from './pet-window'
+import { postToPet, restorePetPointerState } from './pet-window'
 
 /**
  * Recognition is on-device. The browser SpeechRecognition API in this Electron
@@ -50,6 +57,287 @@ export function isListening(): boolean {
   return session !== null
 }
 
+function permissionState(value: unknown): PermissionState {
+  return value === 'not-determined' ||
+    value === 'authorized' ||
+    value === 'denied' ||
+    value === 'restricted' ||
+    value === 'unavailable'
+    ? value
+    : 'unknown'
+}
+
+/** Status belongs to the native speech helper, not Electron's browser permission. */
+export async function voicePermissionStatus(request = false): Promise<VoicePermissionStatus> {
+  if (process.platform === 'win32') {
+    if (request) {
+      const test = await runMicTest()
+      const authorized = test.outcome === 'transcript-confirmed'
+      const denied = test.outcome === 'denied'
+      const unavailable = test.outcome === 'unavailable'
+      return {
+        supported: !unavailable,
+        microphone: authorized ? 'authorized' : denied ? 'denied' : unavailable ? 'unavailable' : 'not-determined',
+        speechRecognition: authorized ? 'authorized' : denied ? 'denied' : unavailable ? 'unavailable' : 'not-determined',
+        canRequest: !authorized,
+        detail: test.detail
+      }
+    }
+    return {
+      supported: true,
+      microphone: 'not-determined',
+      speechRecognition: 'not-determined',
+      canRequest: true,
+      detail: 'Use Try microphone to check Windows microphone and System.Speech access. Status comes from the native helper, not the browser.'
+    }
+  }
+  if (process.platform !== 'darwin') {
+    return {
+      supported: false,
+      microphone: 'unavailable',
+      speechRecognition: 'unavailable',
+      canRequest: false,
+      detail: 'Voice input is not available on this platform.'
+    }
+  }
+  const helper = compileHelper(LISTEN_HELPER)
+  if (!helper) {
+    return {
+      supported: false,
+      microphone: 'unavailable',
+      speechRecognition: 'unavailable',
+      canRequest: false,
+      detail: 'The on-device speech helper is unavailable.'
+    }
+  }
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: VoicePermissionStatus): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(
+      () =>
+        finish({
+          supported: true,
+          microphone: 'unknown',
+          speechRecognition: 'unknown',
+          canRequest: true,
+          detail: 'MIKO could not read voice permission status. Try again or open Settings.'
+        }),
+      7000
+    )
+    const handle = launchHelper(
+      helper.root,
+      [request ? '--request-permissions' : '--permission-status'],
+      (line) => {
+        try {
+          const parsed = JSON.parse(line) as Record<string, unknown>
+          if (parsed.permissionStatus !== true) return
+          const microphone = permissionState(parsed.microphone)
+          const speechRecognition = permissionState(parsed.speechRecognition)
+          finish({
+            supported: true,
+            microphone,
+            speechRecognition,
+            canRequest: microphone === 'not-determined' || speechRecognition === 'not-determined',
+            detail:
+              microphone === 'authorized' && speechRecognition === 'authorized'
+                ? 'Microphone and on-device speech recognition are allowed.'
+                : microphone === 'denied' || speechRecognition === 'denied'
+                  ? 'Voice access is denied. Open System Settings to change it.'
+                  : 'Voice permissions have not been fully granted yet.'
+          })
+        } catch {
+          // Ignore non-status output.
+        }
+      },
+      () => undefined
+    )
+    if (!handle) {
+      finish({
+        supported: false,
+        microphone: 'unavailable',
+        speechRecognition: 'unavailable',
+        canRequest: false,
+        detail: 'The on-device speech helper could not start.'
+      })
+    }
+  })
+}
+
+export async function openVoicePrivacySettings(): Promise<boolean> {
+  const url =
+    process.platform === 'win32'
+      ? 'ms-settings:privacy-microphone'
+      : process.platform === 'darwin'
+        ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+        : ''
+  if (!url) return false
+  try {
+    await shell.openExternal(url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Explicit microphone check via the platform speech helper.
+ * Does not use browser getUserMedia; never claims Electron host permission.
+ */
+export async function runMicTest(): Promise<MicTestStatus> {
+  if (session) {
+    return emptyMicTestStatus({
+      outcome: 'unavailable',
+      detail: 'MIKO is already listening. Stop that first, then try again.'
+    })
+  }
+  if (process.platform === 'win32') {
+    const script = sourcePath('listen-win.ps1')
+    if (!script) {
+      return emptyMicTestStatus({
+        outcome: 'unavailable',
+        detail: 'The Windows System.Speech helper is missing.'
+      })
+    }
+    return new Promise((resolve) => {
+      const proc = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+        { shell: false, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+      )
+      let buffer = ''
+      let settled = false
+      const finish = (status: MicTestStatus): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        try {
+          proc.kill()
+        } catch {
+          // ignore
+        }
+        resolve(status)
+      }
+      const timer = setTimeout(
+        () =>
+          finish(
+            emptyMicTestStatus({
+              outcome: 'silence',
+              detail: 'No speech heard during the microphone test.'
+            })
+          ),
+        10_000
+      )
+      proc.stdout?.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        let at = buffer.indexOf('\n')
+        while (at >= 0) {
+          const line = buffer.slice(0, at).trim()
+          buffer = buffer.slice(at + 1)
+          at = buffer.indexOf('\n')
+          if (!line) continue
+          try {
+            const parsed = JSON.parse(line) as { text?: unknown; error?: unknown }
+            if (typeof parsed.text === 'string' && parsed.text.trim()) {
+              const transcript = parsed.text.trim().slice(0, 400)
+              finish(
+                emptyMicTestStatus({
+                  outcome: 'transcript-confirmed',
+                  transcript,
+                  detail: `Heard: “${transcript}”. Recognition stays on this PC and is not saved.`
+                })
+              )
+              return
+            }
+            if (parsed.error === 'denied') {
+              finish(
+                emptyMicTestStatus({
+                  outcome: 'denied',
+                  detail: 'Microphone access was denied. Open Windows privacy settings to allow it.'
+                })
+              )
+              return
+            }
+            if (parsed.error === 'silence') {
+              finish(
+                emptyMicTestStatus({
+                  outcome: 'silence',
+                  detail: 'No speech heard. Check the mic and try again.'
+                })
+              )
+              return
+            }
+            if (parsed.error === 'unavailable' || parsed.error === 'cancelled') {
+              finish(
+                emptyMicTestStatus({
+                  outcome: 'unavailable',
+                  detail: 'System.Speech could not start on this PC.'
+                })
+              )
+              return
+            }
+          } catch {
+            // ignore non-JSON
+          }
+        }
+      })
+      proc.once('error', () =>
+        finish(
+          emptyMicTestStatus({
+            outcome: 'unavailable',
+            detail: 'Could not start the Windows speech helper.'
+          })
+        )
+      )
+      proc.once('close', () => {
+        if (!settled) {
+          finish(
+            emptyMicTestStatus({
+              outcome: 'silence',
+              detail: 'No speech heard during the microphone test.'
+            })
+          )
+        }
+      })
+    })
+  }
+  if (process.platform === 'darwin') {
+    const status = await voicePermissionStatus(true)
+    if (status.microphone === 'denied' || status.speechRecognition === 'denied') {
+      return emptyMicTestStatus({
+        outcome: 'denied',
+        detail: status.detail || 'Voice access is denied. Open System Settings to change it.'
+      })
+    }
+    if (!status.supported || status.microphone === 'unavailable') {
+      return emptyMicTestStatus({
+        outcome: 'unavailable',
+        detail: status.detail || 'On-device speech recognition is unavailable.'
+      })
+    }
+    // Start a short listen; the tutorial also receives the normal speech IPC event.
+    const started = await startListening(false)
+    if (!started.ok) {
+      return emptyMicTestStatus({
+        outcome: 'unavailable',
+        detail: started.reason || 'Could not start the microphone test.'
+      })
+    }
+    return emptyMicTestStatus({
+      outcome: 'not-tested',
+      detail: 'Listening… say something. Recognition stays on this Mac and is not saved.'
+    })
+  }
+  return emptyMicTestStatus({
+    outcome: 'unavailable',
+    detail: 'Voice input is not available on this platform.'
+  })
+}
+
 export async function startListening(hold = false): Promise<{ ok: boolean; reason: string }> {
   if (session) return { ok: true, reason: listeningDetail(hold) }
   if (process.platform === 'darwin') {
@@ -84,6 +372,8 @@ export function cancelListening(): void {
   if (!current) return
   current.kill()
   postToPet(IPC.speech, { phase: 'cancelled', session: sessionCount })
+  // Mic cancel must not leave a stuck ignore/gesture lock on the pet window.
+  restorePetPointerState()
 }
 
 function clearKillTimer(): void {
@@ -173,6 +463,7 @@ function deliver(line: string, id: number): boolean {
   const record = payload as { text?: unknown; error?: unknown }
   if (typeof record.text === 'string' && record.text.trim()) {
     postToPet(IPC.speech, { phase: 'transcript', text: record.text.trim().slice(0, 400), session: id })
+    restorePetPointerState()
     return true
   }
   if (record.error === undefined) return false

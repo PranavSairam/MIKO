@@ -1,15 +1,120 @@
-import { app, clipboard, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type AppListing, type HitRect, type LaunchResult, type PanelLayout } from '../shared/api'
 import { parseActionId } from '../shared/commands'
 import { launchApplication, listApplications } from './apps'
 import { insertIntoChatGpt, openChatGpt, openChatUrl } from './chatgpt'
+import {
+  cancelTypeDest,
+  captureFocusedDestination,
+  captureHereDestination,
+  chatgptNewChat,
+  insertIntoDestination,
+  openAndFocusChatGpt,
+  openNotes,
+  setOmniboxText
+} from './type-dest'
+import {
+  cancelGptDelivery,
+  enableGptMode,
+  exitGptMode,
+  focusChatGptWindow,
+  getGptModeState,
+  gptLiveViewSnapshot,
+  gptModeNewChat,
+  listGptCaptureSources,
+  loadGptModeFromSettings,
+  onGptModeState,
+  pauseGptMode,
+  resumeGptMode,
+  sendGptModeMessage,
+  setGptCaptureSource,
+  setGptLiveView
+} from './gpt-mode'
+import {
+  applyGptLiveSizePreset,
+  closeGptLiveWindow,
+  isGptLiveSender,
+  openGptLiveWindow,
+  postToGptLive,
+  setGptLiveCollapsed
+} from './gpt-live-window'
+import {
+  cancelLensInput,
+  lensOpenOriginal,
+  lensAttachToChatGpt,
+  lensCopyFile,
+  lensFinderSelection,
+  lensPickFiles,
+  lensPointer,
+  lensProvenFiles,
+  lensRevealFile,
+  lensStartDrag,
+  lensType,
+  lensWindowBounds,
+  registerLensFileFromProven
+} from './lens-control'
+import { spotifyMedia } from './spotify'
+import {
+  chatgptWebBack,
+  chatgptWebForward,
+  cancelChatGptWebSubmit,
+  chatgptWebInsertTranscript,
+  chatgptWebPasteClipboard,
+  chatgptWebReload,
+  chatgptWebStatus,
+  chatgptWebSubmitCurrentDraft,
+  chatgptWebSubmitGeneration,
+  closeChatGptWebWindow,
+  collapseChatGptWebWindow,
+  expandChatGptWebWindow,
+  getChatGptWebDownload,
+  isChatGptWebSender,
+  onChatGptWebDownload,
+  openChatGptWebWindow,
+  expandChatGptWebFromDrag,
+  setChatGptWebChromeDragActive,
+  setChatGptWebChromeHeight,
+  setChatGptWebDictateArmed,
+  setChatGptWebPinned
+} from './chatgpt-web-window'
 import { addChat, removeChat, renameChat, type ChatEdit } from '../shared/chatgpt'
 import { comeToFront, enableFollow } from './follow'
 import { requestClose, watchClose } from './quit'
-import { cancelListening, startListening, stopListening } from './speech'
+import {
+  cancelListening,
+  openVoicePrivacySettings,
+  runMicTest,
+  startListening,
+  stopListening,
+  voicePermissionStatus
+} from './speech'
 import { openSwitcher, registerSwitcherIpc } from './switcher-window'
 import { registerMailIpc } from './mail/ipc'
-import { bridgeStatus, cancelBridge, newConversation, sendBridge } from './bridge'
+import { bridgeStatus, cancelBridge, newConversation, sendBridge, stopAllBridges } from './bridge'
+import {
+  deleteFeedbackItem,
+  ensureFeedbackStore,
+  exportFeedback,
+  exportFeedbackDraft,
+  getFeedbackConfig,
+  listFeedbackQueue,
+  previewFeedback,
+  retryFeedback,
+  setFeedbackConfig,
+  submitFeedback
+} from './feedback'
+import { APP_CHANNEL, APP_NAME, APP_VERSION, buildId } from '../shared/build-info'
+import type { FeedbackDraft } from '../shared/feedback'
+import {
+  checkForUpdates,
+  getUpdateStatus,
+  openManualDownload,
+  restartToUpdate,
+  setManualReleaseConfig,
+  setUpdateFeedOverride,
+  silenceCurrentUpdate
+} from './updater'
+import { takeRecoveredDraft, takeUpdateNotice } from './session-flush'
 import { armPaste, clipboardSelection, disarmPaste, replaceSelection } from './selection'
 import {
   addCorrectionExample,
@@ -18,11 +123,16 @@ import {
   removeCorrectionExample,
   savedChats,
   setMikoPreferences,
+  setAssistantEnabled,
+  setSetupState,
   setSavedChats,
   setStructuredPreferences,
   structuredPreferences,
+  setupState,
   voiceAutoExecute
 } from './settings'
+import { applySetupUpdate, defaultSetupState, parseSetupUpdate } from '../shared/setup'
+import type { SummonShortcut } from './summon-shortcut'
 import {
   cancelWhatsApp,
   insertWhatsAppDraft,
@@ -55,6 +165,7 @@ import {
   isTrustedSender,
   movePetBy,
   postToPet,
+  raisePetWindow,
   setDragActive,
   setHitRects,
   setPanelOpen,
@@ -75,7 +186,7 @@ const MAX_PASTE = 8000
 export function registerIpc(presence: {
   setReducedMotion: (reduced: boolean) => void
   exitFinished: (generation: number) => void
-}): void {
+}, summonShortcut: SummonShortcut): void {
   ipcMain.on(IPC.moveBy, (event, payload: unknown) => {
     if (!trusted(event)) return
     const delta = parseDelta(payload)
@@ -296,8 +407,454 @@ export function registerIpc(presence: {
 
   ipcMain.handle(IPC.chatgptInsert, (event, prompt: unknown, mode: unknown) => {
     if (!trusted(event) || typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000) return { state: 'failed', reason: 'Not allowed.' }
+    if (process.platform !== 'darwin') {
+      return {
+        state: 'failed',
+        reason: 'Native ChatGPT typing is available on macOS only. Use Interactive GPT on this PC.'
+      }
+    }
     return insertIntoChatGpt(prompt, mode === 'append' || mode === 'replace' ? mode : undefined)
   })
+  ipcMain.handle(IPC.typeDestCapture, (event) => {
+    if (!trusted(event)) return null
+    if (process.platform !== 'darwin') return null
+    return captureFocusedDestination(process.pid)
+  })
+  ipcMain.handle(IPC.typeDestCaptureHere, (event) => {
+    if (!trusted(event)) return null
+    if (process.platform !== 'darwin') return null
+    return captureHereDestination(process.pid)
+  })
+  ipcMain.handle(IPC.typeDestOpenChatGpt, (event) => {
+    if (!trusted(event)) return { ok: false, reason: 'Not allowed.', dest: null }
+    if (process.platform !== 'darwin') {
+      return { ok: false, reason: 'Native ChatGPT typing is available on macOS only. Use Interactive GPT on this PC.', dest: null }
+    }
+    return openAndFocusChatGpt()
+  })
+  ipcMain.handle(IPC.typeDestNewChat, (event) => {
+    if (!trusted(event)) return { ok: false, verified: false, reason: 'Not allowed.', dest: null }
+    if (process.platform !== 'darwin') {
+      return {
+        ok: false,
+        verified: false,
+        reason: 'Native ChatGPT New Chat automation is available on macOS only. Use Interactive GPT on this PC.',
+        dest: null
+      }
+    }
+    return chatgptNewChat()
+  })
+  ipcMain.handle(IPC.typeDestInsert, (event, request: unknown) => {
+    if (!trusted(event)) {
+      return { status: 'failed', destination: null, composerText: '', verified: false, reason: 'Not allowed.' }
+    }
+    if (process.platform !== 'darwin') {
+      return {
+        status: 'unsupported',
+        destination: null,
+        composerText: '',
+        verified: false,
+        reason: 'Typing into other apps is available on macOS only. Use Copy or Interactive GPT on this PC.'
+      }
+    }
+    const r = (request ?? {}) as {
+      text?: unknown
+      dest?: unknown
+      mode?: unknown
+      allowUnexposedChatGpt?: unknown
+    }
+    if (typeof r.text !== 'string' || !r.text.trim() || r.text.length > 8000 || !r.dest || typeof r.dest !== 'object') {
+      return { status: 'failed', destination: null, composerText: '', verified: false, reason: 'Not allowed.' }
+    }
+    return insertIntoDestination({
+      text: r.text,
+      dest: r.dest as import('../shared/destination').TypeDestination,
+      mode: r.mode === 'append' || r.mode === 'replace' || r.mode === 'ask' ? r.mode : 'ask',
+      excludePid: process.pid,
+      allowUnexposedChatGpt: r.allowUnexposedChatGpt === true
+    })
+  })
+  ipcMain.handle(IPC.typeDestOmnibox, (event, text: unknown) => {
+    if (!trusted(event) || typeof text !== 'string' || !text.trim() || text.length > 2000) {
+      return { status: 'failed', destination: null, composerText: '', verified: false, reason: 'Not allowed.' }
+    }
+    if (process.platform !== 'darwin') {
+      return {
+        status: 'unsupported',
+        destination: null,
+        composerText: '',
+        verified: false,
+        reason: 'Browser address-bar typing is available on macOS only.'
+      }
+    }
+    return setOmniboxText(text, process.pid)
+  })
+  ipcMain.handle(IPC.typeDestOpenNotes, (event) => {
+    if (!trusted(event)) return { ok: false, reason: 'Not allowed.', dest: null }
+    if (process.platform !== 'darwin') {
+      return { ok: false, reason: 'Notes typing is available on macOS only.', dest: null }
+    }
+    return openNotes()
+  })
+  ipcMain.on(IPC.typeDestCancel, (event) => {
+    if (!trusted(event)) return
+    cancelTypeDest()
+  })
+
+  loadGptModeFromSettings()
+  onGptModeState((next) => {
+    postToPet(IPC.gptModeState, next)
+    postToGptLive(IPC.gptModeState, next)
+    refreshTrayMenu()
+  })
+  // Live viewer is a separate BrowserWindow: allow only the narrow live-view IPC set
+  // via trustedGptLive(). Do not widen trusted() globally (send/enable/exit stay pet-only).
+  ipcMain.handle(IPC.gptModeGet, (event) => (trustedGptLive(event) ? getGptModeState() : null))
+  ipcMain.handle(IPC.gptModeEnable, (event) => (trusted(event) ? enableGptMode(process.pid) : null))
+  ipcMain.handle(IPC.gptModePause, (event) => (trusted(event) ? pauseGptMode() : null))
+  ipcMain.handle(IPC.gptModeResume, (event) => (trusted(event) ? resumeGptMode() : null))
+  ipcMain.handle(IPC.gptModeExit, (event) => {
+    if (!trusted(event)) return null
+    closeGptLiveWindow()
+    return exitGptMode()
+  })
+  ipcMain.handle(IPC.gptModeNewChat, (event) =>
+    trusted(event) ? gptModeNewChat(process.pid) : { ok: false, verified: false, reason: 'Not allowed.' }
+  )
+  ipcMain.handle(IPC.gptModeSend, (event, request: unknown) => {
+    if (!trusted(event) || !request || typeof request !== 'object') {
+      return { requestId: '', status: 'failed', detail: 'Not allowed.', submittedVerified: false, inserted: false }
+    }
+    const r = request as { requestId?: unknown; text?: unknown; mode?: unknown }
+    if (typeof r.requestId !== 'string' || typeof r.text !== 'string' || !r.text.trim() || r.text.length > 8000) {
+      return { requestId: '', status: 'failed', detail: 'Not allowed.', submittedVerified: false, inserted: false }
+    }
+    const mode = r.mode === 'replace' || r.mode === 'append' || r.mode === 'ask' ? r.mode : 'ask'
+    return sendGptModeMessage({ requestId: r.requestId.slice(0, 80), text: r.text, mode }, process.pid)
+  })
+  ipcMain.on(IPC.gptModeCancel, (event) => {
+    if (trusted(event)) cancelGptDelivery()
+  })
+  ipcMain.handle(IPC.gptModeFocus, (event) =>
+    trustedGptLive(event)
+      ? focusChatGptWindow()
+      : {
+          ok: false,
+          reason: 'Open ChatGPT from the MIKO panel or the live viewer window only.'
+        }
+  )
+
+  // —— ChatGPT Web workspace (isolated guest; chrome IPC only) ——
+  ipcMain.handle(IPC.chatgptWebOpen, (event) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return { ok: false, reason: 'Not allowed.' }
+    // Workspace beside the pet: tuck chat panel, pause Lens unless both are requested later.
+    setPanelOpen(false)
+    postToPet(IPC.uiHint, { tuckPanel: true })
+    closeGptLiveWindow()
+    setGptLiveView(false, 'Lens tucked while Interactive GPT is open.')
+    openChatGptWebWindow({ focus: true })
+    raisePetWindow()
+    return {
+      ok: true,
+      reason: 'Opened Interactive GPT beside MIKO (ChatGPT Web — not GPT Mode, not Lens).'
+    }
+  })
+  ipcMain.handle(IPC.chatgptWebStatus, (event) =>
+    trusted(event) || trustedChatGptWeb(event)
+      ? chatgptWebStatus()
+      : {
+          open: false,
+          collapsed: false,
+          pinned: true,
+          visible: false,
+          url: '',
+          title: '',
+          canGoBack: false,
+          canGoForward: false,
+          downloadNote: '',
+          dropNote: '',
+          dictateArmed: false,
+          partition: '',
+          label: 'MIKO · ChatGPT'
+        }
+  )
+  ipcMain.handle(IPC.chatgptWebClose, (event) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return false
+    closeChatGptWebWindow()
+    return true
+  })
+  ipcMain.handle(IPC.chatgptWebCollapse, (event) =>
+    trusted(event) || trustedChatGptWeb(event) ? collapseChatGptWebWindow() : false
+  )
+  ipcMain.handle(IPC.chatgptWebExpand, (event) =>
+    trusted(event) || trustedChatGptWeb(event) ? expandChatGptWebWindow(true) : false
+  )
+  ipcMain.handle(IPC.chatgptWebPin, (event, pinned: unknown) => {
+    if (!trustedChatGptWeb(event) && !trusted(event)) return false
+    if (typeof pinned !== 'boolean') return false
+    return setChatGptWebPinned(pinned)
+  })
+  ipcMain.handle(IPC.chatgptWebDragActive, (event, active: unknown) => {
+    if (!trustedChatGptWeb(event)) return false
+    setChatGptWebChromeDragActive(active === true)
+    return true
+  })
+  ipcMain.handle(IPC.chatgptWebExpandFromDrag, (event) =>
+    trustedChatGptWeb(event) ? expandChatGptWebFromDrag() : false
+  )
+  ipcMain.handle(IPC.chatgptWebDictateArm, (event, armed: unknown) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return false
+    return setChatGptWebDictateArmed(armed === true)
+  })
+  ipcMain.handle(IPC.chatgptWebBack, (event) =>
+    trustedChatGptWeb(event) ? chatgptWebBack() : false
+  )
+  ipcMain.handle(IPC.chatgptWebForward, (event) =>
+    trustedChatGptWeb(event) ? chatgptWebForward() : false
+  )
+  ipcMain.handle(IPC.chatgptWebReload, (event) =>
+    trustedChatGptWeb(event) ? chatgptWebReload() : false
+  )
+  ipcMain.handle(IPC.chatgptWebChromeHeight, (event, height: unknown) => {
+    if (!trustedChatGptWeb(event) || typeof height !== 'number') return false
+    setChatGptWebChromeHeight(height)
+    return true
+  })
+  ipcMain.handle(IPC.chatgptWebInsertTranscript, (event, text: unknown) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return { ok: false, reason: 'Not allowed.' }
+    if (typeof text !== 'string') return { ok: false, reason: 'Invalid transcript.' }
+    return chatgptWebInsertTranscript(text)
+  })
+  ipcMain.handle(IPC.chatgptWebSubmitDraft, async (event, opts: unknown) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) {
+      return {
+        ok: false,
+        status: 'failed' as const,
+        reason: 'Not allowed.',
+        composerText: ''
+      }
+    }
+    const raw = opts && typeof opts === 'object' ? (opts as { expectedText?: unknown; generation?: unknown }) : {}
+    return chatgptWebSubmitCurrentDraft({
+      expectedText: typeof raw.expectedText === 'string' ? raw.expectedText : undefined,
+      generation: typeof raw.generation === 'number' ? raw.generation : chatgptWebSubmitGeneration()
+    })
+  })
+  ipcMain.handle(IPC.chatgptWebCancelSubmit, (event) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return 0
+    cancelChatGptWebSubmit()
+    return chatgptWebSubmitGeneration()
+  })
+  ipcMain.handle(IPC.chatgptWebPasteClipboard, (event) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return { ok: false, reason: 'Not allowed.' }
+    return chatgptWebPasteClipboard()
+  })
+  ipcMain.handle(IPC.chatgptWebDownload, (event) =>
+    trusted(event) || trustedChatGptWeb(event) ? getChatGptWebDownload() : null
+  )
+  onChatGptWebDownload((info) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (isChatGptWebSender(w.webContents.id) && !w.webContents.isDestroyed()) {
+        w.webContents.send(IPC.chatgptWebDownloadEvent, info)
+      }
+    }
+  })
+  ipcMain.handle(IPC.gptModeLiveView, (event, enabled: unknown) => {
+    if (!trustedGptLive(event)) return null
+    if (enabled === true) {
+      const next = setGptLiveView(true)
+      // Panel opens the window; the viewer already is the window.
+      if (trusted(event)) openGptLiveWindow()
+      return next
+    }
+    closeGptLiveWindow()
+    return setGptLiveView(false)
+  })
+  ipcMain.handle(IPC.gptModeLiveSnapshot, (event) =>
+    trustedGptLive(event)
+      ? gptLiveViewSnapshot()
+      : {
+          ok: false,
+          reason:
+            'Live frames are only available from MIKO’s live viewer or main panel — this window isn’t authorized.',
+          dataUrl: '',
+          sourceName: '',
+          sourceId: '',
+          owner: '',
+          permission: 'unknown',
+          kind: 'capture-failed',
+          captureWidth: 0,
+          captureHeight: 0
+        }
+  )
+  ipcMain.handle(IPC.gptModeListSources, (event) =>
+    trustedGptLive(event)
+      ? listGptCaptureSources()
+      : {
+          ok: false,
+          reason:
+            'Choose window is blocked for this window. Use MIKO’s live viewer (or the main panel’s Choose window).',
+          permission: 'unknown',
+          sources: []
+        }
+  )
+  ipcMain.handle(IPC.gptModeSetSource, (event, sourceId: unknown, name: unknown, owner: unknown) => {
+    if (!trustedGptLive(event) || typeof sourceId !== 'string' || !sourceId.trim()) return getGptModeState()
+    cancelLensInput('source-changed')
+    const next = setGptCaptureSource(
+      sourceId,
+      typeof name === 'string' ? name : '',
+      typeof owner === 'string' ? owner : ''
+    )
+    if (trusted(event)) openGptLiveWindow()
+    return next
+  })
+  ipcMain.handle(IPC.gptModeLiveSizePreset, (event, preset: unknown) => {
+    if (!trustedGptLive(event)) return false
+    if (preset !== 'compact' && preset !== 'reading' && preset !== 'expand') return false
+    applyGptLiveSizePreset(preset)
+    return true
+  })
+  ipcMain.handle(IPC.gptModeLiveCollapse, (event, next: unknown) => {
+    if (!trustedGptLive(event)) return false
+    return setGptLiveCollapsed(next === true)
+  })
+  ipcMain.on(IPC.gptModeOpenPicker, (event) => {
+    // Panel opens the viewer + picker; the viewer opens the picker locally (listSources).
+    if (!trusted(event)) return
+    setGptLiveView(true)
+    openGptLiveWindow()
+    postToGptLive(IPC.gptModeOpenPicker)
+  })
+
+  // —— MIKO Lens control + files (viewer or pet; narrow trustedGptLive) ——
+  ipcMain.handle(IPC.lensWindowBounds, (event, sourceId: unknown) =>
+    trustedGptLive(event)
+      ? lensWindowBounds(typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined)
+      : null
+  )
+  ipcMain.handle(IPC.lensPointer, (event, request: unknown) => {
+    if (!trustedGptLive(event) || !request || typeof request !== 'object') {
+      return { ok: false, reason: 'Not allowed.', activated: false, pid: 0, windowId: 0 }
+    }
+    const r = request as {
+      action?: unknown
+      x?: unknown
+      y?: unknown
+      dx?: unknown
+      dy?: unknown
+      expectSourceId?: unknown
+      activate?: unknown
+      intent?: unknown
+    }
+    if (typeof r.expectSourceId !== 'string' || typeof r.x !== 'number' || typeof r.y !== 'number') {
+      return { ok: false, reason: 'Invalid pointer request.', activated: false, pid: 0, windowId: 0 }
+    }
+    const action = r.action === 'dblclick' || r.action === 'scroll' ? r.action : 'click'
+    const intent = r.intent === 'control-original' || r.intent === 'background' ? r.intent : undefined
+    return lensPointer({
+      action,
+      x: r.x,
+      y: r.y,
+      dx: typeof r.dx === 'number' ? r.dx : 0,
+      dy: typeof r.dy === 'number' ? r.dy : 0,
+      expectSourceId: r.expectSourceId.slice(0, 120),
+      activate: r.activate === true,
+      intent
+    })
+  })
+  ipcMain.handle(IPC.lensType, (event, request: unknown) => {
+    if (!trustedGptLive(event) || !request || typeof request !== 'object') {
+      return { ok: false, reason: 'Not allowed.', activated: false, pid: 0 }
+    }
+    const r = request as { text?: unknown; expectSourceId?: unknown; activate?: unknown; intent?: unknown }
+    if (typeof r.expectSourceId !== 'string' || typeof r.text !== 'string') {
+      return { ok: false, reason: 'Invalid type request.', activated: false, pid: 0 }
+    }
+    const intent = r.intent === 'control-original' || r.intent === 'background' ? r.intent : undefined
+    return lensType({
+      text: r.text.slice(0, 4000),
+      expectSourceId: r.expectSourceId.slice(0, 120),
+      activate: r.activate === true,
+      intent
+    })
+  })
+  ipcMain.handle(IPC.lensFinderSelection, (event, sourceId: unknown) =>
+    trustedGptLive(event)
+      ? lensFinderSelection(typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined)
+      : { ok: false, reason: 'Not allowed.', files: [] }
+  )
+  ipcMain.handle(IPC.lensPickFiles, (event) => {
+    if (!trustedGptLive(event)) return { ok: false, reason: 'Not allowed.', files: [] }
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    return lensPickFiles(parent)
+  })
+  ipcMain.handle(IPC.lensProvenFiles, (event) => (trustedGptLive(event) ? lensProvenFiles() : []))
+  ipcMain.handle(IPC.lensCopyFile, (event, path: unknown) =>
+    trustedGptLive(event) && typeof path === 'string'
+      ? lensCopyFile(path.slice(0, 1024))
+      : { ok: false, reason: 'Not allowed.' }
+  )
+  ipcMain.handle(IPC.lensRevealFile, (event, path: unknown) =>
+    trustedGptLive(event) && typeof path === 'string' ? lensRevealFile(path.slice(0, 1024)) : false
+  )
+  ipcMain.on(IPC.lensStartDrag, (event, path: unknown) => {
+    if (!trustedGptLive(event) || typeof path !== 'string') return
+    lensStartDrag(event, path.slice(0, 1024))
+  })
+  ipcMain.handle(IPC.lensAttachChatGpt, (event, path: unknown, sourceId: unknown) =>
+    trustedGptLive(event) && typeof path === 'string'
+      ? lensAttachToChatGpt(path.slice(0, 1024), typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined)
+      : {
+          ok: false,
+          status: 'failed',
+          reason: 'Not allowed.',
+          path: '',
+          filename: '',
+          verified: false,
+          composerText: ''
+        }
+  )
+  ipcMain.handle(IPC.lensRegisterFile, (event, path: unknown) =>
+    trustedGptLive(event) && typeof path === 'string' ? registerLensFileFromProven(path.slice(0, 1024)) : null
+  )
+  ipcMain.on(IPC.lensCancelInput, (event) => {
+    if (trustedGptLive(event)) cancelLensInput('viewer')
+  })
+  ipcMain.handle(IPC.lensOpenOriginal, (event, sourceId: unknown) =>
+    trustedGptLive(event)
+      ? lensOpenOriginal(typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined)
+      : { ok: false, reason: 'Not allowed.', pid: 0 }
+  )
+  ipcMain.handle(IPC.spotifyMedia, (event, action: unknown) => {
+    if (!trustedGptLive(event) || typeof action !== 'string') {
+      return {
+        ok: false,
+        reason: 'Not allowed.',
+        running: false,
+        state: 'unknown',
+        track: '',
+        artist: '',
+        volume: null,
+        method: 'none'
+      }
+    }
+    const allowed = ['play-pause', 'next', 'previous', 'volume-up', 'volume-down', 'status']
+    if (!allowed.includes(action)) {
+      return {
+        ok: false,
+        reason: 'Unknown Spotify action.',
+        running: false,
+        state: 'unknown',
+        track: '',
+        artist: '',
+        volume: null,
+        method: 'none'
+      }
+    }
+    return spotifyMedia(action as import('./spotify').SpotifyAction)
+  })
+
   ipcMain.handle(IPC.chatsList, (event) => (trusted(event) ? savedChats() : []))
   ipcMain.handle(IPC.chatsAdd, (event, payload: unknown) => {
     if (!trusted(event)) return refused()
@@ -517,8 +1074,184 @@ export function registerIpc(presence: {
   ipcMain.handle(IPC.bridgeNew, (event) => {
     if (trusted(event)) newConversation()
   })
+  ipcMain.handle(IPC.bridgeSetEnabled, (event, enabled: unknown) => {
+    if (!trusted(event) || typeof enabled !== 'boolean') return null
+    setAssistantEnabled(enabled)
+    if (!enabled) stopAllBridges()
+    refreshTrayMenu()
+    return bridgeStatus()
+  })
+  ipcMain.handle(IPC.setupGet, (event) => (trusted(event) ? setupState() : defaultSetupState()))
+  ipcMain.handle(IPC.setupUpdate, (event, value: unknown) => {
+    const current = setupState()
+    if (!trusted(event)) return current
+    const update = parseSetupUpdate(value)
+    if (!update) return current
+    const next = applySetupUpdate(current, update)
+    return setSetupState(next) ? next : current
+  })
+  ipcMain.handle(IPC.voicePermissionGet, (event) => {
+    if (!trusted(event)) {
+      return {
+        supported: false,
+        microphone: 'unknown',
+        speechRecognition: 'unknown',
+        canRequest: false,
+        detail: 'Not allowed.'
+      }
+    }
+    return voicePermissionStatus(false)
+  })
+  ipcMain.handle(IPC.voicePermissionRequest, (event) => {
+    if (!trusted(event)) {
+      return {
+        supported: false,
+        microphone: 'unknown',
+        speechRecognition: 'unknown',
+        canRequest: false,
+        detail: 'Not allowed.'
+      }
+    }
+    return voicePermissionStatus(true)
+  })
+  ipcMain.handle(IPC.voiceSettingsOpen, (event) => (trusted(event) ? openVoicePrivacySettings() : false))
+  ipcMain.handle(IPC.voiceMicTest, (event) =>
+    trusted(event)
+      ? runMicTest()
+      : { outcome: 'unavailable' as const, transcript: '', detail: 'Not allowed.' }
+  )
+  ipcMain.handle(IPC.summonShortcutGet, (event) =>
+    trusted(event)
+      ? summonShortcut.status()
+      : { configured: '', active: null, ok: false, detail: 'Not allowed.' }
+  )
+  ipcMain.handle(IPC.summonShortcutSet, (event, value: unknown) => {
+    if (!trusted(event) || typeof value !== 'string') {
+      return { configured: '', active: null, ok: false, detail: 'Not allowed.' }
+    }
+    const status = summonShortcut.setAccelerator(value)
+    refreshTrayMenu()
+    return status
+  })
   ipcMain.handle(IPC.prefsGet, (event) => (trusted(event) ? mikoPreferences() : ''))
   ipcMain.handle(IPC.prefsSet, (event, text: unknown) => (trusted(event) && typeof text === 'string' ? setMikoPreferences(text) : false))
+
+  ensureFeedbackStore()
+  ipcMain.handle(IPC.appInfo, (event) => {
+    if (!trusted(event)) {
+      return {
+        name: APP_NAME,
+        version: APP_VERSION,
+        buildId: 'unknown',
+        channel: APP_CHANNEL,
+        packaged: false,
+        platform: process.platform,
+        arch: process.arch
+      }
+    }
+    return {
+      name: APP_NAME,
+      version: app.getVersion?.() || APP_VERSION,
+      buildId: buildId(process.env['MIKO_BUILD_ID']),
+      channel: APP_CHANNEL,
+      packaged: app.isPackaged,
+      platform: process.platform,
+      arch: process.arch
+    }
+  })
+  ipcMain.handle(IPC.feedbackConfigGet, (event) => {
+    if (!trusted(event)) return { endpoint: '', inviteCode: '', hasEndpoint: false }
+    const c = getFeedbackConfig()
+    return { endpoint: c.endpoint, inviteCode: c.inviteCode, hasEndpoint: Boolean(c.endpoint) }
+  })
+  ipcMain.handle(IPC.feedbackConfigSet, (event, partial: unknown) => {
+    if (!trusted(event) || !partial || typeof partial !== 'object') {
+      return { endpoint: '', inviteCode: '', hasEndpoint: false }
+    }
+    const p = partial as { endpoint?: unknown; inviteCode?: unknown }
+    const c = setFeedbackConfig({
+      endpoint: typeof p.endpoint === 'string' ? p.endpoint : undefined,
+      inviteCode: typeof p.inviteCode === 'string' ? p.inviteCode : undefined
+    })
+    return { endpoint: c.endpoint, inviteCode: c.inviteCode, hasEndpoint: Boolean(c.endpoint) }
+  })
+  ipcMain.handle(IPC.feedbackPreview, (event, draft: unknown, opts: unknown) => {
+    if (!trusted(event) || !draft || typeof draft !== 'object') return { ok: false as const, reason: 'Not allowed.' }
+    const o = (opts ?? {}) as { actionType?: unknown; errorCode?: unknown }
+    return previewFeedback(draft as FeedbackDraft, {
+      actionType: typeof o.actionType === 'string' ? o.actionType : null,
+      errorCode: typeof o.errorCode === 'string' ? o.errorCode : null
+    })
+  })
+  ipcMain.handle(IPC.feedbackSubmit, async (event, draft: unknown, opts: unknown) => {
+    if (!trusted(event) || !draft || typeof draft !== 'object') {
+      return { ok: false, reason: 'Not allowed.', delivered: false, item: null }
+    }
+    const o = (opts ?? {}) as { actionType?: unknown; errorCode?: unknown; clientKey?: unknown }
+    return submitFeedback(draft as FeedbackDraft, {
+      actionType: typeof o.actionType === 'string' ? o.actionType : null,
+      errorCode: typeof o.errorCode === 'string' ? o.errorCode : null,
+      clientKey: typeof o.clientKey === 'string' ? o.clientKey : undefined
+    })
+  })
+  ipcMain.handle(IPC.feedbackList, (event) => (trusted(event) ? listFeedbackQueue() : []))
+  ipcMain.handle(IPC.feedbackRetry, async (event, id: unknown) => {
+    if (!trusted(event) || typeof id !== 'string') return { ok: false, reason: 'Not allowed.', item: null }
+    return retryFeedback(id)
+  })
+  ipcMain.handle(IPC.feedbackDelete, (event, id: unknown) => {
+    if (!trusted(event) || typeof id !== 'string') return []
+    return deleteFeedbackItem(id)
+  })
+  ipcMain.handle(IPC.feedbackExport, async (event, id: unknown) => {
+    if (!trusted(event) || typeof id !== 'string') return { ok: false, reason: 'Not allowed.', path: '' }
+    return exportFeedback(id)
+  })
+  ipcMain.handle(IPC.feedbackExportDraft, async (event, draft: unknown, opts: unknown) => {
+    if (!trusted(event) || !draft || typeof draft !== 'object') {
+      return { ok: false, reason: 'Not allowed.', path: '', item: null }
+    }
+    const o = (opts ?? {}) as { actionType?: unknown; errorCode?: unknown }
+    return exportFeedbackDraft(draft as FeedbackDraft, {
+      actionType: typeof o.actionType === 'string' ? o.actionType : null,
+      errorCode: typeof o.errorCode === 'string' ? o.errorCode : null
+    })
+  })
+  ipcMain.handle(IPC.updateGet, (event) => (trusted(event) ? getUpdateStatus() : getUpdateStatus()))
+  ipcMain.handle(IPC.updateCheck, async (event) => {
+    if (!trusted(event)) return getUpdateStatus()
+    return checkForUpdates(true)
+  })
+  ipcMain.handle(IPC.updateRestart, async (event, draftText: unknown) => {
+    if (!trusted(event)) return { ok: false, reason: 'Not allowed.' }
+    return restartToUpdate(typeof draftText === 'string' ? draftText.slice(0, 8000) : '')
+  })
+  ipcMain.handle(IPC.updateLater, (event) => {
+    if (!trusted(event)) return getUpdateStatus()
+    return silenceCurrentUpdate()
+  })
+  ipcMain.handle(IPC.updateOpenDownload, async (event, draftText: unknown) => {
+    if (!trusted(event)) return { ok: false, reason: 'Not allowed.' }
+    return openManualDownload(typeof draftText === 'string' ? draftText.slice(0, 8000) : '')
+  })
+  ipcMain.handle(IPC.updateFeedSet, (event, url: unknown) => {
+    if (!trusted(event) || typeof url !== 'string') return { ok: false, reason: 'Not allowed.' }
+    return setUpdateFeedOverride(url)
+  })
+  ipcMain.handle(IPC.updateManualReleaseSet, (event, partial: unknown) => {
+    if (!trusted(event) || !partial || typeof partial !== 'object') {
+      return { ok: false, reason: 'Not allowed.', config: { downloadUrl: '', latestJsonUrl: '' } }
+    }
+    const p = partial as { downloadUrl?: unknown; latestJsonUrl?: unknown }
+    return setManualReleaseConfig({
+      downloadUrl: typeof p.downloadUrl === 'string' ? p.downloadUrl : undefined,
+      latestJsonUrl: typeof p.latestJsonUrl === 'string' ? p.latestJsonUrl : undefined
+    })
+  })
+  ipcMain.handle(IPC.updateStartup, (event) => {
+    if (!trusted(event)) return { notice: '', draft: '' }
+    return { notice: takeUpdateNotice(), draft: takeRecoveredDraft() }
+  })
   ipcMain.on(IPC.bridgeCancel, (event, requestId: unknown) => {
     if (trusted(event) && typeof requestId === 'string') cancelBridge(requestId)
   })
@@ -581,6 +1314,15 @@ function commit(edit: ChatEdit): { ok: boolean; reason: string; list: { name: st
 
 function trusted(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   return isTrustedSender(event.sender.id)
+}
+
+/** Pet panel or the GPT live viewer — for live-view IPC only. */
+function trustedGptLive(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  return trusted(event) || isGptLiveSender(event.sender.id)
+}
+
+function trustedChatGptWeb(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  return isChatGptWebSender(event.sender.id)
 }
 
 function parseDelta(value: unknown): { dx: number; dy: number } | null {

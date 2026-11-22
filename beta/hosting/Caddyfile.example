@@ -1,0 +1,23 @@
+# One hostname for updates + feedback. Install Caddy on the VPS, then:
+#   sudo cp Caddyfile.example /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Replace miko.example.com with your DNS name.
+
+miko.example.com {
+  encode gzip
+
+  # Public update feed (electron-updater generic channel)
+  handle_path /miko/beta/* {
+    root * /var/www/miko/beta
+    file_server
+  }
+
+  # Feedback API + owner dashboard (Node on 127.0.0.1:8787)
+  handle /v1/* {
+    reverse_proxy 127.0.0.1:8787
+  }
+  handle {
+    reverse_proxy 127.0.0.1:8787
+  }
+}

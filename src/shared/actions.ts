@@ -28,6 +28,14 @@ export type ActionKind =
   | 'replace_selected_text'
   | 'summarize_text'
   | 'rewrite_text'
+  /** Launch/focus ChatGPT then create a new chat (verified empty composer). */
+  | 'chatgpt_new_chat'
+  /** Insert into a verified editable destination without sending. */
+  | 'insert_text'
+  /** Focus browser address bar and set text without navigating. */
+  | 'focus_omnibox'
+  /** Ask the owner to pick/focus where to type, then Paste now. */
+  | 'choose_type_destination'
   | 'cancel_task'
   | 'ask_assistant'
   | 'clarify'
@@ -77,6 +85,8 @@ export type TaskPhase =
   | 'generating'
   | 'executing'
   | 'verifying'
+  /** Unrelated general question mid-task — purpose retained until resume or cancel. */
+  | 'suspended'
   | 'completed'
   | 'cancelled'
   | 'failed'

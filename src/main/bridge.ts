@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { app } from 'electron'
 import { IPC } from '../shared/api'
 import { assistantInstructions, bridgeResult, emptyBridge, readBridgeEvent, type BridgeState } from '../shared/bridge'
@@ -28,7 +28,7 @@ export interface BridgeUpdate {
 }
 
 const TIMEOUT_MS = 120_000
-const CANDIDATES = ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex']
+const MAC_CANDIDATES = ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex']
 const FEATURES_OFF = [
   'multi_agent', 'plugins', 'apps', 'browser_use', 'browser_use_external', 'computer_use', 'image_generation',
   'skill_search', 'tool_suggest', 'goals', 'sleep_tool', 'hooks', 'in_app_browser', 'realtime_conversation',
@@ -37,17 +37,64 @@ const FEATURES_OFF = [
 const running = new Map<string, { proc: ChildProcess; timer: NodeJS.Timeout; settled: boolean }>()
 
 export function codexPath(): string | null {
-  return CANDIDATES.find((path) => existsSync(path)) ?? null
+  const explicit = (process.env['MIKO_CODEX_PATH'] || '').trim()
+  if (explicit && existsSync(explicit)) return explicit
+  if (process.platform === 'darwin') return MAC_CANDIDATES.find((path) => existsSync(path)) ?? pathExecutable('codex')
+  if (process.platform === 'win32') {
+    // Only direct executables are accepted. npm .cmd shims would require a shell,
+    // which is intentionally avoided because assistant prompts are user text.
+    return pathExecutable('codex.exe')
+  }
+  return pathExecutable('codex')
 }
 
-export function bridgeStatus(): { enabled: boolean; available: boolean; signedIn: boolean; thread: string; busy: boolean } {
+function pathExecutable(name: string): string | null {
+  const raw = process.env['PATH'] || ''
+  for (const root of raw.split(delimiter)) {
+    if (!root) continue
+    const candidate = join(root, name)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+export function bridgeStatus(): {
+  enabled: boolean
+  available: boolean
+  signedIn: boolean
+  thread: string
+  busy: boolean
+  provider: 'chatgpt-bundled' | 'path' | 'none'
+  reason: string
+} {
   const path = codexPath()
   let signedIn = false
   if (path) {
     const out = spawnSync(path, ['login', 'status'], { shell: false, encoding: 'utf8', timeout: 8000 })
     signedIn = /logged in using chatgpt/i.test(`${out.stdout}${out.stderr}`)
   }
-  return { enabled: assistantEnabled(), available: Boolean(path), signedIn, thread: assistantThread(), busy: running.size > 0 }
+  const provider =
+    !path
+      ? 'none'
+      : process.platform === 'darwin' && path.startsWith('/Applications/ChatGPT.app/')
+        ? 'chatgpt-bundled'
+        : 'path'
+  const reason = !path
+    ? process.platform === 'win32'
+      ? 'Codex CLI was not found on this PC. Install it separately or use Interactive GPT.'
+      : 'ChatGPT’s bundled Codex CLI was not found.'
+    : signedIn
+      ? ''
+      : 'Codex was found but is not signed in. Run “codex login” and retry.'
+  return {
+    enabled: assistantEnabled(),
+    available: Boolean(path),
+    signedIn,
+    thread: assistantThread(),
+    busy: running.size > 0,
+    provider,
+    reason
+  }
 }
 
 function assistantDir(): { work: string; instructions: string } {
@@ -86,7 +133,15 @@ export function sendBridge(
 ): { ok: boolean; reason: string } {
   if (!assistantEnabled()) return { ok: false, reason: 'MIKO assistant is off. Turn it on in the paw menu.' }
   const path = codexPath()
-  if (!path) return { ok: false, reason: 'ChatGPT’s bundled Codex CLI wasn’t found.' }
+  if (!path) {
+    return {
+      ok: false,
+      reason:
+        process.platform === 'win32'
+          ? 'The Codex CLI wasn’t found on this PC. Interactive GPT still works independently.'
+          : 'ChatGPT’s bundled Codex CLI wasn’t found.'
+    }
+  }
   if (running.has(requestId)) return { ok: false, reason: 'That request is already running.' }
   if (running.size > 0) return { ok: false, reason: 'MIKO is still answering. Wait for it, or cancel it.' }
   // fresh: a one-off request (selection actions) that neither resumes nor replaces the current conversation,

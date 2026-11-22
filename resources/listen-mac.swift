@@ -2,6 +2,54 @@ import AVFoundation
 import Foundation
 import Speech
 
+func microphoneState() -> String {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized: return "authorized"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "not-determined"
+    @unknown default: return "unknown"
+    }
+}
+
+func speechState() -> String {
+    switch SFSpeechRecognizer.authorizationStatus() {
+    case .authorized: return "authorized"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "not-determined"
+    @unknown default: return "unknown"
+    }
+}
+
+func emitPermissionStatus() {
+    let payload: [String: Any] = [
+        "permissionStatus": true,
+        "microphone": microphoneState(),
+        "speechRecognition": speechState()
+    ]
+    let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data([0x0A]))
+}
+
+if CommandLine.arguments.contains("--permission-status") {
+    FileHandle.standardOutput.write(Data("{\"pid\":\(getpid())}\n".utf8))
+    emitPermissionStatus()
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--request-permissions") {
+    FileHandle.standardOutput.write(Data("{\"pid\":\(getpid())}\n".utf8))
+    SFSpeechRecognizer.requestAuthorization { _ in
+        AVCaptureDevice.requestAccess(for: .audio) { _ in
+            emitPermissionStatus()
+            exit(0)
+        }
+    }
+    RunLoop.main.run()
+}
+
 /// On-device push-to-talk. Audio stays in memory and is never written out.
 final class ListenSession {
     let engine = AVAudioEngine()

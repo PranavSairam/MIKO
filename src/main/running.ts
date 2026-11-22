@@ -47,6 +47,14 @@ function run(argv) {
   return a.terminate ? 'ok' : 'no'
 }`
 
+const ALIVE_SCRIPT = `
+ObjC.import('AppKit')
+function run(argv) {
+  const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(argv[0]))
+  if (!a || a.isNil() || a.terminated) return 'gone'
+  return 'alive'
+}`
+
 const TAB_SCRIPTS: Record<BrowserId, { list: string; focus: string; close: string }> = {
   chrome: {
     list: `function run() {
@@ -105,10 +113,78 @@ export async function focusPid(pid: number): Promise<boolean> {
 
 /** Polite quit: the app's own save prompts still protect unsaved work. */
 export async function quitPid(pid: number): Promise<boolean> {
-  if (!lastListing.has(pid)) return false
+  const listed = lastListing.get(pid)
+  if (!listed) return false
   const result = await jxa(QUIT_SCRIPT, [String(pid)], 4000)
-  if (result.ok) lastListing.delete(pid)
-  return result.ok && result.out.trim() === 'ok'
+  // Do not drop the listing until the process is gone — save dialogs keep it alive.
+  if (result.ok && result.out.trim() === 'gone') lastListing.delete(pid)
+  return result.ok && (result.out.trim() === 'ok' || result.out.trim() === 'gone')
+}
+
+/** Revalidate the exact listed pid, then request a graceful terminate (never force). */
+export async function requestGracefulQuitPid(
+  pid: number
+): Promise<{ ok: boolean; name: string; alreadyGone: boolean }> {
+  const listed = lastListing.get(pid)
+  if (!listed) return { ok: false, name: 'That app', alreadyGone: true }
+  const alive = await pidAlive(pid)
+  if (!alive) {
+    lastListing.delete(pid)
+    return { ok: true, name: listed.name, alreadyGone: true }
+  }
+  const result = await jxa(QUIT_SCRIPT, [String(pid)], 4000)
+  if (!result.ok) return { ok: false, name: listed.name, alreadyGone: false }
+  const out = result.out.trim()
+  if (out === 'gone') {
+    lastListing.delete(pid)
+    return { ok: true, name: listed.name, alreadyGone: true }
+  }
+  return { ok: out === 'ok', name: listed.name, alreadyGone: false }
+}
+
+export async function pidAlive(pid: number): Promise<boolean> {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  const result = await jxa(ALIVE_SCRIPT, [String(pid)], 2000)
+  return result.ok && result.out.trim() === 'alive'
+}
+
+/** Poll until the exact pid exits, or time out (save dialogs stay “waiting”). */
+export async function waitUntilPidGone(
+  pid: number,
+  timeoutMs = 10_000
+): Promise<'closed' | 'still-open'> {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    if (!(await pidAlive(pid))) {
+      lastListing.delete(pid)
+      return 'closed'
+    }
+    await sleep(400)
+  }
+  return (await pidAlive(pid)) ? 'still-open' : 'closed'
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Close one tab and confirm it disappeared (browser stays open). */
+export async function closeTabVerified(
+  browser: BrowserId,
+  window: number,
+  tab: number
+): Promise<'closed' | 'failed' | 'gone'> {
+  if (!isListed(browser)) return 'gone'
+  const before = await listTabs(browser)
+  if (!before.ok) return 'failed'
+  const match = before.tabs.find((t) => t.window === window && t.tab === tab)
+  if (!match) return 'gone'
+  const ok = await closeTab(browser, window, tab)
+  if (!ok) return 'failed'
+  const after = await listTabs(browser)
+  if (!after.ok) return 'failed'
+  const still = after.tabs.some((t) => t.window === window && t.tab === tab && t.url === match.url)
+  return still ? 'failed' : 'closed'
 }
 
 export async function listTabs(browser: BrowserId): Promise<{ ok: boolean; tabs: BrowserTab[]; reason: string }> {

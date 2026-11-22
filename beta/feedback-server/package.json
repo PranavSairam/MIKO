@@ -1,0 +1,14 @@
+{
+  "name": "miko-feedback-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private MIKO beta feedback inbox (owner-only). Not shipped inside the desktop app.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "init": "node init-config.mjs"
+  }
+}

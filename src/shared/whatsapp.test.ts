@@ -7,11 +7,30 @@ import {
   matchId,
   parseAliases,
   parseChooserIndex,
+  parseWaRecipientCorrection,
   planWhatsApp,
   rememberAlias,
   resolveAlias,
   sameContact
 } from './whatsapp.ts'
+
+describe('WhatsApp recipient corrections', () => {
+  it('reads bare names and meant / instead / search phrasing', () => {
+    assert.equal(parseWaRecipientCorrection('Santosh G'), 'Santosh G')
+    assert.equal(parseWaRecipientCorrection('I meant Santosh G'), 'Santosh G')
+    assert.equal(parseWaRecipientCorrection('meant Santosh G'), 'Santosh G')
+    assert.equal(parseWaRecipientCorrection('Search Santosh G instead'), 'Santosh G')
+    assert.equal(parseWaRecipientCorrection('find Santosh G'), 'Santosh G')
+    assert.equal(parseWaRecipientCorrection('try Santosh G'), 'Santosh G')
+  })
+
+  it('ignores cancel, motion, and questions', () => {
+    assert.equal(parseWaRecipientCorrection('never mind'), null)
+    assert.equal(parseWaRecipientCorrection('sit'), null)
+    assert.equal(parseWaRecipientCorrection('what is a class example?'), null)
+    assert.equal(parseWaRecipientCorrection('how do I open WhatsApp'), null)
+  })
+})
 
 describe('WhatsApp contact names', () => {
   it('reads a chat row without its unread count', () => {

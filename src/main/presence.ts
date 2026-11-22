@@ -8,7 +8,16 @@ import {
   type SummonState
 } from '../shared/summon'
 import { watchPointer } from './pointer'
-import { concealPet, revealWithoutMoving, sendPresence, summonAtPointer } from './pet-window'
+import {
+  concealPet,
+  revealWithoutMoving,
+  restorePetPointerState,
+  sendPresence,
+  summonAtPointer,
+  setPanelOpen
+} from './pet-window'
+import { hideChatGptWebSurfaces } from './chatgpt-web-window'
+import { cancelListening } from './speech'
 
 const EXIT_FALLBACK_MS = 800
 
@@ -31,11 +40,22 @@ export function createPresence(onVisibility: () => void): {
     exitTimer = null
   }
 
+  function dismissSurfaces(): void {
+    // Hide pet companion surfaces together. Does not clear ChatGPT Web login/session.
+    cancelListening()
+    setPanelOpen(false)
+    hideChatGptWebSurfaces()
+    // hideChatGptWebSurfaces already restores pointer; call again so a tucked panel
+    // never leaves drag/pointerHeld stuck after cancel/dismiss.
+    restorePetPointerState()
+  }
+
   function completeExit(generation: number): void {
     const step = finishExit(state, generation)
     if (step.effect === 'none') return
     clearExit()
     state = step.state
+    dismissSurfaces()
     concealPet()
     sendPresence({ phase: 'hidden', generation: state.generation })
     onVisibility()
@@ -65,6 +85,7 @@ export function createPresence(onVisibility: () => void): {
     }
     if (effect === 'play-exit') {
       watchPointer(false)
+      dismissSurfaces()
       sendPresence({ phase: 'exit', generation })
       clearExit()
       exitTimer = setTimeout(() => completeExit(generation), EXIT_FALLBACK_MS)
@@ -73,6 +94,7 @@ export function createPresence(onVisibility: () => void): {
     if (effect === 'hide-now') {
       clearExit()
       watchPointer(false)
+      dismissSurfaces()
       concealPet()
       sendPresence({ phase: 'hidden', generation })
       onVisibility()

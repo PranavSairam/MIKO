@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import CryptoKit
 import Foundation
 
@@ -1496,6 +1497,397 @@ func runWhatsApp() -> Never {
     emitWhatsApp(WhatsAppOut(ok: true, status: found.none ? "none" : "results", query: query, rows: found.rows, inspected: true, searchValue: value))
 }
 
+// MARK: Lens control (window bounds + pointer + Finder selection + ChatGPT file paste)
+
+struct LensOut: Encodable {
+    var ok: Bool
+    var reason: String = ""
+    var activated: Bool = false
+    var pid: Int32 = 0
+    var windowId: Int = 0
+    var name: String = ""
+    var owner: String = ""
+    var bundle: String = ""
+    var x: Double = 0
+    var y: Double = 0
+    var width: Double = 0
+    var height: Double = 0
+    var paths: [String] = []
+    var status: String = ""
+    var filename: String = ""
+    var path: String = ""
+    var verified: Bool = false
+    var composerText: String = ""
+}
+
+func emitLens(_ out: LensOut) -> Never {
+    let data = (try? JSONEncoder().encode(out)) ?? Data("{\"ok\":false}".utf8)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data([0x0A]))
+    exit(0)
+}
+
+func failLens(_ reason: String, _ base: LensOut = LensOut(ok: false)) -> Never {
+    var o = base
+    o.ok = false
+    o.reason = reason
+    emitLens(o)
+}
+
+func lensOk() -> LensOut { LensOut(ok: true) }
+func lensBad() -> LensOut { LensOut(ok: false) }
+
+/// CGWindowList row for a desktopCapturer `window:<id>:…` source.
+func cgWindow(byId want: Int) -> (pid: pid_t, name: String, owner: String, bounds: CGRect)? {
+    guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+        return nil
+    }
+    for row in info {
+        guard let wid = row[kCGWindowNumber as String] as? Int, wid == want else { continue }
+        let pid = row[kCGWindowOwnerPID as String] as? pid_t ?? 0
+        let name = row[kCGWindowName as String] as? String ?? ""
+        let owner = row[kCGWindowOwnerName as String] as? String ?? ""
+        guard let b = row[kCGWindowBounds as String] as? [String: Any],
+              let x = b["X"] as? CGFloat,
+              let y = b["Y"] as? CGFloat,
+              let w = b["Width"] as? CGFloat,
+              let h = b["Height"] as? CGFloat,
+              w > 1, h > 1 else { return nil }
+        // CGWindow bounds are top-left global Quartz points (same as CGEvent mouse).
+        return (pid, name, owner, CGRect(x: x, y: y, width: w, height: h))
+    }
+    return nil
+}
+
+func parseWindowIdFlag() -> Int? {
+    if let raw = flag("--window-id"), let n = Int(raw), n > 0 { return n }
+    if let raw = flag("--source-id") {
+        // Electron: window:<cgWindowId>:<n>
+        let parts = raw.split(separator: ":")
+        if parts.count >= 2, parts[0] == "window", let n = Int(parts[1]), n > 0 { return n }
+    }
+    return nil
+}
+
+func runLensWindowInfo() -> Never {
+    guard AXIsProcessTrusted() else {
+        failLens("MIKO needs Accessibility permission (System Settings → Privacy & Security → Accessibility).")
+    }
+    guard let wid = parseWindowIdFlag() else { failLens("Missing --source-id / --window-id.") }
+    guard let hit = cgWindow(byId: wid) else {
+        failLens("That window closed or isn’t on screen anymore.")
+    }
+    let app = NSRunningApplication(processIdentifier: hit.pid)
+    var out = lensOk()
+    out.pid = hit.pid
+    out.windowId = wid
+    out.name = hit.name
+    out.owner = hit.owner
+    out.bundle = app?.bundleIdentifier ?? ""
+    out.x = hit.bounds.origin.x
+    out.y = hit.bounds.origin.y
+    out.width = hit.bounds.size.width
+    out.height = hit.bounds.size.height
+    emitLens(out)
+}
+
+func postMouse(type: CGEventType, at point: CGPoint, button: CGMouseButton = .left, clickCount: Int64 = 1) {
+    let src = CGEventSource(stateID: .hidSystemState)
+    let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: point, mouseButton: button)
+    e?.setIntegerValueField(.mouseEventClickState, value: clickCount)
+    e?.post(tap: .cghidEventTap)
+}
+
+func runLensPointer() -> Never {
+    guard AXIsProcessTrusted() else {
+        failLens("MIKO needs Accessibility permission (System Settings → Privacy & Security → Accessibility).")
+    }
+    guard let wid = parseWindowIdFlag() else { failLens("Missing --source-id / --window-id.") }
+    let action = (flag("--action") ?? "click").lowercased()
+    guard let xs = flag("--x"), let ys = flag("--y"), let x = Double(xs), let y = Double(ys) else {
+        failLens("Missing --x / --y screen coordinates.")
+    }
+    guard let hit = cgWindow(byId: wid) else {
+        failLens("That window closed or isn’t on screen anymore — control stopped.")
+    }
+    if let expectPid = flag("--expect-pid"), let p = Int32(expectPid), p > 0, p != hit.pid {
+        var bad = lensBad()
+        bad.pid = hit.pid; bad.windowId = wid; bad.name = hit.name; bad.owner = hit.owner
+        failLens("Source process changed — control stopped.", bad)
+    }
+    let point = CGPoint(x: x, y: y)
+    let inset = hit.bounds.insetBy(dx: -2, dy: -2)
+    guard inset.contains(point) else {
+        var bad = lensBad()
+        bad.pid = hit.pid; bad.windowId = wid; bad.name = hit.name; bad.owner = hit.owner
+        failLens("Click is outside the bound window — ignored.", bad)
+    }
+    // Activate only when explicitly requested. Scroll/move must never steal focus
+    // (Lens is always-on-top — re-activating the source every wheel tick causes ping-pong).
+    let allowActivate = args.contains("--activate")
+    var activated = false
+    if allowActivate && !isFrontmost(hit.pid) {
+        activated = activate(hit.pid)
+        spin(0.15)
+    }
+    // Re-read bounds (window may have moved); do not require frontmost.
+    guard let live = cgWindow(byId: wid) else {
+        failLens("Source closed while controlling — control stopped.")
+    }
+    let liveInset = live.bounds.insetBy(dx: -2, dy: -2)
+    guard liveInset.contains(point) else {
+        var bad = lensBad()
+        bad.activated = activated; bad.pid = live.pid; bad.windowId = wid
+        failLens("Window moved; click no longer maps inside it. Try again.", bad)
+    }
+
+    switch action {
+    case "click":
+        postMouse(type: .leftMouseDown, at: point, clickCount: 1)
+        postMouse(type: .leftMouseUp, at: point, clickCount: 1)
+    case "dblclick":
+        postMouse(type: .leftMouseDown, at: point, clickCount: 1)
+        postMouse(type: .leftMouseUp, at: point, clickCount: 1)
+        usleep(40_000)
+        postMouse(type: .leftMouseDown, at: point, clickCount: 2)
+        postMouse(type: .leftMouseUp, at: point, clickCount: 2)
+    case "scroll":
+        let dx = Double(flag("--dx") ?? "0") ?? 0
+        let dy = Double(flag("--dy") ?? "0") ?? 0
+        let src = CGEventSource(stateID: .hidSystemState)
+        // Continuous scroll wheel; dy positive = scroll up in CGEvent convention for line units.
+        if let e = CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: Int32(-dy), wheel2: Int32(-dx), wheel3: 0) {
+            e.location = point
+            e.post(tap: .cghidEventTap)
+        } else {
+            var bad = lensBad()
+            bad.activated = activated; bad.pid = live.pid; bad.windowId = wid
+            failLens("Scroll event isn’t available on this Mac.", bad)
+        }
+    default:
+        failLens("Unknown pointer action. Use click, dblclick, or scroll.")
+    }
+    var out = lensOk()
+    if activated {
+        out.reason = "Control brought the source app forward."
+    } else if allowActivate {
+        out.reason = ""
+    } else {
+        out.reason = "Posted without activating (source may ignore background clicks)."
+    }
+    out.activated = activated
+    out.pid = live.pid
+    out.windowId = wid
+    out.name = live.name
+    out.owner = live.owner
+    out.bundle = NSRunningApplication(processIdentifier: live.pid)?.bundleIdentifier ?? ""
+    out.x = live.bounds.origin.x
+    out.y = live.bounds.origin.y
+    out.width = live.bounds.size.width
+    out.height = live.bounds.size.height
+    emitLens(out)
+}
+
+func runLensType() -> Never {
+    guard AXIsProcessTrusted() else {
+        failLens("MIKO needs Accessibility permission (System Settings → Privacy & Security → Accessibility).")
+    }
+    guard let wid = parseWindowIdFlag() else { failLens("Missing --source-id / --window-id.") }
+    let text = String(stdinText().prefix(4000))
+    guard !text.isEmpty else { failLens("Nothing to type.") }
+    guard let hit = cgWindow(byId: wid) else {
+        failLens("That window closed or isn’t on screen anymore — control stopped.")
+    }
+    if let expectPid = flag("--expect-pid"), let p = Int32(expectPid), p > 0, p != hit.pid {
+        failLens("Source process changed — control stopped.")
+    }
+    let allowActivate = args.contains("--activate")
+    var activated = false
+    if allowActivate && !isFrontmost(hit.pid) {
+        activated = activate(hit.pid)
+        spin(0.2)
+    }
+    if allowActivate {
+        // Secure-field check only when we intentionally brought the app forward.
+        let focusedNow = focused(pid: hit.pid)
+        if focusedNow.out.secure {
+            failLens("That’s a password field. MIKO won’t type there.")
+        }
+    }
+    let src = CGEventSource(stateID: .hidSystemState)
+    var unicharBuf = Array(text.utf16)
+    if let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) {
+        e.keyboardSetUnicodeString(stringLength: unicharBuf.count, unicodeString: &unicharBuf)
+        e.postToPid(hit.pid)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
+        up?.postToPid(hit.pid)
+    } else {
+        failLens("Typing isn’t available via Accessibility events on this Mac.")
+    }
+    var typed = lensOk()
+    typed.reason = activated
+        ? "Typing brought the source app forward."
+        : allowActivate
+          ? "Typed into the bound source."
+          : "Typed without activating (background apps may ignore keys)."
+    typed.activated = activated
+    typed.pid = hit.pid
+    typed.windowId = wid
+    typed.name = hit.name
+    typed.owner = hit.owner
+    typed.bundle = NSRunningApplication(processIdentifier: hit.pid)?.bundleIdentifier ?? ""
+    emitLens(typed)
+}
+
+func runFinderSelection() -> Never {
+    guard AXIsProcessTrusted() else {
+        failLens("MIKO needs Accessibility permission (System Settings → Privacy & Security → Accessibility).")
+    }
+    // Prefer AppleScript selection (real file URLs) — never OCR / screenshot filenames.
+    let script = """
+    set outPaths to {}
+    tell application "Finder"
+      set sel to selection as alias list
+      repeat with a in sel
+        try
+          set end of outPaths to POSIX path of a
+        end try
+      end repeat
+    end tell
+    set AppleScript's text item delimiters to linefeed
+    return outPaths as text
+    """
+    var error: NSDictionary?
+    guard let apple = NSAppleScript(source: script) else {
+        failLens("Couldn’t prepare Finder selection lookup.")
+    }
+    let result = apple.executeAndReturnError(&error)
+    if let error {
+        let msg = (error[NSAppleScript.errorMessage] as? String) ?? "Finder selection failed."
+        failLens(msg.contains("not allowed") || msg.lowercased().contains("assistive")
+            ? "MIKO needs Automation permission for Finder (System Settings → Privacy & Security → Automation)."
+            : "Couldn’t read Finder selection. Select files in Finder, then try again.")
+    }
+    let raw = result.stringValue ?? ""
+    var files: [String] = []
+    for line in raw.split(separator: "\n") {
+        let p = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty, p.count < 1024, !p.contains("\0") else { continue }
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: p, isDirectory: &isDir), !isDir.boolValue {
+            files.append(p)
+        }
+    }
+    // Optional: verify bound window is Finder when --source-id given.
+    if let wid = parseWindowIdFlag(), let hit = cgWindow(byId: wid) {
+        let owner = hit.owner.lowercased()
+        let bundle = (NSRunningApplication(processIdentifier: hit.pid)?.bundleIdentifier ?? "").lowercased()
+        if !owner.contains("finder") && !bundle.contains("finder") {
+            var bad = lensBad()
+            bad.pid = hit.pid; bad.windowId = wid; bad.name = hit.name; bad.owner = hit.owner
+            failLens("Bound selection is only for a Finder window in Lens.", bad)
+        }
+    }
+    if files.isEmpty {
+        failLens("No files selected in Finder. Select one or more files (not folders), then refresh.")
+    }
+    var listed = lensOk()
+    listed.reason = "Resolved \(files.count) file\(files.count == 1 ? "" : "s") from Finder selection."
+    listed.paths = Array(files.prefix(20))
+    listed.status = "listed"
+    emitLens(listed)
+}
+
+func chatGptApp() -> NSRunningApplication? {
+    let apps = NSWorkspace.shared.runningApplications
+    return apps.first(where: { ($0.bundleIdentifier ?? "").lowercased().contains("openai.chat") || ($0.localizedName ?? "").lowercased() == "chatgpt" })
+        ?? apps.first(where: { ($0.bundleIdentifier ?? "").lowercased().contains("openai.codex") })
+}
+
+func runPasteFileChatGpt() -> Never {
+    // Path on argv preferred — avoid blocking on stdin when Electron already closed it empty.
+    let pathArg = (flag("--path") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let path = !pathArg.isEmpty ? pathArg : stdinText().trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !path.isEmpty, path.count < 1024, !path.contains("\0") else {
+        failLens("That file path isn’t one I can attach.")
+    }
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue else {
+        failLens("That file isn’t on disk anymore.")
+    }
+    guard AXIsProcessTrusted() else {
+        failLens("MIKO needs Accessibility permission.")
+    }
+    guard let app = chatGptApp() else {
+        var missing = lensBad()
+        missing.status = "failed"
+        failLens("ChatGPT isn’t open.", missing)
+    }
+    // Optional bound window check (exact CGWindow).
+    if let wid = parseWindowIdFlag() {
+        guard let hit = cgWindow(byId: wid) else {
+            var closed = lensBad()
+            closed.status = "switched"
+            failLens("The bound ChatGPT window closed — attach cancelled.", closed)
+        }
+        let owner = hit.owner.lowercased()
+        let bundle = (NSRunningApplication(processIdentifier: hit.pid)?.bundleIdentifier ?? "").lowercased()
+        if !owner.contains("chatgpt") && !bundle.contains("openai") {
+            var bad = lensBad()
+            bad.status = "switched"
+            bad.pid = hit.pid
+            bad.windowId = wid
+            bad.name = hit.name
+            bad.owner = hit.owner
+            failLens("Bound window isn’t ChatGPT — attach cancelled.", bad)
+        }
+        if let boundApp = NSRunningApplication(processIdentifier: hit.pid) {
+            boundApp.activate(options: [.activateIgnoringOtherApps])
+        } else {
+            app.activate(options: [.activateIgnoringOtherApps])
+        }
+        spin(0.5)
+    } else {
+        // Prefer NSRunningApplication.activate — AXFrontmost can hang on ChatGPT’s Electron process.
+        app.activate(options: [.activateIgnoringOtherApps])
+        spin(0.5)
+    }
+    let frontPid = app.processIdentifier
+    let frontOk = NSWorkspace.shared.frontmostApplication?.processIdentifier == frontPid
+        || (NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "").lowercased().contains("openai")
+    guard frontOk else {
+        var lost = lensBad()
+        lost.status = "lost-focus"
+        failLens("ChatGPT isn’t in front, so I didn’t attach. Open ChatGPT and try again.", lost)
+    }
+    let url = URL(fileURLWithPath: path)
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    guard pb.writeObjects([url as NSURL]) else {
+        var clipFail = lensBad()
+        clipFail.status = "failed"
+        clipFail.path = path
+        clipFail.filename = url.lastPathComponent
+        failLens("I couldn’t put the file on the clipboard for paste.", clipFail)
+    }
+    // ⌘V into ChatGPT — never Return/submit.
+    // Avoid AX tree reads on ChatGPT (can hang). Preview cannot be verified via Accessibility.
+    keyStroke(9, flags: .maskCommand)
+    spin(0.35)
+    // Honest result: paste ran while ChatGPT was frontmost; preview cannot be AX-verified reliably.
+    var attach = lensBad()
+    attach.reason =
+        "Pasted “\(url.lastPathComponent)” into frontmost ChatGPT (⌘V, unsent). " +
+        "ChatGPT doesn’t expose a reliable attachment preview to Accessibility, so MIKO can’t claim Attached — check the composer chip, or use Open ChatGPT."
+    attach.activated = true
+    attach.pid = frontPid
+    attach.status = "failed"
+    attach.filename = url.lastPathComponent
+    attach.path = path
+    attach.verified = false
+    emitLens(attach)
+}
+
 // MARK: Commands
 
 let command = args.count > 1 ? args[1] : ""
@@ -1565,9 +1957,10 @@ case "paste":
     if let bundles = flag("--expect-bundles"), !bundles.split(separator: ",").map(String.init).contains(o.bundle) {
         fail("\(o.app) is in front, not the app MIKO armed for.", o)
     }
-    if t.element == nil && args.contains("--allow-unexposed") {
-        // The app exposes no focused field to Accessibility (e.g. ChatGPT, Chrome pages). The user's own
-        // click plus the explicit confirm shortcut is the only identification, so paste once and say it's unchecked.
+    // ChatGPT often focuses a non-editable AX node (or none). With --allow-unexposed + expect-bundles,
+    // paste once via ⌘V without claiming verification — do not require element == nil.
+    if args.contains("--allow-unexposed") && (t.element == nil || !o.editable) {
+        if o.secure { fail("That’s a password field. MIKO won’t paste there.", o) }
         let (_, _, restored) = pasteInsert(t, text)
         o.method = "paste-unverified"; o.verified = false; o.clipboardRestored = restored
         emit(o)
@@ -1576,6 +1969,78 @@ case "paste":
     if let el = t.element, axInsert(el, text, mode: "selection") { o.method = "ax"; o.verified = true; emit(o) }
     let (_, verified, restored) = pasteInsert(t, text)
     o.method = "paste"; o.verified = verified; o.clipboardRestored = restored
+    emit(o)
+
+case "keystroke":
+    // Post a modifier+key to a verified frontmost app. Never presses Return unless --key return.
+    // Example: keystroke --key n --cmd --expect-bundles com.openai.chat,com.openai.codex
+    let keyName = (flag("--key") ?? "").lowercased()
+    let codes: [String: CGKeyCode] = [
+        "n": 45, "l": 37, "a": 0, "v": 9, "c": 8, "t": 17,
+        "return": 36, "escape": 53, "tab": 48
+    ]
+    guard let code = codes[keyName] else { fail("Unknown keystroke. Use --key n|l|a|v|c|t|return|escape|tab.") }
+    if keyName == "return" && !args.contains("--allow-submit") {
+        fail("Return/submit is blocked unless --allow-submit is set. Typing and sending stay separate.")
+    }
+    let t = focused()
+    var o = t.out
+    if let bundles = flag("--expect-bundles"), !bundles.split(separator: ",").map(String.init).contains(o.bundle) {
+        fail("\(o.app) is in front, not the app MIKO armed for.", o)
+    }
+    if let ex = flag("--exclude-pid"), Int32(ex) == o.pid { fail("MIKO is in front — activate the target app first.", o) }
+    var flags: CGEventFlags = []
+    if args.contains("--cmd") { flags.insert(.maskCommand) }
+    if args.contains("--shift") { flags.insert(.maskShift) }
+    if args.contains("--alt") { flags.insert(.maskAlternate) }
+    let src = CGEventSource(stateID: .combinedSessionState)
+    for down in [true, false] {
+        let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+        e?.flags = flags
+        e?.postToPid(o.pid)
+    }
+    spin(0.35)
+    let after = focused()
+    o = after.out
+    o.method = "keystroke-\(keyName)"
+    o.ok = true
+    emit(o)
+
+case "omnibox-set":
+    // Focus Chromium address bar (⌘L) and set text without pressing Enter/Return.
+    let text = stdinText()
+    guard !text.isEmpty else { fail("Nothing to put in the address bar.") }
+    let t0 = focused()
+    var o = t0.out
+    let chromeBundles = ["com.google.Chrome", "com.google.Chrome.canary", "com.brave.Browser", "company.thebrowser.Browser"]
+    if let bundles = flag("--expect-bundles") {
+        let want = bundles.split(separator: ",").map(String.init)
+        if !want.contains(o.bundle) { fail("\(o.app) is in front, not Chrome.", o) }
+    } else if !chromeBundles.contains(o.bundle) && !o.bundle.lowercased().contains("chrome") {
+        fail("\(o.app) is in front, not Chrome. Open Chrome first.", o)
+    }
+    // ⌘L focuses the omnibox; never Return.
+    let src = CGEventSource(stateID: .combinedSessionState)
+    for down in [true, false] {
+        let e = CGEvent(keyboardEventSource: src, virtualKey: 37, keyDown: down) // L
+        e?.flags = .maskCommand
+        e?.postToPid(o.pid)
+    }
+    spin(0.25)
+    let t = focused(pid: o.pid)
+    o = t.out
+    if o.secure { fail("That’s a password field. MIKO won’t type there.", o) }
+    guard let el = t.element, o.editable else {
+        // Fallback paste into focused omnibox without verification.
+        let (_, _, restored) = pasteInsert(t, text)
+        o.method = "omnibox-paste-unverified"; o.verified = false; o.clipboardRestored = restored; o.ok = true
+        emit(o)
+    }
+    if axInsert(el, text, mode: "replace") {
+        o.method = "omnibox-ax"; o.verified = true; o.ok = true; emit(o)
+    }
+    let (_, verified, restored) = pasteInsert(t, text)
+    o.method = "omnibox-paste"; o.verified = verified; o.clipboardRestored = restored; o.ok = true
     emit(o)
 
 case "whatsapp":
@@ -1601,6 +2066,53 @@ case "clipboard-file":
 
 case "paste-file":
     runPasteFile()
+
+case "lens-window":
+    runLensWindowInfo()
+
+case "lens-pointer":
+    runLensPointer()
+
+case "lens-type":
+    runLensType()
+
+case "finder-selection":
+    runFinderSelection()
+
+case "paste-file-chatgpt":
+    runPasteFileChatGpt()
+
+case "media-key":
+    // System media keys — no app activation. Used when Spotify AppleScript is unavailable.
+    // NX_KEYTYPE_PLAY=16, NEXT=17, PREVIOUS=18, SOUND_UP=0, SOUND_DOWN=1
+    let keyName = (flag("--key") ?? "").lowercased()
+    let codes: [String: Int] = [
+        "play": 16, "next": 17, "prev": 18, "previous": 18, "volup": 0, "voldown": 1
+    ]
+    guard let code = codes[keyName] else { fail("Unknown media key. Use play|next|prev|volup|voldown.") }
+    func postMedia(_ down: Bool) {
+        let flags = NSEvent.ModifierFlags(rawValue: down ? 0xa00 : 0xb00)
+        let data1 = (code << 16) | ((down ? 0xa : 0xb) << 8)
+        if let ev = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: flags,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: data1,
+            data2: -1
+        ), let cg = ev.cgEvent {
+            cg.post(tap: .cghidEventTap)
+        }
+    }
+    postMedia(true)
+    usleep(10_000)
+    postMedia(false)
+    var out = Out(ok: true)
+    out.method = "media-key-\(keyName)"
+    emit(out)
 
 default:
     fail("Unknown command.")

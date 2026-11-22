@@ -64,7 +64,12 @@ export function clarifyingQuestion(output: string): string | null {
 /** Voice/typed actions for an active selection ("fix grammar", "reply saying …"). */
 export function parseSelectionCommand(raw: string): { action: SelectionAction; instruction: string } | null {
   const original = raw.trim()
-  const t = original.toLowerCase().replace(/[.!]+$/, '').trim()
+  // “Explain this, don't reply” stays read-only in MIKO.
+  const t = original
+    .toLowerCase()
+    .replace(/,?\s*don'?t\s+reply\.?$/i, '')
+    .replace(/[.!]+$/, '')
+    .trim()
   if (/^(?:fix|correct|check)\s+(?:the\s+)?(?:grammar|spelling)(?:\s+(?:of\s+)?(?:this|it))?$/.test(t) || t === 'proofread this' || t === 'proofread it') {
     return { action: 'grammar', instruction: '' }
   }

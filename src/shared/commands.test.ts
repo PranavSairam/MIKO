@@ -54,6 +54,56 @@ describe('command router', () => {
     if (missing.type === 'missing') assert.match(missing.text, /Photoshop/)
   })
 
+  it('routes go-to / switch-to / bring-forward app phrases before the assistant', () => {
+    const apps: CatalogApp[] = [
+      ...catalog,
+      { id: 'app-cursor', name: 'Cursor', installed: true, familiar: false, aliases: ['cursor'] },
+      { id: 'app-spotify', name: 'Spotify', installed: true, familiar: false, aliases: ['spotify'] },
+      { id: 'whatsapp', name: 'WhatsApp', installed: true, familiar: true, aliases: ['whatsapp', 'whats app'] },
+      { id: 'calculator', name: 'Calculator', installed: true, familiar: true, aliases: ['calculator', 'calc'] }
+    ]
+    for (const source of ['typed', 'voice'] as const) {
+      const cursor = routeCommand('Go to Cursor', source, apps, [], { assistantActive: true })
+      assert.equal(cursor.type, 'confirm', source)
+      if (cursor.type === 'confirm') {
+        assert.equal(cursor.appId, 'app-cursor')
+        assert.equal(cursor.name, 'Cursor')
+      }
+      const spotify = routeCommand('Switch to Spotify', source, apps)
+      assert.equal(spotify.type, 'confirm')
+      if (spotify.type === 'confirm') assert.equal(spotify.appId, 'app-spotify')
+      const wa = routeCommand('Bring WhatsApp forward', source, apps)
+      assert.equal(wa.type, 'launch')
+      if (wa.type === 'launch') assert.equal(wa.appId, 'whatsapp')
+      const chrome = routeCommand('Take me back to Chrome', source, apps)
+      assert.equal(chrome.type, 'launch')
+      if (chrome.type === 'launch') assert.equal(chrome.appId, 'chrome')
+      const calc = routeCommand('Open Calculator', source, apps)
+      assert.equal(calc.type, 'launch')
+      if (calc.type === 'launch') assert.equal(calc.appId, 'calculator')
+    }
+    // Website vs app
+    const yt = routeCommand('Go to youtube.com', 'typed', apps)
+    assert.equal(yt.type, 'open-url')
+    if (yt.type === 'open-url') assert.match(yt.url, /youtube/i)
+    // Question / negation / literal type
+    assert.equal(routeCommand('How do I switch to Cursor?', 'typed', apps).type, 'question')
+    assert.notEqual(routeCommand("Don't switch to Cursor", 'typed', apps).type, 'confirm')
+    assert.notEqual(routeCommand("Don't switch to Cursor", 'typed', apps).type, 'launch')
+    const literal = routeCommand('Type exactly: go to Cursor', 'typed', apps)
+    assert.equal(literal.type, 'type-dest')
+    // Bare back uses last external app; clarify when missing
+    const backMiss = routeCommand('Take me back', 'typed', apps)
+    assert.equal(backMiss.type, 'unknown')
+    if (backMiss.type === 'unknown') assert.match(backMiss.text, /not sure which app/i)
+    const backHit = routeCommand('go back', 'voice', apps, [], {
+      lastExternalApp: { name: 'Chrome', bundleId: 'com.google.Chrome' }
+    })
+    assert.equal(backHit.type, 'launch')
+    if (backHit.type === 'launch') assert.equal(backHit.appId, 'chrome')
+    assert.equal(planVoice(routeCommand('Go to Cursor', 'voice', apps), true).kind, 'confirm')
+  })
+
   it('closes a named app, asks before force or quitting itself, and follows on request', () => {
     assert.deepEqual(routeCommand('close excel', 'typed', catalog), { type: 'close', appId: 'excel', name: 'Excel' })
     assert.deepEqual(routeCommand('quit chrome', 'typed', catalog), { type: 'close', appId: 'chrome', name: 'Chrome' })
@@ -256,6 +306,34 @@ describe('type into ChatGPT', () => {
     assert.deepEqual(routeCommand('write Summarize my week into chat gpt', 'typed', catalog), { type: 'type-in-gpt', text: 'Summarize my week' })
     assert.deepEqual(routeCommand('put this in chatgpt: Draft a polite reminder', 'typed', catalog), { type: 'type-in-gpt', text: 'Draft a polite reminder' })
     assert.deepEqual(routeCommand('type in gpt: hi', 'typed', catalog), { type: 'type-in-gpt', text: 'hi' })
+    assert.deepEqual(routeCommand('Type into GPT: open WhatsApp', 'voice', catalog), {
+      type: 'type-in-gpt',
+      text: 'open WhatsApp'
+    })
+    assert.deepEqual(routeCommand('dictate into GPT: hello there', 'typed', catalog), {
+      type: 'type-in-gpt',
+      text: 'hello there'
+    })
+  })
+
+  it('keeps ordinary voice commands on the shared router (Interactive GPT open is not a mode)', () => {
+    const apps: CatalogApp[] = [
+      ...catalog,
+      { id: 'whatsapp', name: 'WhatsApp', installed: true, familiar: true, aliases: ['whatsapp', 'whats app'] },
+      { id: 'app-cursor', name: 'Cursor', installed: true, familiar: false, aliases: ['cursor'] }
+    ]
+    // Same decision path for typed and voice — source is metadata only.
+    for (const source of ['typed', 'voice'] as const) {
+      const wa = routeCommand('Open WhatsApp', source, apps)
+      assert.equal(wa.type, 'launch', source)
+      if (wa.type === 'launch') assert.equal(wa.appId, 'whatsapp')
+      const cursor = routeCommand('Go to Cursor', source, apps)
+      assert.equal(cursor.type, 'confirm', source)
+      const move = routeCommand('Move left', source, apps)
+      assert.deepEqual(move, { type: 'move', direction: 'left', distance: 150 })
+      const chrome = routeCommand('Open ChatGPT in Chrome', source, apps)
+      assert.equal(chrome.type, 'open-url', source)
+    }
   })
   it('strips "type in gpt asking it to …" down to the request', () => {
     assert.deepEqual(routeCommand('type in gpt asking it to generate me a text file of a wrd saying cat', 'typed', catalog), {
@@ -373,7 +451,11 @@ describe('clear', () => {
 })
 
 describe('screenshot command routing regressions', () => {
-  const apps = [...catalog, { id: 'whatsapp', name: 'WhatsApp', installed: true, familiar: true, aliases: ['whatsapp', 'whats app'] }]
+  const apps = [
+    ...catalog,
+    { id: 'whatsapp', name: 'WhatsApp', installed: true, familiar: true, aliases: ['whatsapp', 'whats app'] },
+    { id: 'calculator', name: 'Calculator', installed: true, familiar: true, aliases: ['calculator', 'calc'] }
+  ]
 
   it('opens YouTube locally even after ok/please and with an active assistant thread', () => {
     const open = routeCommand('ok open youtube', 'typed', apps, [], { assistantActive: true })
@@ -386,6 +468,40 @@ describe('screenshot command routing regressions', () => {
     const chrome = routeCommand('open YouTube in Chrome', 'typed', apps)
     assert.equal(chrome.type, 'open-url')
     if (chrome.type === 'open-url') assert.equal(chrome.browser, 'chrome')
+  })
+
+  it('parses Open ChatGPT/GPT/YouTube + browser as website+browser, not an app name', () => {
+    for (const source of ['typed', 'voice'] as const) {
+      const gptChrome = routeCommand('Open ChatGPT in Chrome', source, apps)
+      assert.equal(gptChrome.type, 'open-url')
+      if (gptChrome.type === 'open-url') {
+        assert.match(gptChrome.url, /chatgpt\.com/i)
+        assert.equal(gptChrome.name, 'ChatGPT')
+        assert.equal(gptChrome.browser, 'chrome')
+      }
+      const gptSafari = routeCommand('Open ChatGPT using Safari', source, apps)
+      assert.equal(gptSafari.type, 'open-url')
+      if (gptSafari.type === 'open-url') {
+        assert.match(gptSafari.url, /chatgpt\.com/i)
+        assert.equal(gptSafari.browser, 'safari')
+      }
+      const short = routeCommand('Open GPT in Chrome', source, apps)
+      assert.equal(short.type, 'open-url')
+      if (short.type === 'open-url') {
+        assert.match(short.url, /chatgpt\.com/i)
+        assert.equal(short.browser, 'chrome')
+      }
+      const yt = routeCommand('Open YouTube in Chrome', source, apps)
+      assert.equal(yt.type, 'open-url')
+      if (yt.type === 'open-url') {
+        assert.match(yt.url, /youtube/i)
+        assert.equal(yt.browser, 'chrome')
+      }
+    }
+    const bare = routeCommand('Open ChatGPT', 'typed', apps)
+    assert.equal(bare.type, 'open-chatgpt')
+    const missingBlob = routeCommand('Open ChatGPT in Chrome', 'typed', apps)
+    assert.notEqual(missingBlob.type, 'missing')
   })
 
   it('resolves a follow-up “in chrome” against the pending site', () => {
@@ -414,6 +530,25 @@ describe('screenshot command routing regressions', () => {
       assert.equal(open.query, 'Me')
       assert.equal(open.pendingDraft, "hi Anna I'll be starting to Chennai tmrw")
     }
+  })
+
+  it('routes recipient corrections while awaiting a WhatsApp name — not the assistant', () => {
+    const awaiting = { awaitingWaRecipient: true, messaging: 'whatsapp' as const, assistantActive: true }
+    for (const [phrase, query] of [
+      ['Santosh G', 'Santosh G'],
+      ['I meant Santosh G', 'Santosh G'],
+      ['Search Santosh G instead', 'Santosh G'],
+      ['find Santosh G', 'Santosh G']
+    ] as const) {
+      const decision = routeCommand(phrase, 'typed', apps, [], awaiting)
+      assert.equal(decision.type, 'whatsapp', phrase)
+      if (decision.type === 'whatsapp') assert.equal(decision.query, query, phrase)
+    }
+    // Without a pending wait, a bare name must not invent a WhatsApp open.
+    assert.notEqual(routeCommand('Santosh G', 'typed', apps, [], { assistantActive: true }).type, 'whatsapp')
+    // Explicit app commands still supersede the wait.
+    assert.equal(routeCommand('open calculator', 'typed', apps, [], awaiting).type, 'launch')
+    assert.equal(routeCommand('never mind', 'typed', apps, [], awaiting).type, 'cancel-workflow')
   })
 
   it('types into the verified WhatsApp chat after open, including formal polish', () => {
@@ -604,6 +739,42 @@ describe('screenshot command routing regressions', () => {
     if (open.type === 'whatsapp') {
       assert.equal(open.query, 'Dad')
       assert.match(open.pendingDraft || '', /visit next month/i)
+    }
+  })
+
+  it('strips reply-saying wrappers from compound open+draft and supports go-to navigation', () => {
+    const replySaying = routeCommand('Open Dad in WhatsApp and reply saying good morning', 'typed', apps)
+    assert.equal(replySaying.type, 'whatsapp')
+    if (replySaying.type === 'whatsapp') {
+      assert.equal(replySaying.query, 'Dad')
+      assert.equal(replySaying.pendingDraft, 'good morning')
+    }
+
+    const openWaGo = routeCommand('Open WhatsApp, go to Dad and say good morning', 'typed', apps)
+    assert.equal(openWaGo.type, 'whatsapp')
+    if (openWaGo.type === 'whatsapp') {
+      assert.equal(openWaGo.query, 'Dad')
+      assert.equal(openWaGo.pendingDraft, 'good morning')
+    }
+
+    const goOnly = routeCommand('Go to Dad', 'typed', apps, [], {
+      messaging: 'whatsapp',
+      waChat: 'Me'
+    })
+    assert.equal(goOnly.type, 'whatsapp')
+    if (goOnly.type === 'whatsapp') {
+      assert.equal(goOnly.query, 'Dad')
+      assert.equal(goOnly.pendingDraft, undefined)
+    }
+
+    const multiTurn = routeCommand('Tell him good morning', 'voice', apps, [], {
+      messaging: 'whatsapp',
+      waChat: 'Dad'
+    })
+    assert.equal(multiTurn.type, 'whatsapp-reply')
+    if (multiTurn.type === 'whatsapp-reply') {
+      assert.equal(multiTurn.intent.instruction, 'good morning')
+      assert.notEqual(multiTurn.intent.literal, true)
     }
   })
 

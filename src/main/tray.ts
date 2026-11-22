@@ -1,6 +1,22 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { Menu, Tray, app, dialog, nativeImage } from 'electron'
-import trayMac from '../../resources/tray-mac.png?asset'
-import trayWin from '../../resources/tray-win.png?asset'
+import trayMacDev from '../../resources/tray-mac.png?asset'
+import trayWinDev from '../../resources/tray-win.png?asset'
+
+/** Resolve tray PNG for both electron-vite preview and packaged extraResources. */
+function trayIconPath(): string {
+  const name = process.platform === 'darwin' ? 'tray-mac.png' : 'tray-win.png'
+  const candidates = [
+    process.platform === 'darwin' ? trayMacDev : trayWinDev,
+    join(__dirname, '../../resources', name),
+    join(process.cwd(), 'resources', name),
+    ...(process.resourcesPath
+      ? [join(process.resourcesPath, 'resources', name), join(process.resourcesPath, name)]
+      : [])
+  ]
+  return candidates.find((path) => typeof path === 'string' && path && existsSync(path)) || candidates[0] || ''
+}
 
 export interface TrayActions {
   show: () => void
@@ -15,10 +31,14 @@ export interface TrayActions {
   setBridge: (enabled: boolean) => void
   autoPaste: () => boolean
   setAutoPaste: (enabled: boolean) => void
+  /** GPT Mode: off | paused | active */
+  gptModePhase?: () => 'off' | 'paused' | 'active'
+  setGptMode?: (action: 'enable' | 'pause' | 'resume' | 'exit') => void
   /** Pets whose assets exist, and the one on screen. */
   pets?: () => { available: { id: string; name: string }[]; selected: string }
   choosePet?: (id: string) => void
   openPetChooser?: () => void
+  openSetup?: () => void
 }
 
 let tray: Tray | null = null
@@ -39,8 +59,7 @@ let actions: TrayActions = {
 
 export function createTray(next: TrayActions): { refresh: () => void } {
   actions = next
-  const icon =
-    process.platform === 'darwin' ? nativeImage.createFromPath(trayMac) : nativeImage.createFromPath(trayWin)
+  const icon = nativeImage.createFromPath(trayIconPath())
   if (process.platform === 'darwin') icon.setTemplateImage(true)
   if (icon.isEmpty()) {
     throw new Error('MIKO tray icon failed to load')
@@ -142,8 +161,36 @@ function buildMenu(): Menu {
         refreshTrayMenu()
       }
     },
+    {
+      label: 'GPT Mode (messages → ChatGPT app)',
+      type: 'checkbox',
+      checked: (actions.gptModePhase?.() ?? 'off') !== 'off',
+      click: (item) => {
+        if (item.checked) actions.setGptMode?.('enable')
+        else actions.setGptMode?.('exit')
+        refreshTrayMenu()
+      }
+    },
+    ...((actions.gptModePhase?.() ?? 'off') !== 'off'
+      ? [
+          {
+            label:
+              actions.gptModePhase?.() === 'active'
+                ? 'Pause GPT Mode'
+                : 'Resume GPT Mode',
+            click: () => {
+              if (actions.gptModePhase?.() === 'active') actions.setGptMode?.('pause')
+              else actions.setGptMode?.('resume')
+              refreshTrayMenu()
+            }
+          } as const
+        ]
+      : []),
     ...petMenu(),
     { type: 'separator' },
+    ...(actions.openSetup
+      ? [{ label: 'Setup & Help…', click: () => actions.openSetup?.() } as const]
+      : []),
     { label: 'Quit', click: () => app.quit() }
   ])
 }

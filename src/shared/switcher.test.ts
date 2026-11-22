@@ -1,6 +1,17 @@
 import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
-import { arcSlots, filterApps, orderByWindows, parseRunning, parseTabs, type RunningApp } from './switcher.ts'
+import {
+  FEED_DRAG_THRESHOLD_PX,
+  arcSlots,
+  feedReleaseLabel,
+  filterApps,
+  orderByWindows,
+  parseRunning,
+  parseTabs,
+  pointInDropTarget,
+  switcherDropTarget,
+  type RunningApp
+} from './switcher.ts'
 
 const app = (pid: number, name: string): RunningApp => ({ pid, name, bundleId: `b.${pid}`, path: `/A/${name}.app`, hidden: false, active: false })
 
@@ -22,6 +33,25 @@ describe('filterApps', () => {
   })
   it('returns everything for an empty query', () => {
     assert.equal(filterApps([{ name: 'A' }, { name: 'B' }], '  ').length, 2)
+  })
+})
+
+describe('feed-to-close drop geometry', () => {
+  it('keeps a forgiving drop zone inside the fan for every pet', () => {
+    for (const pet of ['doberman', 'cat', 'bird', 'koala'] as const) {
+      const target = switcherDropTarget(760, 430, pet)
+      assert.equal(target.petId, pet)
+      assert.ok(target.radius >= 48)
+      assert.ok(target.cx > target.radius)
+      assert.ok(target.cx < 760 - target.radius)
+      assert.ok(target.cy > target.radius)
+      assert.ok(target.cy <= 430)
+      assert.equal(pointInDropTarget(target.cx, target.cy, target), true)
+      assert.equal(pointInDropTarget(target.cx + target.radius + 2, target.cy, target), false)
+    }
+    assert.ok(FEED_DRAG_THRESHOLD_PX >= 8)
+    assert.equal(feedReleaseLabel('app', 'TextEdit'), 'Release to quit TextEdit')
+    assert.equal(feedReleaseLabel('tab', 'Example'), 'Release to close Example')
   })
 })
 

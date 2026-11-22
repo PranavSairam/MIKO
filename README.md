@@ -2,7 +2,9 @@
 
 A desktop companion for macOS and Windows. A 3D Doberman sits above your other windows. You talk to it by typing or with push-to-talk. It can walk, open and close apps, open/close websites, follow the active window, search WhatsApp contacts and draft/insert replies on the Mac, summarize the open chat, read Gmail, and answer through the MIKO assistant or ChatGPT.
 
-Development and the production bundle both run on macOS. Windows still needs the smoke test below. This repo does not build an installer. WhatsApp search, reply insert, and browser-tab close are macOS-only until Windows adapters are tested.
+Development and the production bundle both run on macOS. Windows still needs the smoke test below. WhatsApp search, reply insert, and browser-tab close are macOS-only until Windows adapters are tested.
+
+**Private beta package (macOS):** after `npm run build`, run `npm run dist:mac` for unsigned DMG/ZIP under `release/`. See `beta/BETA.md` for tester install, ChatGPT/Codex onboarding, feedback server setup, and signing limits. Windows installers are not labeled ready yet.
 
 Requires Node.js 22.12 or newer.
 

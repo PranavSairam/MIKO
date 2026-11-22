@@ -8,10 +8,15 @@ const IPC = {
   switcherQuit: 'miko:switcher-quit',
   switcherTabs: 'miko:switcher-tabs',
   switcherFocusTab: 'miko:switcher-focus-tab',
+  switcherCloseTab: 'miko:switcher-close-tab',
+  switcherFeedApp: 'miko:switcher-feed-app',
+  switcherFeedTab: 'miko:switcher-feed-tab',
+  switcherDropTarget: 'miko:switcher-drop-target',
   switcherClose: 'miko:switcher-close',
-  switcherOpened: 'miko:switcher-opened'
+  switcherOpened: 'miko:switcher-opened',
+  switcherIgnoreMouse: 'miko:switcher-ignore-mouse'
 } as const
-import type { BrowserTab, MikoSwitcherApi, SwitcherApp } from '../shared/switcher'
+import type { BrowserTab, MikoSwitcherApi, SwitcherApp, SwitcherDropTarget, SwitcherFeedResult } from '../shared/switcher'
 
 const api: MikoSwitcherApi = {
   list: async () => {
@@ -32,8 +37,19 @@ const api: MikoSwitcherApi = {
       reason: typeof payload?.reason === 'string' ? payload.reason : ''
     }
   },
-  focusTab: async (browser, window, tab) => (await ipcRenderer.invoke(IPC.switcherFocusTab, { browser, window, tab })) === true,
+  focusTab: async (browser, window, tab) =>
+    (await ipcRenderer.invoke(IPC.switcherFocusTab, { browser, window, tab })) === true,
+  closeTab: async (browser, window, tab) =>
+    (await ipcRenderer.invoke(IPC.switcherCloseTab, { browser, window, tab })) === true,
+  feedApp: async (pid) =>
+    (await ipcRenderer.invoke(IPC.switcherFeedApp, pid)) as SwitcherFeedResult,
+  feedTab: async (browser, window, tab, title) =>
+    (await ipcRenderer.invoke(IPC.switcherFeedTab, { browser, window, tab, title })) as SwitcherFeedResult,
+  dropTarget: async () => (await ipcRenderer.invoke(IPC.switcherDropTarget)) as SwitcherDropTarget,
   close: () => ipcRenderer.send(IPC.switcherClose),
+  setIgnoreMouse: (ignore: boolean) => {
+    ipcRenderer.send(IPC.switcherIgnoreMouse, ignore === true)
+  },
   onOpen: (listener) => {
     const wrapped = (): void => listener()
     ipcRenderer.on(IPC.switcherOpened, wrapped)

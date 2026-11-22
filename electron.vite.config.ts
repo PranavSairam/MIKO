@@ -3,14 +3,22 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      rollupOptions: {
+        // electron-updater is CommonJS with dynamic requires — keep it external.
+        external: ['electron-updater']
+      }
+    }
+  },
   preload: {
     build: {
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
           switcher: resolve('src/preload/switcher.ts'),
-          tree: resolve('src/preload/tree.ts')
+          tree: resolve('src/preload/tree.ts'),
+          'chatgpt-web': resolve('src/preload/chatgpt-web.ts')
         }
       }
     }
@@ -31,7 +39,9 @@ export default defineConfig({
           living: resolve('src/renderer/living.html'),
           motion: resolve('src/renderer/motion.html'),
           switcher: resolve('src/renderer/switcher.html'),
-          tree: resolve('src/renderer/tree.html')
+          tree: resolve('src/renderer/tree.html'),
+          'gpt-live': resolve('src/renderer/gpt-live.html'),
+          'chatgpt-web': resolve('src/renderer/chatgpt-web.html')
         }
       }
     }

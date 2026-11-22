@@ -261,6 +261,46 @@ export const CAPABILITIES: Capability[] = [
     failures: ['no_source', 'assistant_off']
   },
   {
+    kind: 'chatgpt_new_chat',
+    purpose: 'Create a new ChatGPT chat and verify the composer before typing',
+    platform: 'darwin',
+    requires: ['Accessibility'],
+    mutating: true,
+    preconditions: ['ChatGPT app installed and focusable'],
+    verify: 'New chat composer empty or verified; ChatGPT still frontmost',
+    failures: ['unavailable', 'unverified', 'lost_focus', 'unsupported']
+  },
+  {
+    kind: 'insert_text',
+    purpose: 'Insert text into a verified editable field without submitting',
+    platform: 'darwin',
+    requires: ['Accessibility'],
+    mutating: true,
+    preconditions: ['Verified non-secure editable destination'],
+    verify: 'Field value matches insert (or honest unverified paste); nothing sent',
+    failures: ['has_text', 'switched', 'secure', 'unsupported', 'cancelled']
+  },
+  {
+    kind: 'focus_omnibox',
+    purpose: 'Put text in Chrome’s address bar without navigating',
+    platform: 'darwin',
+    requires: ['Accessibility'],
+    mutating: true,
+    preconditions: ['Chrome (or Chromium) available'],
+    verify: 'Omnibox value matches; Enter not pressed',
+    failures: ['lost_focus', 'unsupported', 'failed']
+  },
+  {
+    kind: 'choose_type_destination',
+    purpose: 'Hold draft and let the owner focus a field, then Paste now',
+    platform: 'darwin',
+    requires: ['Accessibility'],
+    mutating: false,
+    preconditions: ['Held draft text'],
+    verify: 'Owner confirms focused editable field',
+    failures: ['secure', 'no_field', 'expired']
+  },
+  {
     kind: 'cancel_task',
     purpose: 'Cancel the active pending task locally',
     platform: 'all',

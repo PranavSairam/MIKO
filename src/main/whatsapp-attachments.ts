@@ -70,6 +70,21 @@ export function isProvenAttachmentPath(path: string, attachmentId?: string): boo
   return false
 }
 
+/** Session-proven local files (WhatsApp save / user accept) for MIKO Lens shelf. */
+export function listProvenAttachmentPaths(): { path: string; bytes: number }[] {
+  const out: { path: string; bytes: number }[] = []
+  for (const path of provenPaths) {
+    try {
+      if (!existsSync(path)) continue
+      const st = statSync(path)
+      if (st.isFile() && st.size > 0) out.push({ path, bytes: st.size })
+    } catch {
+      /* skip */
+    }
+  }
+  return out.slice(0, 20)
+}
+
 export function listDownloadCandidates(filename: string): { path: string; bytes: number; filename: string }[] {
   const safe = filename.replace(/[/\\:\0]/g, '_').trim()
   if (!safe) return []

@@ -1,18 +1,22 @@
-import { resolveChat, type SavedChat } from './chatgpt.ts'
+import { CHATGPT_HOME, resolveChat, type SavedChat } from './chatgpt.ts'
 import { parsePetCommand, type PetId } from './pets.ts'
 import { cleanQuery, parseMailCommand, type MailIntent } from './mail.ts'
 import { LITTLE_DIP, MOVE_DIP } from './guide.ts'
 import { parseBrowserOnly, resolveSite, splitBrowserPreference } from './sites.ts'
 import { splitChromeProfilePhrase } from './chrome-profiles.ts'
 import { detectNegations } from './actions.ts'
-import { cleanContactQuery } from './whatsapp.ts'
+import { cleanContactQuery, parseWaRecipientCorrection } from './whatsapp.ts'
 import {
   parseWhatsAppReplyIntent,
   parseWhatsAppSummarizeIntent,
+  stripDraftInstructionFraming,
   type WhatsAppReplyIntent,
   type WhatsAppSummarizeIntent
 } from './whatsapp-reply.ts'
 import { parseAttachmentIntent, type WhatsAppAttachmentIntent } from './whatsapp-attachments.ts'
+import { isFeedbackCommand } from './feedback.ts'
+import { isSendItPhrase } from './send-destination.ts'
+import { isTypeFollowUp, parseTypeIntent, type TypeIntent } from './type-plan.ts'
 
 /** One router for typed text now and a speech transcript later. */
 export type CommandSource = 'typed' | 'voice'
@@ -41,6 +45,16 @@ export interface RouterContext {
   lastWebsite?: { url: string; name: string; browser?: string | null } | null
   /** A retrieved attachment file is held in working context. */
   hasRetrievedFile?: boolean
+  /**
+   * Contact search returned no match and a recipient correction is expected.
+   * Bare names / “I meant …” resume the WhatsApp open — not the general assistant.
+   */
+  awaitingWaRecipient?: boolean
+  /** Active typing destination (ChatGPT / Notes / field / omnibox) for follow-ups. */
+  typeDestActive?: boolean
+  typeDestKind?: string | null
+  /** Last non-MIKO app before the panel took focus — for “go back” / “take me back”. */
+  lastExternalApp?: { name: string; bundleId?: string } | null
 }
 
 export type CommandResult =
@@ -71,6 +85,8 @@ export type CommandResult =
   | { type: 'pet'; pet: PetId }
   | { type: 'pet-choose' }
   | { type: 'type-in-gpt'; text: string }
+  /** Compound / destination typing plan (ChatGPT new chat, omnibox, Notes, type here, Paste now). */
+  | { type: 'type-dest'; intent: TypeIntent }
   | { type: 'bridge-new' }
   | { type: 'whatsapp'; query: string; pendingDraft?: string }
   | { type: 'chat-or-whatsapp'; name: string }
@@ -92,11 +108,15 @@ export type CommandResult =
     }
   | { type: 'close-website'; name: string; url?: string; host?: string; all?: boolean; thisTab?: boolean }
   | { type: 'cancel-workflow' }
+  /** Submit the current bound draft (Interactive GPT) or report WhatsApp unsent policy. */
+  | { type: 'send-it' }
+  /** Open the private feedback form (never runs as an assistant prompt). */
+  | { type: 'feedback' }
   | { type: 'unknown'; text: string }
 
 
 const ACTION_ID =
-  /^(chrome|browser|calculator|editor|downloads|files|word|excel|powerpoint|whatsapp|app-[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?)$/
+  /^(chrome|browser|calculator|editor|downloads|files|word|excel|powerpoint|whatsapp|notes|app-[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?)$/
 
 /** Action ids the main process may launch. Anything else is rejected. */
 export function parseActionId(value: unknown): string | null {
@@ -166,7 +186,22 @@ export function routeCommand(
   ) {
     return { type: 'cancel-workflow' }
   }
+  // “Send it” resolves against ContextSnapshot / draft bindings — never assistant prose.
+  if (isSendItPhrase(original) || isSendItPhrase(lead) || isSendItPhrase(bridge)) {
+    return { type: 'send-it' }
+  }
+  // Feedback is a dedicated UI path — never fall through to the assistant.
+  if (isFeedbackCommand(original) || isFeedbackCommand(lead)) return { type: 'feedback' }
   if (/^(?:reply with\s+)?miko bridge test$/.test(bridge)) return { type: 'bridge-test' }
+  // “New chat” with an active ChatGPT typing destination → ChatGPT new chat, not MIKO bridge reset.
+  if (
+    /^(?:bridge\s+|start\s+(?:a\s+)?)?new\s+(?:conversation|chat|thread)$/.test(bridge) &&
+    context.typeDestActive &&
+    (context.typeDestKind === 'chatgpt-composer' || context.typeDestKind === 'chatgpt' || !context.typeDestKind)
+  ) {
+    const intent = parseTypeIntent('New chat.', _source)
+    if (intent) return { type: 'type-dest', intent }
+  }
   if (/^(?:bridge\s+|start\s+(?:a\s+)?)?new\s+(?:conversation|chat|thread)$/.test(bridge)) return { type: 'bridge-new' }
   if (/^clear(?:\s+(?:the\s+)?(?:chat|all|screen|everything|panel|log|messages))?[.!]?$/i.test(lead)) return { type: 'clear' }
   // Pet switching only matches real pet names ("switch to the cat"), so "switch to Chrome" etc. route as before.
@@ -213,6 +248,33 @@ export function routeCommand(
   const site = matchOpenSite(lead)
   if (site) return site
 
+  const waMessagingEarly = context.messaging || (context.waChat ? 'whatsapp' : null)
+
+  // “type … in GPT” / “type in gpt to …” must keep the exact prompt path — before type-dest follow-ups.
+  const typedEarly = matchTypeInGpt(lead)
+  if (typedEarly) return typedEarly
+
+  // Compound open→navigate→type plans before generic app-name lookup.
+  // Do not steal WhatsApp Draft:/tell/attach/type-exactly, or bare type without an active destination.
+  const typeDest = parseTypeIntent(lead, _source)
+  if (typeDest) {
+    const exactLiteral = /^(?:type|write|put|paste|enter)\s+exactly\b/i.test(lead)
+    // With an active WhatsApp chat, “type exactly …” stays on the WA reply path.
+    const allowExact = exactLiteral && !waMessagingEarly
+    const compound =
+      typeDest.destinationHint === 'chatgpt' ||
+      typeDest.destinationHint === 'omnibox' ||
+      typeDest.destinationHint === 'notes' ||
+      typeDest.destinationHint === 'here' ||
+      typeDest.destinationHint === 'choose' ||
+      allowExact ||
+      (context.typeDestActive && isTypeFollowUp(lead) && !waMessagingEarly) ||
+      typeDest.plan.steps.some(
+        (s) => s.kind === 'chatgpt_new_chat' || s.kind === 'focus_omnibox' || (s.kind === 'open_application' && (s.app === 'chatgpt' || s.app === 'notes'))
+      )
+    if (compound) return { type: 'type-dest', intent: typeDest }
+  }
+
   const typed = matchTypeInGpt(lead)
   if (typed) return typed
   const asked = matchAskGpt(lead)
@@ -222,7 +284,7 @@ export function routeCommand(
   const closedSite = matchCloseWebsite(lead, context)
   if (closedSite) return closedSite
 
-  const waMessaging = context.messaging || (context.waChat ? 'whatsapp' : null)
+  const waMessaging = waMessagingEarly
 
   // Attachment fetch/copy/attach — before assistant fallback (verified chat checked at run time).
   const waAttachment = parseAttachmentIntent(lead)
@@ -270,6 +332,12 @@ export function routeCommand(
   const whatsapp = matchWhatsApp(lead)
   if (whatsapp) return whatsapp
 
+  // Failed contact search: correct the name before generic “search for …” follow-ups.
+  if (context.awaitingWaRecipient) {
+    const earlyCorrection = parseWaRecipientCorrection(lead)
+    if (earlyCorrection) return { type: 'whatsapp', query: earlyCorrection }
+  }
+
   // “search for Mukundan” right after WhatsApp is active — contact search, not app/mail lookup.
   if (waMessaging === 'whatsapp') {
     const waFollow = matchWhatsAppContextFollowUp(lead)
@@ -286,10 +354,31 @@ export function routeCommand(
     // Require an explicit mail cue (“mail”, “email”, “inbox”) — bare “find invoice” stays mail-or-app.
     const mailish = /\b(?:mail|email|inbox|message\s+from)\b/i.test(bareSearch[1])
     if (context.mailTab || mailish) return { type: 'mail', intent: { kind: 'search', query } }
+    // While awaiting a WhatsApp recipient fix, “find Santosh G” is a contact retry — not mail-or-app.
+    if (context.awaitingWaRecipient) {
+      const contact = parseWaRecipientCorrection(lead)
+      if (contact) return { type: 'whatsapp', query: contact }
+    }
     return { type: 'mail-or-app', query }
   }
-  if (isQuestion(lead)) return { type: 'question', prompt: original }
   const spoken = normalize(lead)
+  // Explicit local supersedes (motion / apps) beat a pending recipient correction.
+  const motionEarly = matchMotion(spoken)
+  if (motionEarly) return motionEarly
+  const followedEarly = matchFollow(spoken)
+  if (followedEarly) return followedEarly
+  const closedEarly = matchClose(spoken, catalog)
+  if (closedEarly) return closedEarly
+  const openedEarly = matchOpen(spoken, catalog, context)
+  if (openedEarly && openedEarly.type !== 'missing') return openedEarly
+
+  // Failed contact search: “Santosh G” / “I meant Santosh G” resume the open — not the assistant.
+  if (context.awaitingWaRecipient) {
+    const correction = parseWaRecipientCorrection(lead)
+    if (correction) return { type: 'whatsapp', query: correction }
+  }
+
+  if (isQuestion(lead)) return { type: 'question', prompt: original }
   // “Open Gayu Sis” after Open WhatsApp — catalog apps first, else WhatsApp contact.
   if (waMessaging === 'whatsapp') {
     const openContact = matchOpenContactWhileMessaging(lead, catalog, spoken)
@@ -297,14 +386,7 @@ export function routeCommand(
   }
   const chat = matchChatGpt(phrase(lead), chats, context.messaging)
   if (chat) return chat
-  const motion = matchMotion(spoken)
-  if (motion) return motion
-  const followed = matchFollow(spoken)
-  if (followed) return followed
-  const closed = matchClose(spoken, catalog)
-  if (closed) return closed
-  const opened = matchOpen(spoken, catalog)
-  if (opened) return opened
+  if (openedEarly) return openedEarly
   if (context.mailTab) return { type: 'mail', intent: { kind: 'search', query: cleanQuery(lead.replace(/[.!?]+$/, '')) } }
   // While an assistant conversation is active, anything that isn't a local command is a follow-up.
   if (context.assistantActive) return { type: 'question', prompt: original }
@@ -365,8 +447,9 @@ const CHATGPT_NAME = '(?:chat\\s*-?\\s*gpt|chat\\s*g\\s*p\\s*t|gpt)'
 
 /** "type <text> in GPT" / "put this in ChatGPT: <text>". The text is kept exactly as written. */
 function matchTypeInGpt(original: string): CommandResult | null {
-  const verb = '(?:please\\s+)?(?:type|write|put|paste|enter)'
-  const target = `(?:in|into)\\s+(?:the\\s+)?${CHATGPT_NAME}(?:\\s+app)?`
+  // Explicit composer targeting — including “dictate into GPT …” (not a MIKO command body).
+  const verb = '(?:please\\s+)?(?:type|write|put|paste|enter|dictate)'
+  const target = `(?:in|into)\\s+(?:the\\s+)?(?:interactive\\s+gpt|chatgpt\\s+web|${CHATGPT_NAME})(?:\\s+app)?`
   const unquote = (text: string): string => text.trim().replace(/^["'\u201c\u2018](.*)["'\u201d\u2019]$/s, '$1').trim()
   const colon = new RegExp(`^${verb}\\s+(?:this\\s+)?${target}\\s*[:,\\-]\\s*(.+)$`, 'is').exec(original)
   if (colon?.[1]) return { type: 'type-in-gpt', text: unquote(colon[1]) }
@@ -468,21 +551,38 @@ function matchWhatsApp(original: string): CommandResult | null {
 
   // “Open WhatsApp and search for Mukundan” / “open WhatsApp and open Mukundan” —
   // dependent open+search plan; never pass the whole sentence to the app registry.
+  // Contact-only (no draft): navigation must not invent a message.
   const openThenContact = new RegExp(
-    `^(?:open|launch|start|bring\\s+up)\\s+${WHATSAPP_NAME}\\s+(?:and\\s+)?(?:then\\s+)?(?:search(?:\\s+for)?|find|look\\s+for|open|message)\\s+(.+)$`,
+    `^(?:open|launch|start|bring\\s+up)\\s+${WHATSAPP_NAME}\\s*[,.]?\\s+(?:and\\s+|then\\s+)*(?:search(?:\\s+for)?|find|look\\s+for|open|message|go\\s+to)\\s+(.+)$`,
     'i'
   ).exec(text)
-  if (openThenContact?.[1]) return person(openThenContact[1])
+  if (openThenContact?.[1] && !/\band\s+(?:say|tell|type|write|draft|reply|send)\b/i.test(openThenContact[1])) {
+    return person(openThenContact[1])
+  }
 
-  // “open Dad in WhatsApp and tell him …” — navigate first; message stays out of contact lookup.
+  // “Open WhatsApp, go to Dad and say good morning.”
+  const openWaGoTell = new RegExp(
+    `^(?:open|launch|start|bring\\s+up)\\s+${WHATSAPP_NAME}\\s*[,.]?\\s+(?:and\\s+|then\\s+)*(?:go\\s+to|open|message|find)\\s+(.+?)\\s+(?:and\\s+)?(?:then\\s+)?(?:type|write|draft|say|tell(?:\\s+(?:him|her|them))?|reply(?:\\s+(?:saying|that|with))?|send)\\s+(.+)$`,
+    'i'
+  ).exec(text)
+  if (openWaGoTell?.[1] && openWaGoTell[2]?.trim()) {
+    const { rest } = detectNegations(openWaGoTell[2].trim())
+    const draft = stripDraftInstructionFraming(rest || openWaGoTell[2].trim())
+    if (draft) return person(openWaGoTell[1], draft)
+    return person(openWaGoTell[1])
+  }
+
+  // “open Dad in WhatsApp and tell him …” / “… and reply saying …” —
+  // navigate first; wrappers like “saying” stay out of the held draft.
   const openAndType = new RegExp(
-    `^(?:open|message|find|search(?:\\s+for)?)\\s+(.+?)\\s+(?:in|on)\\s+${WHATSAPP_NAME}\\s+(?:and\\s+)?(?:then\\s+)?(?:type|write|draft|say|tell(?:\\s+(?:him|her|them))?|reply(?:\\s+with)?|send)\\s+(.+)$`,
+    `^(?:open|message|find|search(?:\\s+for)?|go\\s+to)\\s+(.+?)\\s+(?:in|on)\\s+${WHATSAPP_NAME}\\s+(?:and\\s+)?(?:then\\s+)?(?:type|write|draft|say|tell(?:\\s+(?:him|her|them))?|reply(?:\\s+(?:saying|that|with))?|send)\\s+(.+)$`,
     'i'
   ).exec(text)
   if (openAndType?.[1] && openAndType[2]?.trim()) {
     const { rest } = detectNegations(openAndType[2].trim())
     if (/\bdon'?t\s+type\b/i.test(openAndType[2]) && !rest) return person(openAndType[1])
-    const draft = rest || openAndType[2].trim()
+    const draft = stripDraftInstructionFraming(rest || openAndType[2].trim())
+    if (!draft) return person(openAndType[1])
     return person(openAndType[1], draft)
   }
   const inApp = new RegExp(
@@ -521,13 +621,14 @@ function matchOpenContactWhileMessaging(
   spoken: string
 ): CommandResult | null {
   const text = lead.trim().replace(/[.!?]+$/g, '')
-  const m = /^(?:open|launch|start|message)\s+(.+)$/i.exec(text)
+  // Navigation only — never invent a draft from “go to Dad” / “open Dad”.
+  const m = /^(?:open|launch|start|message|go\s+to|switch\s+to)\s+(.+)$/i.exec(text)
   if (!m?.[1]) return null
   const raw = m[1].trim()
   if (!raw || /\band\s+/i.test(raw) || /\b(?:in|on)\s+/i.test(raw)) return null
   if (isWhatsAppAppName(raw) || /^whatsapp$/i.test(raw)) return null
   // Known apps / Chrome / sites already handled earlier; matchOpen catches Calculator etc.
-  const asApp = matchOpen(spoken, catalog)
+  const asApp = matchOpen(spoken, catalog, {})
   if (asApp && asApp.type !== 'missing') return asApp
   const query = cleanContactQuery(raw.replace(/^(?:my|the)\s+/i, '').replace(/\s+chat$/i, ''))
   if (!query || query.length > 60 || isWhatsAppAppName(query)) return null
@@ -559,6 +660,17 @@ export function routeDiagnostics(
   return { normalized, action, capability }
 }
 
+/** True when the open target is ChatGPT / GPT (not a saved chat name). */
+function isChatGptOpenName(raw: string): boolean {
+  const q = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:the\s+|my\s+|a\s+)/, '')
+    .replace(/\s+app$/, '')
+    .replace(/\s+/g, ' ')
+  return /^(?:chat\s*-?\s*gpt|chat\s*g\s*p\s*t|gpt)$/i.test(q)
+}
+
 /** “open YouTube” / “boot up that video site” — local browser action, not an app catalog miss. */
 function matchOpenSite(lead: string): CommandResult | null {
   const m = /^(?:open|launch|start|run|go\s+to|visit|boot\s+up|fire\s+up|bring\s+up|pull\s+up)\s+(.+)$/i.exec(lead)
@@ -568,13 +680,25 @@ function matchOpenSite(lead: string): CommandResult | null {
   const afterProfile = (chromeBit.profileQuery ? chromeBit.rest : m[1]).replace(/\s+(?:for\s+me|please)$/i, '').trim()
   const { rest, browser } = splitBrowserPreference(afterProfile)
   const cleaned = rest.replace(/\s+(?:for\s+me|please)$/i, '').trim()
+  const preferredBrowser = chromeBit.browser || browser
+  // “Open ChatGPT in Chrome/Safari” → website + browser (not an app named “Chatgpt In Chrome”).
+  // Bare “Open ChatGPT” stays for matchChatGpt → native app.
+  if (!resolveSite(cleaned) && isChatGptOpenName(cleaned) && preferredBrowser) {
+    return {
+      type: 'open-url',
+      url: CHATGPT_HOME,
+      name: 'ChatGPT',
+      browser: preferredBrowser,
+      chromeProfileQuery: chromeBit.profileQuery
+    }
+  }
   const site = resolveSite(cleaned)
   if (!site) return null
   return {
     type: 'open-url',
     url: site.url,
     name: site.name,
-    browser: chromeBit.browser || browser,
+    browser: preferredBrowser,
     chromeProfileQuery: chromeBit.profileQuery
   }
 }
@@ -641,8 +765,20 @@ function phrase(original: string): string {
 }
 
 function matchChatGpt(spoken: string, chats: SavedChat[], messaging?: 'whatsapp' | null): CommandResult | null {
+  // Bare app open — no browser suffix.
   if (new RegExp(`^(?:open|launch|start|show)\\s+(?:the\\s+)?${CHATGPT_NAME}(?:\\s+app)?$`, 'i').test(spoken)) {
     return { type: 'open-chatgpt' }
+  }
+  // “Open ChatGPT in Chrome” should already be handled by matchOpenSite; keep a safety net.
+  const withBrowser = new RegExp(
+    `^(?:open|launch|start|show)\\s+(?:the\\s+)?${CHATGPT_NAME}(?:\\s+app)?\\s+((?:in|with|using)\\s+.+)$`,
+    'i'
+  ).exec(spoken)
+  if (withBrowser?.[1]) {
+    const { browser } = splitBrowserPreference(`x ${withBrowser[1]}`.trim())
+    if (browser) {
+      return { type: 'open-url', url: CHATGPT_HOME, name: 'ChatGPT', browser }
+    }
   }
   if (/^(?:show|list|open)\s+(?:my\s+)?saved\s+chats$/i.test(spoken) || /^(?:show|list)\s+my\s+chats$/i.test(spoken)) {
     return { type: 'list-chats' }
@@ -728,15 +864,62 @@ function matchClose(spoken: string, catalog: CatalogApp[]): CommandResult | null
   return { type: 'close', appId: resolved.app.id, name: resolved.app.name }
 }
 
-function matchOpen(spoken: string, catalog: CatalogApp[]): CommandResult | null {
-  const opened = spoken.match(/^(?:open|launch|start)\s+(.+)$/)
+/**
+ * Open / focus / switch apps. “Go to Cursor”, “Switch to Spotify”, “Bring WhatsApp forward”,
+ * “Take me back to Chrome”, and bare “Open Calculator” share this path (before assistant fallback).
+ * Negations and questions must not reach here as actions.
+ */
+function matchOpen(spoken: string, catalog: CatalogApp[], context: RouterContext = {}): CommandResult | null {
+  // “Don’t switch to Cursor” / “never open Chrome” — leave for question/unknown, never launch.
+  if (
+    /^(?:don'?t|do\s+not|never)\s+(?:open|launch|start|go\s+to|switch\s+to|bring|take\s+me|focus|show)\b/i.test(
+      spoken
+    )
+  ) {
+    return null
+  }
+
+  // Bare “back” / “take me back” / “go back” → last verified external app.
+  if (/^(?:(?:take\s+me|switch|go|come)\s+)?back(?:\s+please)?$/.test(spoken) || spoken === 'back') {
+    const last = context.lastExternalApp?.name?.trim()
+    if (!last) {
+      return {
+        type: 'unknown',
+        text: 'I’m not sure which app to go back to. Name it — for example “go to Chrome”.'
+      }
+    }
+    return resolveOpenTarget(last, last, catalog, null)
+  }
+
+  const bring = /^(?:bring|put)\s+(.+?)\s+(?:forward|to\s+(?:the\s+)?front|in\s+front)$/i.exec(spoken)
+  const opened =
+    bring ||
+    /^(?:open|launch|start|show|focus|go\s+(?:back\s+)?to|switch\s+(?:back\s+)?to|take\s+me\s+(?:back\s+)?to)\s+(.+)$/i.exec(
+      spoken
+    )
   if (!opened?.[1]) return null
   // Compound open+search must not become an app-catalog miss (“Whatsapp And Search For …”).
   if (/\band\s+(?:then\s+)?(?:search|find|look\s+for|open|message)\b/i.test(opened[1])) return null
   const { rest, browser } = splitBrowserPreference(opened[1])
-  const site = resolveSite(rest)
+  // Prefer the name without “in Chrome” so browser never becomes part of a missing-app label.
+  const appTarget = rest || opened[1]
+  if (isChatGptOpenName(appTarget) && browser) {
+    return { type: 'open-url', url: CHATGPT_HOME, name: 'ChatGPT', browser }
+  }
+  // Sites still prefer matchOpenSite (earlier). Keep a safety net for “go to youtube” if it reached here.
+  const site = resolveSite(appTarget)
   if (site) return { type: 'open-url', url: site.url, name: site.name, browser }
-  const appRaw = isWhatsAppAppName(opened[1]) ? 'whatsapp' : opened[1]
+  return resolveOpenTarget(appTarget, opened[1], catalog, browser)
+}
+
+function resolveOpenTarget(
+  appTarget: string,
+  rawOpened: string,
+  catalog: CatalogApp[],
+  browser: string | null
+): CommandResult {
+  void browser
+  const appRaw = isWhatsAppAppName(appTarget) || isWhatsAppAppName(rawOpened) ? 'whatsapp' : appTarget
   const resolved = resolveApp(appRaw, catalog)
   if (resolved.kind === 'none') return { type: 'missing', name: resolved.label, text: `I can\u2019t find ${resolved.label}.` }
   if (resolved.kind === 'many') return choices(resolved.apps, 'open')
@@ -747,8 +930,12 @@ function resolveApp(
   raw: string,
   catalog: CatalogApp[]
 ): { kind: 'one'; app: CatalogApp } | { kind: 'many'; apps: CatalogApp[] } | { kind: 'none'; label: string } {
-  const query = raw.replace(/^(?:my|the)\s+/, '').trim()
-  const full = raw.trim()
+  // Compare case-insensitively (voice/typed are normalized; lastExternalApp names may be Title Case).
+  const query = raw
+    .replace(/^(?:my|the)\s+/i, '')
+    .trim()
+    .toLowerCase()
+  const full = raw.trim().toLowerCase()
   if (!query) return { kind: 'none', label: 'that' }
   // App-slot spelling only — map Whatsaappp → WhatsApp catalog entry.
   if (isWhatsAppAppName(query) || isWhatsAppAppName(full)) {
@@ -830,6 +1017,7 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'pet':
     case 'pet-choose':
     case 'type-in-gpt':
+    case 'type-dest':
     case 'mail':
     case 'bridge-test':
     case 'bridge-new':
@@ -843,6 +1031,8 @@ export function planVoice(decision: CommandResult, auto: boolean): VoicePlan {
     case 'chrome-profiles':
     case 'close-website':
     case 'cancel-workflow':
+    case 'send-it':
+    case 'feedback':
       return { kind: 'run' }
     case 'confirm':
     case 'close':

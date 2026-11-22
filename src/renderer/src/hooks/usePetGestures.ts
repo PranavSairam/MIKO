@@ -100,15 +100,23 @@ export function usePetGestures({ onOpenPanel, onSingleClick, onGuide, onFreeDrag
         reactTimer.current = null
       }
       setReacting(false)
+      // Tab/window hidden mid-gesture: release pointer locks so click-through recovers.
+      window.miko?.setDragActive(false)
+      window.miko?.setPointerHeld(false)
+    }
+    const onPointerCancelGlobal = (): void => {
+      cancelRef.current()
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', stop)
+    window.addEventListener('pointercancel', onPointerCancelGlobal)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', stop)
+      window.removeEventListener('pointercancel', onPointerCancelGlobal)
       document.removeEventListener('visibilitychange', onVisibility)
       clearClick()
       if (reactTimer.current !== null) window.clearTimeout(reactTimer.current)

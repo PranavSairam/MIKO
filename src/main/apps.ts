@@ -52,7 +52,56 @@ export async function launchApplication(id: string, confirm: boolean): Promise<L
   if (!target.familiar && confirm) remember(action)
   const opened = await target.run()
   if (!opened) return { ok: false, reason: `${target.name} did not open.` }
-  return { ok: true, reason: '' }
+  // Folder/URL opens have no process to verify. App launches: check frontmost when possible.
+  if (!target.macApp && !target.macBundle && !target.winExe && !target.winLnk) {
+    return { ok: true, reason: '' }
+  }
+  const verified = await verifyFrontApp(target.name, target.macApp, target.macBundle)
+  if (verified === false) {
+    return {
+      ok: false,
+      reason: `I asked ${target.name} to come forward, but it isn’t the front app yet.`
+    }
+  }
+  return {
+    ok: true,
+    reason: verified === true ? `${target.name} is frontmost.` : ''
+  }
+}
+
+/** true = confirmed frontmost, false = wrong app, null = couldn’t check (still treat launch as ok). */
+async function verifyFrontApp(name: string, macApp?: string, macBundle?: string): Promise<boolean | null> {
+  if (process.platform !== 'darwin') return null
+  await new Promise((r) => setTimeout(r, 280))
+  const r = spawnSync(
+    '/usr/bin/osascript',
+    [
+      '-e',
+      'tell application "System Events" to get {name, bundle identifier} of first application process whose frontmost is true'
+    ],
+    { shell: false, encoding: 'utf8', timeout: 2500, windowsHide: true }
+  )
+  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null
+  const raw = r.stdout.trim()
+  // osascript list: "Google Chrome, com.google.Chrome"
+  const parts = raw.split(',').map((s) => s.trim())
+  const frontName = (parts[0] || '').toLowerCase()
+  const frontBundle = (parts[1] || '').toLowerCase()
+  if (macBundle && frontBundle && frontBundle === macBundle.toLowerCase()) return true
+  const needle = name.toLowerCase().replace(/\s+/g, '')
+  const frontCompact = frontName.replace(/\s+/g, '')
+  if (!needle || !frontCompact) return null
+  if (frontCompact === needle || frontCompact.includes(needle) || needle.includes(frontCompact)) return true
+  if (macApp) {
+    const base = macApp
+      .split('/')
+      .pop()
+      ?.replace(/\.app$/i, '')
+      .toLowerCase()
+      .replace(/\s+/g, '')
+    if (base && (frontCompact === base || frontCompact.includes(base) || base.includes(frontCompact))) return true
+  }
+  return false
 }
 
 export async function quitTarget(id: string): Promise<QuitTarget | null> {
@@ -123,7 +172,8 @@ function familiarTargets(): { id: string; name: string; installed: boolean; alia
       aliases: ['powerpoint', 'power point', 'microsoft powerpoint', 'slides', 'presentations', 'office'],
       locate: locatePowerPoint
     },
-    { id: 'whatsapp', name: 'WhatsApp', aliases: ['whatsapp', 'whats app'], locate: locateWhatsApp }
+    { id: 'whatsapp', name: 'WhatsApp', aliases: ['whatsapp', 'whats app'], locate: locateWhatsApp },
+    { id: 'notes', name: 'Notes', aliases: ['notes', 'apple notes', 'note'], locate: locateNotes }
   ]
   return specs.map((spec) => {
     const target = spec.locate()
@@ -258,6 +308,14 @@ function locateWhatsApp(): Target | null {
   }
   const path = macApp('WhatsApp.app')
   return path ? macAppTarget('WhatsApp', path) : null
+}
+
+function locateNotes(): Target | null {
+  if (process.platform === 'win32') return null
+  const system = '/System/Applications/Notes.app'
+  if (existsSync(system)) return macAppTarget('Notes', system)
+  const path = macApp('Notes.app')
+  return path ? macAppTarget('Notes', path) : null
 }
 
 function locateOffice(name: string, macName: string, exeName: string): Target | null {

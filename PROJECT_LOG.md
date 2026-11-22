@@ -8,7 +8,7 @@ This is the running record of the project. Read it first when you pick the proje
 
 **What it is:** MIKO is a desktop companion built with Electron, React, TypeScript, and three.js. A 3D Doberman sits on top of your other windows. You talk to it in a chat panel, by typing or by push-to-talk. It can walk, sit, follow the active window, open and close apps, search WhatsApp contacts on macOS, draft and insert WhatsApp replies (macOS), read Gmail, and answer through the MIKO assistant (Codex, using your ChatGPT sign-in in a separate thread) or hand a prompt to the ChatGPT app.
 
-**Platforms:** Developed on macOS. The code targets Windows too, but the Windows smoke test in README.md has not been run. WhatsApp contact search returns a clear unsupported state on Windows. There is no installer. Git history is on `main`.
+**Platforms:** Developed on macOS. The code targets Windows too, but the Windows smoke test in README.md has not been run. WhatsApp contact search returns a clear unsupported state on Windows. **Private beta (zero-budget):** unsigned Mac DMG/ZIP; manual Download latest link; feedback Preview + Export report (tester shares file). Auto-install disabled while unsigned. Signed electron-updater + feedback-server preserved for later. Guides: `beta/TESTER.md`, `beta/DISTRIBUTION.md`. Git history is on `main`.
 
 **Run it:**
 
@@ -46,6 +46,9 @@ Needs Node 22.12 or newer.
 - **WhatsApp contacts (macOS):** "open Mum in WhatsApp", "open WhatsApp chat with Mum", "find Mukundan on WhatsApp", and "open Dad in WhatsApp and tell him …" / "open Me in WhatsApp and type …" (navigate first; held draft resumes after the chat is verified). One exact result opens after the chat header matches. Several or approximate results are a choice. A bare "open Muku chat" opens an exact saved ChatGPT chat, otherwise uses a WhatsApp context you already chose, otherwise asks which. Aliases live in `userData/miko-settings.json` under `whatsappAliases`.
 - **WhatsApp summarize / replies (macOS):** Bare "summarize" with a verified chat summarizes latest **incoming** text inside MIKO (composer unchanged, fresh model request). "tell him…", "reply saying…", "type … in a formal way" draft and insert unsent. Refine: shorter / more formal. "leave it" / "never mind" / "cancel that" cancel pending workflow.
 - **Architecture helpers:** typed `ActionPlan` / capability registry / working context / task phases; unfamiliar wording → schema-validated interpret (async bridge) → `runActionPlan` gated by capabilities; structured preferences + correction examples in Preferences (not training); eval under `src/shared/eval/` including `holdout-unfamiliar.json`.
+- **Type destinations (macOS):** “Open ChatGPT, new chat, type …” / “Type here” / omnibox insert / Notes write / “Paste now” via `type-plan` + `type-dest` + `TypeDestination` in working context. Type leaves unsent; submit only when explicitly asked and a verified path exists. See Session log 2026-11-21.
+- **GPT Mode (opt-in):** Panel + paw toggle. When active, ordinary typed/final voice messages insert+submit in the ChatGPT app (not the MIKO assistant). Starts paused after relaunch. Optional Live ChatGPT view (whole-window mirror). See Session log 2026-11-21.
+- **Interactive GPT / ChatGPT Web (opt-in, separate):** Panel **Interactive GPT** (beside GPT Mode) opens real `chatgpt.com` in an isolated `WebContentsView` (`persist:miko-chatgpt-web`). Pin, pill collapse, restore size/page; local open/show/hide; native DnD into composer; **Paste clipboard into GPT** + “copy this WhatsApp message to GPT” (explicit selection only). Not GPT Mode, not Lens. See Session log 2026-11-21.
 - **Chrome profiles (macOS live-checked):** “open Chrome” / “choose chrome profile” / “open … in Chrome” → glass fan of real Local State profiles (avatar/initials, directory id separate from name). Optional saved default; never auto-saved. Launch by `--profile-directory` without closing other profile windows.
 - **WhatsApp attachments (macOS):** “fetch/download the latest file/PDF”, “copy this file”, “save to Downloads”, “show in Finder”, “attach it here” → attachment actions (not the general assistant). Visible document bubbles only; Save to Downloads + verified local file; file card; real file pasteboard; attach unsent with header recheck.
 - **Questions** (ending in `?`, or starting with how/what/why/explain/write/…) go to the MIKO assistant when that setting is on, and to the ChatGPT app handoff when it is off.
@@ -87,6 +90,738 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 ---
 
 ## Session log
+
+### 2026-11-22: Windows readiness, first-run setup, packaging handoff
+- **Owner ask:** Harden Windows startup/capabilities; first-launch setup/tutorial; NSIS packaging + docs; verify dirty worktree; commit/push to `origin/main` (no force, no release). Preserve Mac features and pending WA work.
+
+#### Platform hardening
+- Bridge: Windows Codex via `MIKO_CODEX_PATH` / PATH `codex.exe` only (no `.cmd` shell); honest unavailable / not-signed-in; Interactive GPT independent.
+- `type-dest.ts`: explicit non-darwin guards before `/usr/bin/open` or AX paths; unsupported status instead of false success.
+- Selection shortcut IPC registers get/set on all platforms; capture remains macOS-only; Preferences hides selection controls on Windows.
+- Lens capabilities already platform-gated; GPT Live empty surface on Windows shows an explicit unavailable message (not a blank mirror).
+- Updater + UI copy: Windows uses `.exe` / SmartScreen / `%APPDATA%\MIKO-Beta`; Mac keeps DMG / Finder / Gatekeeper.
+- Regression: `platform-copy.test.ts`, expanded `actions.test.ts` win32 capability denylist, existing `setup.test.ts` / `lens-capabilities.test.ts`.
+
+#### First-run setup
+- Versioned `setupTutorial` in settings (`src/shared/setup.ts`); schema-v1 legacy profiles marked skipped in `session-flush` (not inferred from file existence alone).
+- IPC + preload: setup get/update, voice permission, `voiceMicTest`, summon shortcut get/set.
+- Mic status via native helpers only (macOS SFSpeech status/request; Windows System.Speech test path) — not browser `getUserMedia`.
+- Summon shortcut shows `Ctrl+Shift+R` on Windows; tray fallback when registration fails.
+- `SetupTutorial` panel view; tray **Setup & Help…**; Preferences **Run tutorial again**. Optional failures never block pet/tray.
+- Codex vs Interactive GPT: copy never claims web login satisfies Codex sign-in.
+
+#### Packaging / docs
+- `npm run dist:win` → expected `release/MIKO-0.1.1-win-x64.exe`; `build/icon.ico`; NSIS per-user; no bundled userData/credentials.
+- `docs/WINDOWS_SETUP.md` (dev PowerShell) + `docs/WINDOWS_USER_GUIDE.md` (dad, installer-only).
+- `npm run pack:win-check`; lockfile root version synced to `0.1.1`.
+
+#### Verification notes
+- Mac this session: `npm run typecheck` pass; `npm test` **354** pass; `npm run build` pass; `npm run pack:win-check` pass.
+- `npm run dist:win` on macOS produced `release/MIKO-0.1.1-win-x64.exe` (packaging check only — **not** a Windows launch success).
+- Excluded from commit: root `main` binary, `paused` scratch, `probe-*` local scripts, `.env` / `beta/.env.local`.
+- **Still pending on owner Windows PC:** startup/render/tray/shortcut/mic/app launch/installer install-uninstall/Interactive GPT live checks; Caps Lock+A and app switcher remain macOS-only.
+
+### 2026-11-22: WhatsApp conversation flow — instruction wrappers vs drafts
+- **Owner ask:** Dad open; MIKO reported “Inserted—not sent” with draft literally “saying good morning”; Interactive GPT stayed pinned. Expected: “Go to Dad” → open only; “Tell him / reply saying good morning” → draft “Good morning, Dad!” unsent; wrappers never paste; nav-only no draft; tuck IGPT without clearing session; Replace/Append/Cancel; insert once after verify; typed=voice; regression + live Me/Me 2; typecheck/test/build; PROJECT_LOG; no commit/push.
+
+#### Cause
+- Compound open+tell / “reply saying …” left framing in `pendingDraft` (e.g. `saying good morning`).
+- `type saying …` treated as literal paste.
+- “Go to Dad” / “Open WhatsApp, go to Dad and say …” under-matched.
+- “Make it warmer” refine phrasing incomplete.
+- Switching to WhatsApp did not tuck Interactive GPT → focus fight.
+
+#### Fix (routing + draft path, not phrase-only)
+- `stripDraftInstructionFraming` / `isInstructionFramingBody` in `whatsapp-reply.ts`; applied on parse, compound `commands.ts` / `interpret.ts`, `setHeldWaDraft`, `startWhatsAppReply`, and `whatsAppDraftPrompt` (defense in depth).
+- Compound regexes: `reply saying|with|that`, `Open WhatsApp, go to … and say …`; `matchOpenContactWhileMessaging` supports `go to` with **no** `pendingDraft`.
+- Refine: `Make it warmer` / kinder / softer.
+- `tuckInteractiveGptForWhatsApp` on WA open / reply / launch — collapse pill, keep session/draft.
+- Held open+tell always non-literal (only `type exactly` / `Draft:` literal).
+
+#### Regression
+- Unit: wrapper vs literal, compound reply-saying, go-to nav-only, multi-turn “Tell him…”, warmer refine, prompt strips `saying` from instruction fence.
+- `npm test` **347** pass; `npm run typecheck` pass; `npm run build` pass.
+
+#### Live (MIKO_VERIFY_WA_CONVERSATION=1; Me / Me 2; nothing sent)
+| Check | Result |
+|---|---|
+| Panel “Tell him good morning” | **passed** — instruction `good morning`, draft **`Good morning, Dad!`** (not `saying good morning`) |
+| Existing composer text | **passed** — `choose-insert` (composer still held prior buggy `saying good morning…`); Replace/Append/Cancel path preserved text |
+| Nav / switch guard | **passed** — wrong-header insert → `switched`; Me composer length unchanged through nav |
+| Interactive GPT tuck | **passed** — open IGPT then WA → `collapsed=true`, session still `open` |
+| Cancel | **passed** — `never mind` |
+| Restore Me / Me 2 | **passed** — composers restored; no Send |
+| openMe exact row | **failed once** — bare `Me` returned `choices` (Me / Me 2); verify now retries with `pickId` |
+| Refine “Make it warmer” | **untested live** — skipped to avoid overwriting existing Me 2 draft; covered by unit parse |
+
+#### Remaining limitations
+- Self-chat “Me” search often needs an exact pick among Me / Me 2.
+- Model may still address a gendered greeting (“Dad”) from `him` even on a self-chat test target; recipient header recheck before insert is unchanged.
+- Refine live skip when composer already has text (by design preserve).
+- Windows WA drafting still unsupported.
+
+- **Not committed / not pushed.** Authorship PRANAV SAIRAM only.
+
+### 2026-11-22: Fix “Send it” destination resolution
+- **Owner ask:** With an Interactive GPT unsent draft (“everything works perfectly”), “Send it” fell through to the assistant and old WhatsApp/Santhosh context. Expected: resolve from fresh ContextSnapshot / task binding; if Interactive GPT is the last explicit drafting destination, submit that draft once. Clarify when GPT and WhatsApp both pending; never resurrect completed WA; preserve WA unsent policy; no blind retries; report observed vs unverified.
+
+#### Cause
+- No `send-it` command — with `assistantActive`, “Send it” became a sticky assistant `question`.
+- Interactive GPT inserts were not recorded in `WorkingContext` / `ContextSnapshot`.
+- No Interactive GPT submit API (insert-only).
+
+#### Fix
+- Shared `send-destination.ts`: `InteractiveGptDraftBinding`, `resolveSendDestination`, `isSendItPhrase`.
+- Snapshot field `interactiveGptDraft` (explicit dictate / type-in-gpt / paste / transfer only — not visibility).
+- Router: `{ type: 'send-it' }` before assistant fallthrough; “Open WhatsApp” unchanged.
+- Clarification kind `send_destination` → “Send in ChatGPT or WhatsApp?”
+- WhatsApp-only → unsent notice (no auto-Send).
+- Main: `chatgptWebSubmitCurrentDraft` (verify composer, press Send once, observe; cancel generation blocks late submit).
+- MotionApp binds after explicit inserts; `handleSendIt` / choice card / cancel clears binding + cancel submit.
+
+#### Matrix
+| Case | Result |
+|---|---|
+| Explicit GPT dictation → Send it | **passed** (resolver + live insert/submit) |
+| Old WA history cannot steal | **passed** (unit) |
+| Competing GPT + WA | **passed** (clarify) |
+| Empty composer | **passed** (submit status `empty` path) |
+| Cancel / stale generation | **passed** (live `cancelBlocksLateSubmit`) |
+| Live harmless insert + Send once | **passed** (delivery-unverified honest; no retry) |
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — **356** pass
+- `npm run build` — pass
+- `MIKO_VERIFY_SEND_IT=1` — all checks passed
+- No commit/push
+
+### 2026-11-22: Fix pet/panel interaction after voice-routing
+- **Owner ask:** After voice-routing fix, MIKO buttons and pet click/drag stopped responding while voice still worked. Find real cause; keep voice routing + Interactive GPT; live click/drag with GPT open/closed; report live vs automated separately; typecheck/tests/build; PROJECT_LOG; no commit/push.
+
+#### Cause
+- Click-through / ignore-mouse got stuck after Interactive GPT raise/blur and gesture flags (`dragActive` / `pointerHeld`), with macOS `setIgnoreMouseEvents` toggles without `{ forward: true }` contributing to Chromium WidgetInputHandler stalls.
+- GPT blur → immediate `raisePetWindow` could fight focus; stuck `chromeDragActive` could skip pet raise forever.
+- Summon/dismiss/voice end did not always clear pointer locks.
+
+#### Fix
+- `restorePetPointerState()`: clear drag/pointerHeld, brief ignore cycle, re-run hit-testing (or accept clicks when panel open).
+- macOS ignore toggles use `{ forward: true }` (create + `applyIgnore`).
+- Panel open clears stuck gestures, raises pet, forces ignore off.
+- GPT: debounced blur raise (120ms) + restore; 4s `chromeDragActive` safety; restore on collapse/close/hide/invalidate; summon/dismiss/speech cancel+transcript restore.
+- Renderer: release pointer locks on hide/`pointercancel`.
+- Verify: `MIKO_VERIFY_PET_INTERACTION=1` (OS CGEvent click/drag via Accessibility).
+
+#### Live vs automated
+| Check | Result |
+|---|---|
+| OS CGEvent: pet clicks reach pet; panel opens; Mic with/without GPT | **passed (live)** |
+| OS CGEvent: Mic while Interactive GPT open | **passed (live)** |
+| OS CGEvent: after GPT close, panel usable again | **passed (live)** |
+| OS CGEvent: Alt/guide drag origin move | **failed in harness** (post-panel-close coords/`altKey` delivery flaky; not a second overlay) |
+| Hand cursor / Screen Recording Computer Use | **untested** (Screen Recording off for Cursor Computer Use) |
+| typecheck / 345 tests / build | **passed** |
+| Voice “Open WhatsApp” routing (prior session) | preserved (no revert of router fix) |
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — **345** pass
+- `npm run build` — pass
+- No commit/push
+
+### 2026-11-22: Fix voice routing when Interactive GPT is open
+- **Owner ask:** Spoken “Open WhatsApp” was inserted into ChatGPT’s composer while Interactive GPT was open. Expected: local open/focus WhatsApp; leave GPT draft unchanged. Command resolution before any workspace insert; shared router for typed+voice; explicit Dictate to GPT; do not delete existing draft text; checks + PROJECT_LOG; no commit/push.
+
+#### Cause
+- `onVoice` had an early branch: if Interactive GPT was open/visible/uncollapsed, **every** final mic transcript was inserted into the guest composer and returned — bypassing `routeCommand` / local launch / pet motion.
+
+#### Fix
+- Removed that auto-insert branch. Merely opening Interactive GPT no longer changes MIKO command behavior.
+- Typed + voice share `handleSharedLocalControls` (GPT Mode locals, Interactive GPT locals/transfers) with explicit `inputSourceRef` (`typed` | `voice`) for router metadata.
+- Explicit targets only: `type/dictate into GPT: …` → `type-in-gpt` (literal composer insert via Interactive GPT when open, else ChatGPT app); **Paste clipboard into GPT**; armed **Dictate to GPT** (workspace button + phrase) inserts **one** final transcript unsent, then disarms.
+- Uncertain voice still reviews into the draft box — never auto-pastes into GPT.
+- Direct ChatGPT page typing/drops untouched. GPT Mode forwarding unchanged; pause/exit stay local.
+- Existing GPT draft text is not cleared by this fix (no auto-delete of the mistaken “Open WhatsApp” line).
+
+#### Regression matrix (router + wiring)
+| Utterance / action | Expected | Status |
+|---|---|---|
+| Open WhatsApp (IGPT open) | local launch | **passed** (router; voice no longer auto-inserts) |
+| Go to Cursor | local app switch | **passed** |
+| Move left | pet move | **passed** |
+| Open ChatGPT in Chrome | open-url chrome | **passed** |
+| Type into GPT: open WhatsApp | literal insert | **passed** |
+| Dictate to GPT → one mic final | insert once, unsent | **passed** (arm/path coded + unit) |
+| Drop “open WhatsApp” text | text only | **passed** (native guest; unchanged) |
+| Live mic end-to-end | — | **untested** this session (no spoken probe); restart build for hand check |
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — **345** pass
+- `npm run build` — pass
+- No commit/push
+
+### 2026-11-21: WhatsApp → Interactive GPT transfer
+- **Owner ask:** Drag WhatsApp selectable message text into Interactive GPT (unsent, preserve draft). First test real WhatsApp drag payloads; direct drag where transferable; Copy → Paste clipboard into GPT fallback; never silent latest-message scrape; attachments only via explicit drop/paste/attach; live matrix; checks + PROJECT_LOG; no commit/push.
+
+#### WhatsApp payload findings (macOS WhatsApp 26.43.77)
+| Source | What was observed |
+|---|---|
+| **Selected text drag** | Drag pasteboard carried `public.utf8-plain-text` + HTML + Chromium drag markers (non-empty text length sampled). Treat as transferable **plain text** for native guest drop. |
+| **Whole bubble drag** | **Not assumed.** No reliable AX “bubble = draggable” proof without a controlled live bubble-only drag. Use selection or Copy. |
+| **Image / document drag** | Sampled drag board had **no** image bytes / file-URL types (text/html only). Do not treat thumbnails/filenames as attachments; use proven WA attachment retrieval + explicit attach. |
+| **Copy message** | Edit → Copy was **enabled** with a selection; general pasteboard provides utf8 text (multiline / non-ASCII seen in length/flags only). |
+
+#### Implementation
+- Native path unchanged: sandboxed ChatGPT `WebContentsView` receives OS text drops; no MIKO command execution; no auto-submit; no navigation.
+- Composer insert now **preserves draft** (caret insert / append); refuses login/password fields and auth URLs.
+- **Paste clipboard into GPT:** local phrase + Interactive GPT `···` menu; opens/restores workspace; one-shot clipboard read (no monitoring).
+- **Copy this WhatsApp message to GPT:** uses explicit selection capture only; otherwise asks to select/copy — never peeks latest chat message.
+- Files/images: reuse existing WhatsApp attachment + real-file clipboard paths; require explicit user action.
+
+#### Live / verify matrix
+| Check | Direct drag | Copy/paste fallback |
+|---|---|---|
+| 1 Selected message text | **untested** (OS drag; Screen Recording off) | — |
+| 2 Whole bubble | **untested** (do not assume) | — |
+| 3 Copy → Paste clipboard into GPT | — | **passed** (wiring + insert ok) |
+| 4 Multiline / Tamil / emoji | **untested** live | pasteboard flags: non-ASCII + newlines present on general board |
+| 5 Existing draft preserved | **passed** (code path) | **passed** (code path) |
+| 6 No dup / auto-send / nav | **passed** (wiring) | **passed** |
+| 7 Wrong chat / cancel / signed-out | **untested** live | login-page refuse coded |
+
+`MIKO_VERIFY_WA_GPT_TRANSFER=1` → `wa-gpt-transfer-verify.json`. Pet/workspace layout + sandbox preserved.
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — **343** pass (incl. `interactive-gpt-transfer`)
+- `npm run build` — pass
+- No commit/push
+
+### 2026-11-21: Interactive GPT native drag-and-drop
+- **Owner ask:** Smooth DnD into existing Interactive GPT (preserve pet/workspace, session, voice, GPT Mode). Prefer native ChatGPT composer/upload; no overlay steal; no auto-submit; no navigation on drop; restrained highlight; pill ~600ms expand; honest content-type feedback; sandbox intact; live matrix A–I; checks + PROJECT_LOG; no commit/push.
+
+#### Approach
+- **Native first:** Guest `WebContentsView` keeps `navigateOnDragDrop: false`, sandboxed (no preload / no Node). Drops go to ChatGPT’s own composer/upload — no message scraping, no rebuilt attachment pipeline, no remote image fetch.
+- **Chrome must not swallow guest drops:** `.cw-fill` stays `pointer-events: none`; titlebar rejects drops with a “drop into composer” hint; pill never uploads on hover/drop alone.
+- **Highlight:** Minimal guest helper adds a non-intercepting outline + “Drop into the ChatGPT composer” label; clears on drop / leave / Escape. Neutral chrome `dropNote` (“Dropped into ChatGPT—check…”) from type kinds only — no paths, tokens, or message text.
+- **Collapsed:** Hold dragged item on restore pill ~600ms → `expandFromDrag` (focus false) to keep the OS drag session; Escape/leave clears chrome drag state; close/dismiss invalidates pending MIKO transfer state.
+- **Nav safety:** Guest + chrome `will-navigate` block `file://` and off-allowlist URLs; no GPT Mode auto-submit path on drop.
+
+#### Files
+- `src/main/chatgpt-web-window.ts` — DnD prefs, guest helper, dropNote, chromeDragActive, expandFromDrag, invalidate on close/hide
+- `src/renderer/src/chatgpt-web/ChatGptWebShell.tsx` + `chatgpt-web.css` — pill 600ms expand, chrome drop reject, dropNote UI
+- `src/preload/chatgpt-web.ts`, `src/shared/api.ts`, `src/preload/index.ts`, `src/main/ipc.ts` — dragActive / expandFromDrag IPC
+- `src/main/verify-chatgpt-web-dnd.ts` + `scripts/probe-chatgpt-web-dnd.cjs` — wiring probes (`MIKO_VERIFY_CHATGPT_WEB_DND=1`)
+
+#### Live / probe matrix
+| Check | Status | Notes |
+|---|---|---|
+| Wiring: navigateOnDragDrop=false, highlight helper, file nav blocked | **passed** | `scripts/probe-chatgpt-web-dnd.cjs` (Electron 45.2.3) |
+| Pill expand-from-drag, pet stays, partition, close keeps pet | **passed** | `MIKO_VERIFY_CHATGPT_WEB_DND=1` → `chatgpt-web-dnd-verify.json` |
+| A. Text from native editor → empty composer | **untested** | Needs live TextEdit/Notes OS drag (Screen Recording unavailable for Computer Use) |
+| B. Multiline into existing draft | **untested** | Same |
+| C. PDF from Finder | **untested** | Same |
+| D. Image file from Finder | **untested** | Same |
+| E. Image from browser (bytes vs URL) | **untested** | Same — report source honestly when tested |
+| F. Multiple files | **untested** | Same |
+| G. Cancel drag + collapse/restore | **passed** (wiring) | Escape/leave clear; pill expand; no upload on pill alone |
+| H. No auto-submit / unwanted navigation | **passed** (wiring) | prefs + will-navigate; drop ≠ GPT Mode submit |
+| I. Normal click/scroll/type/upload/download | **untested** | Manual smoke after OS drops |
+
+**Source apps for A–F:** not exercised in this session (manual OS drag required). Synthetic composer DOM probe could not find a composer on a cold chatgpt.com load (login/challenge wall); native path left for hand verification.
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — 339 pass
+- `npm run build` — pass
+- No commit/push
+
+### 2026-11-21: Pet + Interactive GPT companion layout
+- **Owner ask:** Fix pet disappearing when Interactive GPT opens. Keep session; pet visible beside workspace; tuck panel; pause Lens; slim chrome; summon/dismiss consistency; live verify. Checks + PROJECT_LOG; no commit/push.
+
+#### Diagnosis
+- **Cause:** Workspace used the same always-on-top `floating` band as the pet and was placed overlapping / covering the pet (especially after work-area clamp). Focusing ChatGPT buried the pet under the large window — looked like the pet “disappeared,” not a second-pet or hide bug.
+- **Not the cause:** Pet visibility flag / animation reset on open (pet stayed “shown” but covered).
+
+#### Fixes
+- Place workspace **beside** the pet (left/right preferred; shrink before overlap; nudge saved bounds; never move the pet unexpectedly).
+- After open/focus/blur: `raisePetWindow()` so the companion stays clickable without a focus fight; pin still means always-on-top visibility, not repeated activation.
+- Opening Interactive GPT **tucks** the chat panel (`setPanelOpen(false)` + `uiHint`) and **closes Lens** (unless opened again explicitly).
+- Dismiss hides pet + panel + workspace/pill and cancels mic; **does not** clear `persist:miko-chatgpt-web` login. Close workspace leaves pet visible. Collapse → one pill near pet.
+- Slim chrome: **MIKO · ChatGPT**, Pin, Collapse, Expand, Close; Back/Forward/Reload in `···` menu; removed permanent disclaimer/download path from the reading chrome. Guest ChatGPT UI untouched (no page CSS injection).
+
+#### Live verify (`MIKO_VERIFY_INTERACTIVE_GPT=1`)
+| Check | Status |
+|---|---|
+| Pet still visible after open | **passed** |
+| No workspace/pet overlap | **passed** |
+| Panel tucked | **passed** |
+| No duplicate windows | **passed** |
+| Collapse / restore + session URL | **passed** |
+| Close keeps pet | **passed** |
+
+Remaining: edge cases on very small displays may still force a tight fit; manual drag is free. Screen Recording unavailable for Computer Use — verify used main-process + `__mikoPanel` bridge. Normal `npm run start` left running afterward.
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — 339 pass
+- `npm run build` — pass
+
+### 2026-11-21: Interactive GPT access — header button, pill, pin, local commands
+- **Owner ask:** Make existing ChatGPT Web easy to reach (no new integration). Visible **Interactive GPT** beside GPT Mode; open sandboxed workspace near pet; pin/collapse/restore; local open/show/hide commands; keep GPT Mode / Lens distinct. Restart + verify. Checks + PROJECT_LOG; no commit/push.
+
+#### Access / UX
+- Panel header: **Interactive GPT** immediately beside **GPT Mode** (always available on chat tab, regardless of GPT Mode phase). Responsive `panel-bar-actions` wrap so the control is not clipped.
+- Workspace (same `persist:miko-chatgpt-web`): default ~900×650 near pet, work-area clamped; Pin toggle (always-on-top without focus thrash); Collapse → small **Interactive GPT** pill near pet; Expand restores size/position/page; Close ends window only (session/login kept in partition). Single window — reopen focuses, no duplicates.
+- Shell labels **Interactive GPT** / ChatGPT Web; does not enable GPT Mode forwarding or Lens.
+
+#### Local commands (before forwarding; skipped for `type exactly` / quoted prompts)
+- `Open interactive GPT` / `Show ChatGPT Web` → open/expand
+- `Hide interactive GPT` → collapse to pill
+- Work while GPT Mode is paused or active (handled before forward/insert).
+
+#### Live verify (restarted `npm run start` / electron-vite preview)
+Report: `~/Library/Application Support/MIKO/interactive-gpt-access-verify.json`
+| Check | Status |
+|---|---|
+| Header **Interactive GPT** visible beside GPT Mode, not clipped | **passed** |
+| Click opens workspace (`chatgpt.com`) | **passed** |
+| No duplicate windows | **passed** |
+| Collapse → pill / restore | **passed** |
+| Does not enable forwarding | **passed** |
+
+Screen Recording for Computer Use was unavailable; verification used the pet `__mikoPanel` bridge + main-process workspace APIs on the restarted build. App left running via `npm run start` without the verify env.
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` (incl. `interactive-gpt.test.ts`) — pass
+- Build via electron-vite preview — pass
+
+### 2026-11-21: ChatGPT Web workspace — compatibility proven + optional prototype
+- **Owner ask:** Real chatgpt.com interactive inside MIKO (not Lens capture, Codex, API answers, or external-window control). Prove Electron 45 embed first; no auth bypass / UA spoof / cookie import / webSecurity off. Isolated prototype; keep GPT Mode + Lens. Live acceptance; PROJECT_LOG; checks; no commit/push.
+
+#### Compatibility (proven before shipping more UI)
+| Check | Result |
+|---|---|
+| Electron | **45.2.3** (Chromium 156) |
+| Surface | `WebContentsView` + `persist:miko-chatgpt-web` |
+| Load `https://chatgpt.com/` | **PASS** (`did-finish-load`, title ChatGPT) |
+| Login surface | **PASS** — Log in / Sign up / Continue with Google / Microsoft / Apple |
+| Google SSO click-through | **PASS to** `accounts.google.com` identifier (title “Sign in - Google Accounts”); **no** “This browser or app may not be secure” text in probe |
+| Interactive account completion | **UNTESTED** (owner must sign in with own account) |
+| Scripts | `scripts/probe-chatgpt-web.mjs`, `scripts/probe-chatgpt-web-google.cjs`, `scripts/live-chatgpt-web-acceptance.cjs` |
+
+**Not claimed:** Full signed-in chat use until the owner completes login once in this partition. External browser is **not** treated as completion.
+
+#### Prototype shipped (optional; does not replace GPT Mode / Lens)
+- Main: `src/main/chatgpt-web-window.ts` — chrome `BrowserWindow` + guest `WebContentsView`, host allowlist, auth popups same partition, downloads → `Downloads/MIKO-ChatGPT-Web/`, collapse/expand/close, voice insert into composer (no Enter / dup-skip).
+- Chrome only: `src/preload/chatgpt-web.ts` + `src/renderer/chatgpt-web.html` + `src/renderer/src/chatgpt-web/*`. Guest: **no preload**, sandbox, contextIsolation, no Node, webSecurity on.
+- IPC: `miko:chatgpt-web-*` in `api.ts` / `ipc.ts` (chrome sender or trusted pet panel for open/status/insert).
+- Panel: **ChatGPT Web** button (separate from GPT Mode / Lens). Voice: when workspace open + not collapsed, final transcript inserts into composer only.
+- Vite entries for preload + renderer `chatgpt-web`.
+
+#### Security
+- Remote ChatGPT isolated from MIKO privileged APIs (no guest IPC).
+- `will-attach-webview` denied; navigation/popups host-validated; permissions deny-by-default (clipboard write allowed for copy).
+- No logging of passwords, cookies, tokens, or conversation content.
+
+#### Live acceptance
+| Capability | Status |
+|---|---|
+| Load chatgpt.com in MIKO guest | **passed** |
+| Login UI / SSO entry points | **passed** |
+| Google identifier page (no known Electron blocker text) | **passed** |
+| Download folder created | **passed** (`~/Downloads/MIKO-ChatGPT-Web`) |
+| Session partition configured | **passed** (`persist:miko-chatgpt-web`) |
+| Nav history API (Back/Forward) | **passed** |
+| Composer insert without submit | **passed** (harness; logged-out composer textarea) |
+| Owner interactive login | **untested** |
+| Session reopen after restart | **untested** (needs signed-in cookies in partition) |
+| Open existing chat / new chat | **untested** (needs login) |
+| Typing / scroll / copy-paste live | **untested** (needs interactive session) |
+| File upload | **untested** (no test file selected) |
+| Download completion UI | **untested** (no test download selected) |
+
+#### Checks
+- `npm run typecheck` — pass
+- `npm test` — 337 pass
+- `npm run build` — pass (includes `chatgpt-web` preload/renderer)
+
+#### Decision
+Compatibility is **good enough to keep the optional ChatGPT Web workspace**. Remaining blockers are owner sign-in and post-login interactive checks—not a hard embed refusal in this Electron build. If Google later shows the insecure-browser page for this account, use email/Apple/Microsoft paths available on the same login modal (still untested live).
+
+### 2026-11-21: Lens interaction feasibility — Spotify media fix + honest capabilities
+- **Owner ask:** Interact with the app *inside* Lens (not “Control disabled = done”). Diagnose “Spotify unknown” media bar; probe background AX/HID; choose an honest path; capability UI; live pass/fail. Preserve GPT Mode / files / layout. No commit/push.
+- **Do not claim:** This is still **not** full in-mirror Spotify (or ChatGPT) app control.
+
+#### 1. Media bar “unknown” — root cause + fix
+- Status AppleScript used `set st to player state as string` → **syntax error** (`Expected expression but found "st"`). UI then showed `state: unknown`.
+- **Fix:** Renamed vars (`playerState` / `trackName` / …) + `(player state as string)`. Failures now surface as **unavailable** + reason (not a fake Ready/unknown).
+- Media-key fallback only accepted if Spotify’s reported state/track/volume **actually changes** (avoids claiming Music/session keys as Spotify).
+- **Live:** With Calculator frontmost, AppleScript `playpause` → `paused|Love Story|Indila|98` → `playing|…`; front stayed Calculator.
+
+#### 2. Feasibility probes (Spotify native UI)
+| Probe | Result |
+|---|---|
+| Playlist click (HID, no activate, Spotify front) | Helper **ok**; **no proof** playlist changed (FAIL vs requested experience) |
+| Track select | Helper **ok**; track stayed `Love Story` (**FAIL**) |
+| Scroll | Helper **ok**; visual scroll **not verified** |
+| Search focus + type | Helper **ok**; search field effect **not verified** |
+| Same clicks with another app front + Spotify on-screen | Posts without `--activate`; Spotify Electron **does not reliably respond** to background HID |
+| When Cursor covers display | Spotify often `on=false` → helper refuses (“isn’t on screen”) |
+| Single `--activate` handoff | Works as intentional focus to original |
+
+**Blocker:** Spotify desktop is Electron; background CGEvent clicks/types into its CGWindow do not give reliable UI control. Re-enabling per-event activate would recreate Lens↔Spotify focus ping-pong. Hide/minimize tricks rejected.
+
+#### 3. Web / embed path (checked, not shipped)
+- Official **Embed iframe**: limited player for a URL, not the user’s native Spotify window/session.
+- **Web Playback SDK**: separate Connect device, Premium OAuth — not the desktop app.
+- Loading `open.spotify.com` in Electron = **another session**, must not silently replace the native Lens source. **Not implemented.**
+
+#### 4. Chosen honest path + UI
+- **View** — live mirror (labeled: not an interactive embed).
+- **Media** — Spotify AppleScript controls only (capability-gated).
+- **Interactive** — **disabled** for Spotify (and not claimed for ChatGPT/Finder/generic) with reason beside the control.
+- **Control original** — one `lensOpenOriginal` handoff; then pointer/type with `intent: 'control-original'` and **no** per-event activate; Esc → View + cancel queued input.
+- Per-app profile in `lens-capabilities.ts` (Spotify ≠ ChatGPT ≠ Finder ≠ generic).
+
+#### 5. Acceptance (requested experience)
+| Check | Pass/Fail | Original comes forward? |
+|---|---|---|
+| Playlist selection in mirror | **FAIL** | N/A (not offered in mirror) |
+| Track selection in mirror | **FAIL** | N/A |
+| Scroll content in mirror | **FAIL** (unproven) | N/A |
+| Search typing in mirror | **FAIL** (unproven) | N/A |
+| Media buttons (AS) | **PASS** | **No** (Calculator stayed front) |
+| Duplicate activate loop | **PASS** (not re-enabled) | — |
+| Finder/other app generalized from Spotify | **No** — Interactive still disabled; Control original only |
+
+**Remaining gap:** Owner still cannot drive Spotify’s full UI *inside* the Lens mirror. Closest reliable options are **Media** (transport) and **Control original** (real window). That is short of “interact with the app inside Lens.”
+
+- **Checks:** `npm run typecheck` pass; `npm test` **337** pass; `npm run build` pass. Not committed / not pushed.
+
+### 2026-11-21: App-switch routing (“Go to Cursor”) + Chrome site routing + Lens Spotify focus
+- **Scope:** Three routing/focus bugs in one pass. Preserve GPT Mode forwarding, Lens viewing, and existing launch/confirm actions. No shell access for the language model. No commit/push.
+
+#### Bug 1 — “Open ChatGPT in Chrome” (website + browser)
+- **A. Routing:** `matchOpenSite` / `matchOpen` / `matchChatGpt` split site vs browser (`splitBrowserPreference`). “Open ChatGPT/GPT … in Chrome|Safari” → `open-url` `https://chatgpt.com/` + browser (Chrome → profile chooser). Bare “Open ChatGPT” stays `open-chatgpt`. Typed + voice share one path (no “Chatgpt In Chrome” missing card).
+
+#### Bug 2 — Lens Control focus ping-pong on Spotify
+- **B. Focus (traced):** `lens-pointer`/`lens-type` activated the source on every Control event while Lens is always-on-top → ping-pong. Fix: `--activate` opt-in only; scroll never activates; `cancelLensInput` on Esc / leave Control / source change.
+- **C. Spotify media:** AppleScript play/pause/next/prev/volume (+ short timeout); `miko-ax media-key` fallback; Lens Spotify bar + **Open original**; generic remote Control/typing **disabled** for Spotify.
+
+#### Bug 3 — “Go to Cursor” → assistant (“I can’t switch apps from here”)
+- **Root cause:** `matchOpen` only accepted `open|launch|start`, so “Go to Cursor” / “Switch to Spotify” / “Bring WhatsApp forward” missed the app catalog and fell through to the assistant (especially with an active thread).
+- **Fix:** Expand `matchOpen` for go to / switch to / bring…forward / take me (back) to / focus / show; resolve via existing catalog → `launch`/`confirm` (same `launchApp` / `open -a` focus-or-launch). Negations ignored; questions stay questions; `type exactly` stays type-dest; websites still via `matchOpenSite`; GPT Mode active still forwards only. “Back” / “take me back” uses `lastExternalApp` from working context (clarify if missing). Success reported only after launch + frontmost verify when checkable. `notes` added to `ACTION_ID`. Case-insensitive `resolveApp` for Title Case external names.
+- **Live verify:** From Chrome frontmost, activating Cursor (`open -a` / same mechanism as launch) → frontmost **Cursor**. Router: voice/typed `Go to Cursor` → `confirm` (`app-cursor`) even with `assistantActive` (unfamiliar first-time confirm); after owner confirm, later opens are `launch`. Distinctions covered by unit tests (youtube.com, how-do-I, don’t switch, type exactly, back clarify).
+
+- **Live verify (Chrome site + Spotify media, earlier same day):** ChatGPT-in-Chrome URL/browser routing OK; Spotify AS media with Chrome front unchanged; media-key fallback may hit Music; Spotify remote Lens Control disabled.
+- **Checks:** `npm run typecheck` pass; `npm test` **335** pass; `npm run build` pass; `miko-ax` recompiled (earlier). Not committed / not pushed.
+
+### 2026-11-21: MIKO Lens Control + real file transfer
+- **Scope:** View/Control modes, coordinate-mapped input into the **bound** source window, Finder file resolution + shelf (copy / Reveal / native `startDrag`), ChatGPT file paste (unsent). Preserve viewer + GPT forwarding. IPC stays on `trustedGptLive`. No commit/push.
+- **Control:** `miko-ax` `lens-window` / `lens-pointer` / `lens-type` via CGWindow id from `window:<id>:…`. Verifies pid + point inside bounds before click/dblclick/scroll/type; refuses wrong `expectSourceId` and outside clicks; Esc / frozen / closed source leaves Control. Brings the source forward when needed (honest footer). Toolbar never forwards clicks. Shared `mapLensPointToScreen` covers zoom/pan/crop (+ unit tests).
+- **Files:** Finder selection → real POSIX paths (AppleScript, never OCR). Shelf + native picker + proven attachment paths. `clipboard-file` for real file pasteboard; Electron `startDrag` for shelf drag-out. Finder source shows **Attach to ChatGPT…** as a destination action (not drop onto Finder).
+- **ChatGPT attach:** `paste-file-chatgpt` puts a file URL on the pasteboard and ⌘V while ChatGPT is frontmost — **never Return**. ChatGPT’s AX tree hangs / doesn’t expose attachment chips reliably → **does not claim Attached**; instructs Open ChatGPT / check composer. Does not trigger GPT Mode auto-submit.
+- **Live verify (disposable `/tmp/…/miko-lens-disposable.txt`):**
+  - **A. Viewer interaction:** Bound Finder bounds OK; click OK (activated when needed); wrong sourceId refused; outside bounds refused; GPT Mode stayed `active`. (ChatGPT itself often absent from `desktopCapturer` this session.)
+  - **B. Native file drag/copy:** Finder selection resolved the disposable file; clipboard write verified as file URL (`public.file-url` / `«class furl»`); shelf register OK. `startDrag` wired from shelf drag handle (OS drop into a third-party window not fully automated).
+  - **C. ChatGPT attachment:** With ChatGPT frontmost, paste completed; **verified=false / status=failed** with honest “can’t claim Attached” + Open ChatGPT guidance; no submit language. Lost-focus correctly refused when Finder was still front after Control.
+- **Checks:** `npm run typecheck` pass; `npm test` **332** pass; `npm run build` pass. Not committed / not pushed.
+
+### 2026-11-21: MIKO Lens redesign (polished GPT live viewer)
+- **Scope:** Redesign floating GPT live viewer as **MIKO Lens** — layout, charcoal chrome, simplified controls, crop editor, collapsed pill. Preserve capture, exact-source verification, GPT Mode forwarding. No commit/push; no resend of prior prompts.
+- **Window:** Default **960×680** (clamped into work area with **24px** inset); remember bounds but bump undersized saves toward reading size; reclamp on display change. Frameless, independent drag/resize; initially near pet. Closing Lens sets `liveView=false` and does **not** exit GPT Mode.
+- **Layout:** Fixed header + toolbar + scrollable viewport + slim footer; image never overlaps controls. Collapsed → **pill** near pet (`ChatGPT · Live` + Expand/Close); capture loop slows while collapsed; UI sync via collapse push event.
+- **UI:** Nearly opaque `#14181f`, 18px corners, cyan border/shadow, paw + “MIKO Lens”, source subtitle, Live/Frozen/error (no pulse/scanlines). Header: source / change source / collapse / close. Toolbar: Fit, zoom −/%/+, Crop, Freeze, Expand + overflow (Actual, Reset crop, sizes, Open ChatGPT, Diagnostics). Styled buttons. Panel toggle labeled MIKO Lens.
+- **Reading:** New sources start in Fit; Retina aspect preserved (live **2867×1800**); zoom around viewport center + pan; visual crop with Apply/Cancel (relative crop, revalidated on source resize — no guessed sidebar cut). Footer: scrolling mirror ≠ scrolling ChatGPT; Open ChatGPT for real interaction.
+- **Live verify (CDP `:9230` + screenshot):**
+  - Window **960×680**; shell ~938×678; header/toolbar/footer always present; viewport top aligns with toolbar bottom (no overlap).
+  - Bind ChatGPT → Live + frame at Fit ~50%; footer warning visible; Frozen distinct; collapse pill `ChatGPT · Live`; WhatsApp still **Other app** (not ChatGPT).
+  - Close Lens → GPT Mode stays **active**, `liveView=false`. No forwarding exercised this pass (nothing resent).
+- **Checks:** `npm run typecheck` pass; `npm test` **326** pass; `npm run build` pass. Not committed / not pushed.
+
+### 2026-11-21: Live viewer “Not allowed.” — IPC allowlist fix
+- **Root cause (traced before change):** Not macOS Screen Recording, not Electron capture config, not source-ownership. The floating `gpt-live` window shares preload APIs, but `trusted()` → `isTrustedSender` only accepts the **pet** `webContents`. Viewer **Choose window / Refresh** called `gptModeListSources` → `{ reason: "Not allowed." }`.
+- **Fix:** `isGptLiveSender` + `trustedGptLive()` for a **narrow** live-view IPC set only (`get`, `listSources`, `setSource`, `liveSnapshot`, `liveView` close, `focus`, `sizePreset`). Send/enable/exit/pause stay pet-only. State events also `postToGptLive`. Actionable deny strings instead of raw “Not allowed.” Did **not** ask to re-grant Screen Recording (`permission=granted`).
+- **UI:** Nearly opaque `#12161c` reading surface; zoom/crop/freeze disabled until a live frame exists; new source resets to **Fit**; cleaner picker styling.
+- **Live (from actual `gpt-live.html` CDP):** listSources OK; bind ChatGPT “Build MIKO Phases” → frames **2867×1800**; Refresh OK; fake closed source → `source-closed`, empty frame (no WhatsApp substitute); rebind ChatGPT OK; GPT Mode stays active. No prior prompts resent.
+- **Checks:** typecheck; `npm test` **326**; build. Not committed / not pushed.
+
+### 2026-11-21: GPT Mode live reading window (source bind + zoom)
+- **Scope:** Replace pet-sized “Live ChatGPT view” thumbnail with a separate resizable floating reader; fix wrong-source binding (WhatsApp shown as ChatGPT). Preserve forwarding / other MIKO features. No commit/push.
+- **Source bind:** Snapshot uses the **exact** `captureSourceId` only — never auto-substitutes WhatsApp, Notes, desktop, or another window when ChatGPT capture fails. Clears binding + frame on source closed / foreign mismatch. Toolbar shows **actual** owner + window name. `isExcludedCaptureOwner` no longer treats chat titles containing “MIKO” as the MIKO app.
+- **Viewer:** New `gpt-live.html` + `src/main/gpt-live-window.ts` — default ~900×650 (Compact / Reading / Expand), drag + remember bounds, near pet initially, independently movable, opaque reading surface + cyan accents. Slim toolbar: Source / Zoom / Fit / Freeze / Open ChatGPT / Close (+ Crop / Reset crop / Details / size). Closing viewer does **not** exit GPT Mode.
+- **Zoom/pan:** Fit / Actual / −+ %; scroll + drag-pan; optional manual crop. Capture thumbnail size Retina-capable (live: **2867×1800**). Viewer zoom ≠ scrolling ChatGPT; Open ChatGPT kept for real interaction. No OCR / reply extraction.
+- **Failures:** `need-permission` / `source-closed` / `source-unavailable` / `capture-failed`; empty frame on failure (no stale “live” image); Retry / Choose window / Open ChatGPT.
+- **Live (CDP `:9230`, rebuilt):**
+  - Floating `gpt-live.html` opens; Screen Recording **granted**.
+  - Sources include recommended **ChatGPT · “Build MIKO Phases”** plus Notes/WhatsApp/etc. Binding ChatGPT → exact ID, owner ChatGPT, high-res frame. WhatsApp pick binds exact ID and labels **Other app / WhatsApp** (not ChatGPT). No silent substitute when switching.
+  - Close viewer → GPT Mode stays `active`, `liveView=false`. Size preset OK.
+  - Forward once → `delivery-unverified` / `submittedVerified:false` (native submit still not fully verifiable). Did **not** re-send the prior multi-paragraph user prompt.
+  - **Readability:** High-res capture + reading-sized window verified in automation; multi-paragraph text comfort is for human eyeballing in the floating viewer (not claimed from thumbnail-only or unit tests).
+- **Checks:** `npm run typecheck` pass; `npm test` **326** pass; `npm run build` pass. Not committed / not pushed.
+
+### 2026-11-21: GPT Mode screenshot fixes (status + capture + UI)
+- **Scope:** Fix stuck Preparing vs banner “Return was sent”; live-window discovery without title-only matching; simplify banner; verify real flow. Preserve other MIKO features. No commit/push.
+- **Shared request state:** `pushEntry` returns stable id; GPT cards sync terminal status from main `lastRequestId`/`lastStatus`. Uncertain native Return always ends as **`delivery-unverified`** (composer clear ≠ proof; no auto-retry Return). Never left pending.
+- **Capture:** System Events ChatGPT titles + `desktopCapturer` sources; recommend by process/title match, not “ChatGPT” substring alone. **Choose ChatGPT window** picker with thumbnails; bind selected source; clear on closure. Kinds: `need-permission` / `need-window` / `capture-failed`. Never auto-bind Notes/Cursor/desktop/Codex helpers — only a single recommended match may auto-bind.
+- **UI:** Banner is **GPT Mode · Connected / Paused / Needs attention**; diagnostics behind Details. Per-request status + next action. Hologram above pet, clamped on-screen; unavailable → Choose window / Retry / Open ChatGPT. Avoid spamming conversation with capture errors.
+- **Live (CDP `:9230`, rebuilt preview):**
+  - **Forward:** send “MIKO verify once only” → card + state both `delivery-unverified` (not Preparing). Banner short (`Needs attention` after unverified send; `Paused` on pause). Pause / Resume / New chat (`ok`, `verified:false`) / Exit (`phase:off`) OK. Native submit **not** fully verifiable — do not claim Submitted.
+  - **Capture:** Screen Recording currently **denied** for this Electron host (`need-permission`); no silent Notes bind. (Earlier diagnosis may have reset ScreenCapture TCC — re-grant for Electron/Cursor/MIKO in System Settings to retest hologram.) When permission denied, UI offers Settings path + View in ChatGPT.
+- **Limitation (honest):** ChatGPT desktop composer rarely exposed to AX → delivery always unverified after Return. Live preview needs Screen Recording + a capturable ChatGPT window (picker); without that, use View in ChatGPT / browser destination. Feature is **not** fully verified end-to-end for native submit or live mirror under denied permission.
+- **Checks:** `npm run typecheck` pass; `npm test` **324** pass; `npm run build` pass. Not committed / not pushed.
+
+### 2026-11-21: Opt-in GPT Mode (forward + submit) + live view
+- **Scope:** Simple GPT Mode — panel + paw toggle; ordinary typed/final voice → ChatGPT app insert+submit when active; New chat / Pause / Exit; start **paused** after relaunch; never forward partials or mode-toggle commands. Separate from MIKO assistant. Hologram investigated. No commit/push.
+- **Forwarding:** `src/shared/gpt-mode.ts` + `src/main/gpt-mode.ts` + IPC/preload. Request IDs; cancel bumps generation (no blind Return retry). Statuses: Preparing → Text inserted → **Delivery unverified** (Return while frontmost; composer clear never counts as Submitted) / choose-insert / failed / cancelled. Enabling explicitly authorizes submit. Existing composer text → Replace/Append/Cancel.
+- **UI:** Panel “GPT Mode” button + short Connected/Paused/Needs attention banner (Details for diagnostics) + New chat / Pause / Exit / View in ChatGPT / Live view / Choose window. Paw menu checkbox + Pause/Resume. Local phrases: exit/pause/resume/enable/new chat/cancel.
+- **Hologram (stage 2):** Electron `desktopCapturer` + Choose-window picker (Screen Recording). Whole-window labelled preview only (no answer crop / no reply extraction); noninteractive frame; freeze/collapse/close; Open ChatGPT focuses original. Permission / missing window / capture failure distinguished. Frames transient. Never silently capture Cursor/desktop/Notes/Codex helpers.
+- **Limitation (honest):** ChatGPT/Codex desktop rarely exposes composer to AX — submit is always **delivery-unverified**, never claimed from keystroke alone. New chat often unverified empty-composer. Live view needs Screen Recording + capturable ChatGPT window (or View in ChatGPT).
+- **Live (separate layers):** see **GPT Mode screenshot fixes** entry above for current observed results.
+- **Checks:** typecheck; tests; build — superseded by later same-day entry. Not committed / not pushed.
+
+### 2026-11-21: ChatGPT paste failed (“doesn’t expose editable field”)
+- **Cause:** (1) With an active type-dest, “Type in GPT to check my mail” was stolen as a bare follow-up → draft `in GPT to check my mail` instead of `type-in-gpt` / `check my mail`. (2) `miko-ax paste --allow-unexposed` only ran when `element == nil`; ChatGPT often focuses a non-editable AX node, so paste never ran.
+- **Fix:** Route `matchTypeInGpt` before type-dest follow-ups; exclude “in GPT” from bare/follow-up parsers; allow-unexposed paste when focused node is missing **or** not editable; ChatGPT insert always re-activates app + unverified ⌘V path; Paste now keeps saved ChatGPT destination.
+- **Live:** ChatGPT insert → `pasted-unverified` with harmless unsent text. typecheck + **319** tests. Not committed / not pushed.
+
+### 2026-11-21: Panel buttons dead — stuck switcher + click-through
+- **Cause:** App switcher left visible above the chat panel (`pop-up-menu` z-order). CSS `pointer-events: none` on empty glass does **not** make an Electron window click-through, so clicks on Paste now / Cancel / Chat never reached MIKO. DOM handlers were fine.
+- **Fix:** Hide switcher when the panel opens; while the panel is open, pet window always accepts mouse; switcher uses `setIgnoreMouseEvents(true, { forward: true })` and only disables ignore over cards/controls.
+- **Checks:** typecheck pass; rebuilt preview. Not committed / not pushed.
+
+### 2026-11-21: Open → navigate → type destinations (type-dest)
+- **Scope:** Natural “open app / go somewhere / type here” without a second command system. Reuse ChatGPT typing, selection writeback, WhatsApp composer, cancel/supersede, destination verification. No commit/push. Live tests: harmless text only; never send; don’t overwrite personal drafts.
+- **Shared model:** `src/shared/destination.ts` — `TypeDestination` (app/process, field role/sig, label, capture time, verified, secure). Capture before MIKO focus; never treat MIKO’s own input as the target. Soft TTL; recheck immediately before insert.
+- **Plans not app blobs:** `src/shared/type-plan.ts` — `parseTypeIntent` → ordered `ActionPlan` (`launch_app` → `chatgpt_new_chat` → `insert_text` / omnibox / choose). Typed and voice share one path. “Ask ChatGPT …” is submit-flagged and ordered before generic type verbs; no Enter-to-finish.
+- **Main adapter:** `src/main/type-dest.ts` + AX `keystroke` / `omnibox-set`. ChatGPT: open + ⌘N; if composer AX-unexposed → `pasted-unverified` (honest); new-chat with leftover composer text → refuse insert into prior chat. Omnibox: set text, never navigate. Notes/external: insert when AX editable; else “Paste now” / Copy. Secure fields blocked. Replace/Append/Cancel when field already has text; cancel + newer task invalidate stale writes.
+- **Panel:** type-dest card — destination, editable draft, Preparing → Ready → Inserting → Inserted (or Insertion unverified), Change destination / Copy / Cancel / Paste now.
+- **Regression:** `src/shared/scenarios-type-dest.test.ts` (compound ChatGPT, follow-ups, literal, recipient-aware handoff, ambiguous dest, existing text / edits, wrong window, cancel/supersede, duplicate plan, new-chat fail, secure, type vs submit). Wired into `npm test`.
+- **Supported destinations (honest):**
+  | Destination | Insert | Verify | Submit |
+  | --- | --- | --- | --- |
+  | ChatGPT desktop composer | Yes (paste when AX missing) | Often unverified (`pasted-unverified`) | Flag only; no verified native submit path |
+  | Chrome/Brave address bar | Yes (`omnibox-set` / ⌘L) | Verified when AX reads back | Never navigates unless user asks open/go |
+  | Notes | Open + choose field | Weak AX — usually “Paste now” | N/A |
+  | Generic AX text field/area | Yes when editable + non-secure | Recheck before/after | N/A (type ≠ send) |
+  | WhatsApp composer | Existing WA path (tell / Draft: / type exactly with `waChat`) | Existing verify-then-insert | Existing send only on explicit send |
+  | “Type here” | Pre-panel captured editable field | Must still verify | — |
+  | Choose where / Paste now | Armed draft; user focuses field; explicit paste | Focused editable rechecked | — |
+- **Limitations:** ChatGPT desktop (incl. Codex bundle) often hides composer from Accessibility — success is never claimed from keystroke alone. No ChatGPT reply extraction / memory. Notes rarely exposes note body. Password fields refused. No generic Enter after type. Ambiguous Notes (“which note?”) / choose-destination when capture fails.
+- **Live AX (CDP `:9230`, separate from unit tests):** ChatGPT open + new chat + insert unsent → `pasted-unverified`; panel follow-up type-dest entry; Notes open → `unsupported` + Paste now; omnibox `youtube.com` → `inserted` not navigated; cancel issued; capture reports `secure=false`. Deterministic suite green separately.
+- **Checks:** `npm run typecheck` pass; `npm test` **318** pass; `npm run build` pass.
+- **Not committed / not pushed.**
+
+### 2026-11-20: Panel workflow + live-model wording (Me 2 empty composer)
+- **Scope:** Dedicated test chat **Me 2** with empty composer; never send; leave **Me** draft untouched; restore Me 2 `Thanks, will check tomorrow.` after. Drive real panel (not IPC-only). Score model / panel / AX separately. No commit/push.
+- **Automation:** `window.__mikoPanel.open/submit/snapshot` calls React `applyPanel` + `onSubmit(text)` (CDP `setPanelOpen` alone does not open the panel UI).
+- **Fixes shipped this session (existing stack):**
+  1. **POV** — prompt example + `polishRecipientAddress` (`take them` → `take you` when framing pronoun matches).
+  2. **Timing revision** — fixed `/g` `lastIndex` bug; “Not tomorrow, Friday” replaces only the negated day (keeps evening); “Make it shorter” is not a timing revision.
+  3. **Revision regenerate** — passes `previous` draft + “timing only” change so evening/questions survive Friday edits; additive merges update `instruction` on the entry.
+  4. **“Tell them Sam will join her”** — `mismatchedThirdPersonQuestion` + clarify options; with an active draft, bare `tell them` is **additive** (no wipe); clarify merges Sam into the existing draft.
+  5. **Auto-insert** — `patchWaReply` syncs `entriesRef` immediately (was no-op insert because draft looked empty pre-render).
+  6. **S17 refine** — peek composer before refine; external edit → `choose-insert`; don’t mis-label model draft≠insertedText as “edited in MIKO”.
+- **Verified live (panel + bridge + AX, unsent):**
+
+  | Step | Expected | Result |
+  | --- | --- | --- |
+  | 1 Tell them movie tomorrow | `I'll take you to the movie tomorrow.` + insert | Pass — POV you; status `inserted` into Me 2 |
+  | 2 Also ask evening | natural `you` question | Pass — `…Are you free in the evening?` |
+  | 3 Not tomorrow, Friday | day change, rest kept | Pass — Friday + evening kept |
+  | 4 Sam will join her | clarify / third person | Pass — asked who “her” is; after “person I’m messaging” → `…Sam will join you.` merged |
+  | 5 Summarize don’t reply | summary only; composer unchanged | Pass — WA summary path; composer length unchanged |
+  | 6 Continue my message | restore draft + Me 2 | Pass — full Friday+evening+Sam draft on Me 2 |
+  | 7 Manual edit + shorter | detect; no silent replace | Pass — `choose-insert`; MANUAL EDIT preserved |
+  | 8 Switch mid-gen + cancel | no wrong-chat insert | Pass — Me draft preserved; Me 2 no “five minutes late” |
+
+- **Layer scores (final verified pass):**
+  - **Model wording:** pass (POV you, evening question, Friday revise, Sam merge, no invented tickets/times).
+  - **Panel workflow:** pass (revise, clarify, suspend/resume via summarize→continue, external-edit gate).
+  - **AX execution:** pass (Me 2 destination, insert/unsent, composer preserve, switch+cancel, Me untouched, Me 2 restored).
+- **Checks:** typecheck pass; `npm test` **303**; build pass; preview CDP `:9230`.
+- **Not committed / not pushed.** Authorship PRANAV SAIRAM only.
+
+### 2026-11-20: Live/AX validation of playbook + continuous conversation
+- **Scope:** Running macOS app (CDP `:9230`, rebuilt). Prioritize S14/S15/S17/S23/S29–S30/S37–S38/S40 + continuous flow. Test chats only; leave unsent; preserve existing drafts. Score layers separately. No commit/push.
+- **Exact failures found (and fixes in existing stack):**
+  1. **`Summarize what they sent. Don't reply.`** — trailing `sent. Don't` left a period so summarize intent missed. Strip now allows `,.` before don’t-reply + trailing sentence punctuation.
+  2. **`What did she just say?` (S14)** — “just” broke the paraphrase. Allow optional `just`. When `atLatest===false` && `preferLatest`, UI now always offers visible vs go-to-latest (even if bubbles exist) — previously only when zero messages.
+  3. **`Also ask if they're free`** — `'re` contraction not handled (only `'s`). Extended ask-if parser; sets `them` + additive.
+  4. **S17 external composer edit** — `resolveAdditiveFollowUpMode` fell through to `refine-unsent` when composer ≠ inserted. Now returns `blocked-edit`.
+  5. **Summarize mid-draft cancelled the draft task** — `startWhatsAppSummarize` overwrote `activeTaskRef` after suspend. Added `suspendedTaskRef`; summarize parks then restores; “continue my message” finds the parked task.
+  6. **S38 `No, this is for B`** — missing. Added `parseRecipientRetarget` + `takeRecipientRetarget` (clears old insert auth, opens B, keeps instruction).
+  7. **S37** — draft prompt now keeps named third persons (e.g. Sam) while binding recipient pronouns to you.
+- **Continuous conversation (deterministic routing): 8/8**
+  - Tell them… → `them` + movie tomorrow; Not tomorrow, Friday → Friday only; Also ask if they're free → additive; Make it more casual → refine; Summarize… don’t reply → `whatsapp-summarize`; continue my message phrase recognized; POV prompt present.
+- **Live AX (this Mac; unsent):**
+  | Check | Result |
+  | --- | --- |
+  | Peek / AX | Pass — WhatsApp readable (`peeked`) |
+  | Open Me | Pass — chooser then exact Me opened (`composerReady`) |
+  | Preserve drafts | Pass — skipped insert on Santhosh G (`I hate you`) and Me (`7:05 PM…` draft); restored Me after a bad probe |
+  | Summarize peek vs composer | Pass — composer text unchanged across peek(true) |
+  | S19 switch insert | Pass — on Me 2, `expectHeader: Me` → `switched`; Me 2 composer untouched (`Thanks, will check tomorrow.`) |
+  | S20 cancel | Pass — `whatsappCancel` |
+  | S14 older-history UI | Code fixed; live chat was `atLatest=true` so range chooser not exercised on-screen this pass |
+  | S15 unreadable | Not forced (AX readable); failure path now suggests select-text |
+  | S23 duplicates | Deterministic `uniqueDownloadPath` still pass; no live dual-Downloads fixture |
+  | S29–S30 mail | **Not live** — no mail thread fixture this session; no noreply handler claimed |
+  | S40 | Quit APIs present; close UI still “Requested…” (not verified end-to-end quit here) |
+  | Full panel continuous (steps 3–8 with model draft) | **Not driven** — would overwrite Me’s existing unsent draft; routing+prompt covered deterministically |
+- **Layer scores (do not conflate):**
+  - Deterministic routing/tests: **303** pass (incl. `scenarios-live-ax.test.ts`).
+  - Live-model draft wording: **not scored** (no paid/model insert run on Me).
+  - Live AX execution: peek/open/switch-guard/cancel/composer-preserve as above; panel multi-turn + older-scroll + mail still limited.
+- **Checks:** typecheck pass; test **303**; build pass.
+- **Remaining limitations:** Windows WA; S14 older-scroll live UI; S15 forced AX failure; S29–S30 mail live; S40 full quit verify; panel-driven continuous draft without clobbering existing Me text; live-model POV accuracy unset.
+- **Not committed / not pushed.** Authorship PRANAV SAIRAM only.
+
+### 2026-11-20: Playbook-driven context/conversation hardening
+- **Input:** `docs/MIKO_CONTEXT_AND_CONVERSATION_PLAYBOOK.md` (moved from repo root) + recent log. Extended existing ContextSnapshot / task purpose / clarifications / interpret — no parallel context system. No model-training claims.
+- **Gaps closed against playbook:**
+  1. Compact runtime contract folded into `interpretPrompt` + tighter `assistantInstructions` (external text = data; no invented tool success).
+  2. **S10** `Not tomorrow, Friday` timing revision (alongside `Actually, next week`).
+  3. **S06** `Ask if she's free…` (contraction) → pronoun-bound draft.
+  4. **S16** `Explain this, don't reply` → selection explain (read-only).
+  5. **S22** bare `Copy it` with both a verified file and another recent result → ambiguous clarify (not blind “most recent”).
+  6. **S26** `Safari instead` revises pending browser open (not an app named “Safari Instead”).
+  7. **S35** `continue my message` resumes a suspended task; **S36** expired chooser detected (`choiceExpired`) and refreshed instead of stale “second one”.
+  8. **S13** `summarize what they sent` → WhatsApp summarize intent.
+- **Regression:** `src/shared/scenarios-playbook.test.ts` maps S01–S40 deterministically where shared-layer checks apply (not live AX). Prior conversation A–H tests retained.
+- **Checks:** typecheck pass; `npm test` **296** pass; build pass.
+- **Verified separately:**
+  - **Deterministic:** playbook + conversation scenario suites; holdout eval JSON untouched.
+  - **Mocked/live model:** not scored this session.
+  - **Live app:** prior CDP unsent checks still apply; this pass focused on shared-layer + build. No messages/attachments sent.
+- **Still limited:** Windows WA; full S14/S15/S17/S23/S29/S30/S37/S38/S40 need live AX or mail fixtures; paid interpret accuracy unset.
+- **Not pushed.** Authorship PRANAV SAIRAM only.
+
+### 2026-11-20: Contextual understanding through complete conversations
+- **Goal:** Remember the current task purpose across turns; route clarification answers before assistant fallback; track fact sources; suspend (not erase) on unrelated questions; POV drafting; bounded history that keeps unresolved goals; correction examples via `retrieveExamples`; scenarios A–H. Reuse ContextSnapshot / task history / bindPlanToSnapshot / capabilities / cancellation — no second context system.
+- **Failures found / fixes:**
+  1. **History trim dropped `needs_choice`** — `appendTaskHistoryPreferUnresolved` took newest completed first and evicted unresolved waits. Fixed: always keep newest entry + unresolved/suspended, then fill by recency.
+  2. **“Ask if she wants …” unknown** — with a verified chat, `Ask if she…` did not parse as a WhatsApp draft (only `ask her …`). Added `ask if she/he/they` → pronoun-bound `whatsapp-reply`.
+  3. **Ambiguous “make it shorter”** — two draft chats in history returned `ambiguous` from `resolveRequestReferences`, but refine always used the latest `wa-reply`. `startWhatsAppReply` now asks which draft via `ambiguous_ref` clarification.
+  4. **Bare “it/that” after a suspended task** — could mean the paused goal or a mid-task general answer. `maybeClarifySuspendedIt` asks once instead of guessing “most recent”.
+- **Implemented (extends existing stack):** `TaskPurpose` / `PendingClarification` / `HeldWaDraft` / `FactSource` on `task-purpose.ts`; `suspended` phase + suspend/resume; clarification + timing revision (`Actually, next week`) before assistant; held draft retained on failed WA search; destination `source: 'observed'` on verified header; `retrieveExamples` still wired into interpret.
+- **Scenarios A–H:** `src/shared/scenarios-conversation.test.ts` (deterministic). Holdout eval sets unchanged (`eval/holdout-*.json`). Live-model scoring not claimed.
+- **Checks:** `npm run typecheck` pass; `npm test` **277** pass; `npm run build` pass. Deterministic live routing smoke A–H: **9/9**.
+- **Live (this Mac, unsent):** Restarted preview with CDP `:9230`. `whatsappOpen` while WhatsApp covered → `lost-focus` (no send). After Activate WhatsApp, nonsense contact search → `choices` (fuzzy rows) then `whatsappCancel` — nothing inserted/sent. Full multi-turn panel self-chat (recipient retry → “Santosh G” → draft) still relies on routing tests + prior WA recovery path; header recheck before insert unchanged.
+- **Still limited:** Windows WA; paid live-model interpret accuracy; panel UI multi-turn not fully CDP-automated (panel input). Expired clarification asks to resume rather than auto-acting.
+- **Not pushed.** Authorship unchanged (PRANAV SAIRAM only).
+
+### 2026-11-20: WhatsApp failed-search recovery (keep draft; route corrections)
+- **Symptom:** “Open Santosh Ji in WhatsApp and tell him …” → no results → MIKO dropped the pending message; “Santosh G” went to the general assistant (unrelated class example) instead of retrying the contact open.
+- **Root cause:** `runWhatsApp` cleared `pendingWaDraftRef` on `none`/`failed` and noted “I dropped the pending message…”. There was no awaiting-recipient state, so bare / “I meant …” corrections never rematched WhatsApp routing (especially with `assistantActive`) and fell through to the assistant.
+- **Fix:** Keep the held draft on no-match; show `wa-recipient` UI (“No match for …. Who did you mean?”) with editable name, Retry, Cancel; set `awaitingWaRecipient` + messaging without binding a prior chat header. Router (`parseWaRecipientCorrection` + `awaitingWaRecipient`) sends “Santosh G” / “I meant …” / “Search … instead” back to `whatsapp` while cancel and known app opens supersede. `runActionPlan` stays in `needs_choice` until a chat verifies; draft still resumes only after header match; chat-switch still blocks wrong-destination insert.
+- **Checks:** `npm run typecheck` pass; `npm test` **265** pass; `npm run build` pass. Routing smoke (typed+voice): compound open+tell keeps pending instruction; awaiting bare/meant → `whatsapp`; cancel → `cancel-workflow`; `open calculator` → `launch`; bare name without wait ≠ WhatsApp.
+- **Live:** CDP `whatsappOpen("ZZZNoSuchContactMIKO999")` returned `lost-focus` (WhatsApp didn’t stay front in this automation pass) — no message sent. Recovery keep-draft / correction routing covered by tests; verified-header draft insert path unchanged.
+- **Not pushed.** Authorship unchanged (PRANAV SAIRAM only).
+
+### 2026-11-20: Tab+Q “Feed to close” (drag card → pet)
+- **Feature:** Drag an app/tab card from the Tab+Q fan onto MIKO to request a normal graceful quit (tabs: close that tab only). Click still focuses; drag starts after a 10px threshold; Escape / drop elsewhere cancels; card removed only after the process/tab is actually gone; never force-quits; “Waiting for [app]” when a save sheet keeps it alive; duplicate drops return `busy`.
+- **Reuse:** Existing switcher fan, `quitPid` / `requestGracefulQuitPid` + `waitUntilPidGone`, `closeTabVerified`, pet registry `feedDrop` / `feedClips`, transparent fan (no full-window glow).
+- **Pet reaction:** Preferred existing clips (cat `LickPaw`, bird `Peck`/`Chirp`, koala `Wave`); Doberman brief upward look via look damper. `PetCommand` `feed` forwarded in preload (was previously dropped). Reduce Motion respected.
+- **Checks:** `npm run typecheck` pass; `npm test` **261** pass (incl. feed drop geometry + feed clip asset checks); `npm run build` pass.
+- **Live (this Mac):** Calculator graceful terminate via JXA → gone; Chrome tab close left browser + other tabs; UI showed “Release to quit Calculator”, “Drop on MIKO… Esc cancels”, and Escape → “Cancelled — nothing was closed”; CDP `feedApp(Calculator)` → `closed` / process gone; CDP `feedTab(MIKO-feed-tab-X)` → closed, Chrome stayed; parallel `feedApp` → one `closed` + one `busy`. (One busy-path probe used Chrome and quit it; relaunched.)
+- **Not pushed.** Authorship unchanged (PRANAV SAIRAM only).
+
+### 2026-11-19: Fix “App is damaged” for Sandy (0.1.1 ad-hoc)
+- **Symptom (Sandy, 0.1.0 arm64):** “MIKO is damaged and can’t be opened”; right-click Open / Open Anyway unavailable.
+- **Distributed 0.1.0 DMG:** `hdiutil verify` OK; SHA-256 `e6932331cbe71d8e96a19ef33a9e4e4776e8345fffeea15777a51fd10513c5c0`. Copied app: arm64, no broken symlinks, exec bits OK. **No quarantine on this build machine.**
+- **Root cause (signature invalid, not “Gatekeeper hates unsigned” alone):** `electron-builder` `identity: null` left linker-signed stub → `codesign --verify --deep --strict` = **INVALID** (`code has no resources but signature indicates they must be present`; `Sealed Resources=none`). That failure + quarantine on a friend’s Mac surfaces as **damaged** (GUI often cannot bypass). Separate from `spctl` reject for unnotarized apps.
+- **Fix:** `mac.identity: "-"` (ad-hoc) + `hardenedRuntime: false`. Bump **0.1.1**. `npm run beta:verify-pkg` confirms VALID + sealed; `spctl` still REJECTED (expected until Developer ID notarization). Do **not** promise Gatekeeper silence.
+- **New arm64 DMG SHA-256:** `74d49a8853fd2a68091a04f75dc9ebe5a81580e17738508b274d85ec11c24b8f` (`release/friend-handoff/`). TESTER.md corrected (damaged vs unverified; optional `xattr -dr com.apple.quarantine` on the app only). **Not published; not claimed fixed until Sandy launches.**
+
+### 2026-11-19: Zero-budget DMG built + package inspection (not published)
+- **Checks:** typecheck pass, **260** tests pass, `npm run build` pass, `npm run dist:mac` pass (unsigned, identity null).
+- **Installers:** `release/MIKO-0.1.0-arm64.dmg` (~135 MB, Apple Silicon) and `release/MIKO-0.1.0-x64.dmg` (~139 MB, Intel). Friend pack: `release/friend-handoff/` (+ `TESTER.md`, owner README). Ad-hoc signature only.
+- **Personal-data scan:** no `.env`, no `miko-settings`/mail tokens/owner feedback config in bundle; no `/Users/sairampranav` paths in asar; OAuth hits are field/env **names** only; emails are `example.*` fixtures. Clean `--user-data-dir` smoke: empty `feedback-queue.json`, no settings. Packaged userData dir name remains `MIKO-Beta`.
+- **Not published.** Friend still needs another Mac for true Gatekeeper/first-run + their ChatGPT sign-in.
+
+### 2026-11-19: Zero-budget private beta (no Apple/VPS required)
+- **Switched default friend path** away from paid signing/hosting. Preserved signed updater + `feedback-server` for later; did not build a second system.
+- **Updates:** unsigned packaged builds detect Developer ID; if missing → `mode: manual`, `autoDownload`/`quitAndInstall` off. Phases: available → download-opened → installed. Configurable shared URL (`MIKO_MANUAL_RELEASE_URL` / Preferences). Optional `latest.json`. Draft flush on download; prefs in `MIKO-Beta` survive app replace.
+- **Feedback:** Preview + **Export report** primary; no “Feedback sent” unless remote `delivered`. Invite/remote submit only if endpoint configured.
+- **Docs:** `beta/TESTER.md` (install, permissions, personal ChatGPT/Codex, export, manual updates, Gatekeeper, re-approval). `BETA.md` / `DISTRIBUTION.md` / `UPDATES.md` rewritten for zero-budget.
+- **Assistant:** still requires tester’s ChatGPT.app + their sign-in; documented for clean laptops.
+- **Checks:** `npm run typecheck` pass; `npm test` **260** pass. No purchases, deploy, or publish.
+
+### 2026-11-19: Simplify beta setup (one path; Step 1 Apple)
+- **No new distribution system.** Kept packaging / `release:beta` / updater / feedback-server.
+- **Hosting choice:** one VPS (Caddy) for update feed + feedback — not R2+Fly separately. Costs before signup: Apple Developer **$99/yr**; VPS **~$4–6/mo**; domain **~$0–15/yr**.
+- **Signing check on this Mac:** no **Developer ID Application**. Only `Apple Development: … (RN3XK4J8ZB)` (dev-only). Must create Developer ID after paid membership — not another Development cert.
+- **Prep done:** simplified `beta/DISTRIBUTION.md`; slim `beta/env.example`; `npm run beta:verify-env` (no secret printing); Caddy + systemd examples; secrets dir `~/Library/Application Support/MIKO-release/` (700); seeded `beta/.env.local` from example if missing. R2 script left unused.
+- **Not published.** Guided user at Step 1 only. Authorship unchanged.
+
+### 2026-11-19: Distribution prep (signing, HTTPS feed, feedback durability)
+- **Goal:** prepare real private-beta distribution without publishing; list exact credentials; HTTPS feed templates; preserve manual `release:beta`; distinguish implemented / locally tested / distribution-ready.
+- **Signing / notarization (implemented, not exercised):**
+  - `build/entitlements.mac.plist` (JIT, unsigned exec mem, disable-library-validation, mic).
+  - `electron-builder.signed.yml` — standalone signed config (no `identity: null`); hardenedRuntime + notarize required.
+  - Default `electron-builder.yml` remains unsigned for local builds.
+  - `MIKO_SIGN=1` switches `scripts/release-beta.mjs` to the signed config and refuses to start without notarization env.
+  - Credentials to supply (env only, `beta/env.example`): `CSC_LINK` + `CSC_KEY_PASSWORD` (+ optional `CSC_NAME`); notarize set A `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`, or set B `APPLE_API_KEY` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER`.
+- **HTTPS update feed (implemented templates, not hosted):** `beta/hosting/` — `publish-r2.sh`, `publish-rsync.sh`, nginx example, README. Secrets via `MIKO_UPDATE_PUBLISH_CMD` / AWS / SSH only. Manual release path unchanged.
+- **Docs:** `beta/DISTRIBUTION.md` (numbered setup), `beta/VERIFICATION.md` (signed A→B + remote feedback checklists), `beta/feedback-server/DEPLOY.md`; UPDATES.md / BETA.md pointed at them.
+- **Feedback durability (local):** `data/reports.json` present with **1** stored report; config gitignored; owner dashboard path unchanged. Remote HTTPS review still **not** distribution-ready.
+- **Signed A→B / remote feedback:** **not run** — blocked on Apple Developer ID + feed/feedback hosts. Do not claim friend-ready auto-update or remote inbox yet.
+- **Not published / not pushed.** Authorship: repo local git identity only; no AI trailers.
+
+### 2026-11-19: Private-beta automatic updates (electron-updater)
+- **Choice (official docs):** [electron-builder auto-update](https://www.electron.build/docs/features/auto-update/) via **`electron-updater` 6.8.12** + **generic** provider, channel **`beta`** (`beta-mac.yml`). No GitHub token in the app; feed URL is public-to-invitees hosting only.
+- **Client:** startup check (~12s) + every 4h; background download; “Update ready” note + Preferences → Check for updates / Restart now / Later (silences that version); offline/errors never block the app; `updater.log` in userData.
+- **Before restart:** cancel WA/attachment/bridge/paste/speech; write handoff so those actions are not replayed; recover chat-box draft; prefs/accounts stay in `MIKO-Beta`; settings schema migration hook.
+- **Release (manual only):** `npm run release:beta -- --version X.Y.Z` runs checks, bumps version, builds Mac installers, writes feed URL into `update-feed-url.ts` + `build/app-update.yml`, copies artifacts to `release/update-feed/beta/`. Optional `--publish` runs `MIKO_UPDATE_PUBLISH_CMD` (credentials stay in env). Docs: `beta/UPDATES.md`.
+- **Local A→B results (unsigned):**
+  - A `0.1.0` against local feed → detected `0.1.1`, downloaded zip (~131 MB), phase `ready`.
+  - Install then failed signature validation (`code has no resources but signature indicates they must be present`) — expected without Developer ID; **A remained usable**; prefs `beta-test-pref-keep-me` intact.
+  - **Not claimed operational for friends** until signed + notarized A→B install succeeds and HTTPS host is live.
+- **Platform install behavior (accurate):** macOS Squirrel.Mac stages update; applies on **Restart now** or normal quit — **not** force-quit. Windows NSIS: on quit / Restart now (when Windows builds are ready).
+- **Faulty release:** publish a **higher** version; do not reuse the broken number.
+- **Checks:** 258 tests pass, typecheck pass. Package left at `0.1.0` for review (release script is how versions advance). Not pushed.
+
+### 2026-11-19: Private beta packaging + feedback inbox
+- **Goal:** friends install without the repo; submit private feedback; owner reviews; no owner credentials/prefs/Codex login in the package.
+- **Packaging (new):** `electron-builder.yml` + `npm run dist:mac`. Ships `out/`, `resources/` helpers, `pet_animals/` models. Does **not** ship `.git`, source as a project, `userData`, mail OAuth, or Codex auth. Artifacts: `release/MIKO-0.1.0-arm64.dmg` (+ zip); x64 targets also build. Guide: `beta/BETA.md`.
+- **Clean profile:** packaged app uses `~/Library/Application Support/MIKO-Beta` (not `MIKO`/`miko` — APFS case collision with the owner’s npm-start profile). `--user-data-dir=` still honored for tests. Verified launch with a temp profile: empty `feedback-queue.json`, no `miko-settings.json` / mail tokens / aliases.
+- **DevTools:** `devTools: false` + `hardenWindow` in packaged builds (not an anti-tamper claim). Pets/prefs remain available.
+- **Assistant on a clean Mac:** still Codex via **ChatGPT.app** + the **tester’s** ChatGPT sign-in (`bridge.ts`). Not bundled. Preferences show readiness / “install ChatGPT and sign in” when missing. No developer Codex session is packaged.
+- **Feedback client:** Settings → Send feedback; commands `report a problem` / `give feedback` (type `feedback`, never assistant); **Report this** on failed WhatsApp reply cards. Form: Problem/Suggestion, happened, expected, optional contact, optional last command (review), optional screenshot with preview/remove, Submit. Preview shows exact payload. Auto diagnostics only: version/buildId/OS/arch/actionType/errorCode. Queue statuses pending/sent/failed/exported; retry + delete; Export fallback when no endpoint.
+- **Feedback server (local, verified):** `beta/feedback-server/` — invite codes + owner token in gitignored `config.json`, rate limit, payload cap, duplicate `clientKey` → 409, owner dashboard + Markdown/JSON export. Local E2E: POST stored, list readable, bad invite 401, duplicate 409, export MD, status → reviewing. **Remote delivery not live** until you host HTTPS and set `MIKO_FEEDBACK_URL` (or paste endpoint in-app). Do not claim friends’ reports reach you until that E2E is done.
+- **Fixes found while verifying:**
+  1. Packaged tray icon path pointed inside asar; resolved via `process.resourcesPath/resources`.
+  2. Packaged userData `MIKO` collided with developer `miko` on APFS → switched to `MIKO-Beta`.
+  3. Helper Swift sources now also resolve from packaged `extraResources`.
+- **Signing:** `mac.identity: null` (unsigned). Testers: Finder → right-click → Open. Do **not** disable Gatekeeper/SIP. Windows still not labeled ready.
+- **Updates:** manual versioned DMG for first beta; version line in Preferences; no auto-updater.
+- **Checks:** 256 tests pass, typecheck pass, `npm run build` pass, arm64 DMG/ZIP built, local feedback server E2E pass. Not pushed; no deploy.
+
+### 2026-11-19: Context / action layer audit (reuse architecture, no second system)
+- **Goal:** every typed/spoken turn uses a fresh `ContextSnapshot` + bounded task history; resolve her/it/that file/shorter against verified objects; schema-validated `ActionPlan` from available capabilities; concise clarify when ambiguous; revalidate before execute, verify after, invalidate cancelled/superseded; preserve unsent drafts; multi-turn tests; report failures/fixes here.
+- **Architecture reused (not replaced):** `WorkingContext` → per-turn `buildContextSnapshot` → `routeCommand` / `interpretPrompt` + `parseInterpretResult` → `bindPlanToSnapshot` → `beginExclusiveTask` / `runActionPlan` → `finishActiveTask` / `recordTaskOutcome`. Cap: `MAX_TASK_HISTORY = 8`.
+- **Gaps found and fixed:**
+  1. **Thin / stale interpret context** — interpreter prompt now gets `formatSnapshotForPrompt(snap)` (chat, draft, file, website, recent tasks) instead of sparse hints; refs via `resolveRequestReferences`.
+  2. **No bind/clarify for missing referents** — `bindPlanToSnapshot` fills pronoun/file/draft/website targets from the snapshot or rewrites the step to `clarify` (e.g. “tell her…” with no verified chat; refine with no draft; copy/attach with no retrieved file).
+  3. **Interpret overwrote live WA tasks** — `beginExclusiveTask` supersedes the prior live task (`supersedeTask` + history) before starting a new plan; interpret waiters are **token-scoped** and ignore cancelled tasks so a later WA draft is not clobbered by a stale interpret callback.
+  4. **Draft not in WorkingContext for snapshots** — `liveDraftRef()` syncs the live composer draft into each `freshSnapshot()` so “shorter” / “make it more formal” resolve against the unsent insert, not a stale copy.
+  5. **Cancel wiped useful context** — `cancelWorkflow` still cancels the task + bumps token, but **keeps** draft + retrievedFile so an unsent composer draft and “that file” survive cancel of a different step.
+  6. **“copy that file” never routed** — `parseAttachmentIntent` only matched `copy this/the file` / `copy it`; added `this|that` follow-up so reference language hits `whatsapp-attachment` when `hasRetrievedFile` is set. Scenario test caught this as **actual: `unknown`**.
+  7. **Typecheck** — unused `isFresh` import in `MotionApp.tsx` after wiring snapshots (fixed).
+- **Multi-turn scenarios** (`src/shared/scenarios-context.test.ts`): unsent draft refine after an unrelated question; her → verified chat vs clarify when chat gone; that file + cancel invalidates task (keeps history); supersede + platform-filtered kinds (win32 rejects `close_browser_tab`); compound open+tell deterministic; cancel-workflow local; ambiguous pronoun → clarify, not a guessed target. Also expanded `context.test.ts` / interpret bind coverage.
+- **Checks:** `npm test` **252** pass, `npm run typecheck` pass, `npm run build` pass.
+- **Not a second context system:** no parallel store; pets registry work from an earlier ask was left alone for this audit (pets tests remain in the suite).
+
+### 2026-11-16: Desktop launcher
+- **Added:** `~/Desktop/MIKO.app` (outside the repo, not committed), with an orange paw icon. Clicking it runs `npm start` in PET_BOT. If MIKO is already running, a click does nothing.
+- **How it works:** the app is a plain shell-script bundle (`Contents/MacOS/MIKO`, `#!/bin/zsh -l` so the Homebrew node/npm path is available). It `exec`s `npm start` and stays alive as MIKO's parent, because macOS ends a launched app's leftover background processes when the app exits.
+- **Log:** `~/Library/Logs/MIKO-launch.log`.
+- **If the launcher is moved or rebuilt:** run `xattr -cr` and `codesign --force -s -` on it, then `lsregister -f` it. A stale LaunchServices registration made it silently do nothing.
+- **Verified:** with MIKO quit, a click started it (Electron and miko-keys running). A second click didn't start a duplicate.
 
 ### 2026-11-15: Mail UI simplified (inbox, message, reply)
 - **Kept:** connections, search, categories and corrections, reading, thread context, read-only provider, reply drafting via MIKO's assistant, and the no-send rule. There's no backend rewrite: only shared prompt helpers, one new filter, and the hook's reply state changed.

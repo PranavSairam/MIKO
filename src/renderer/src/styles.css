@@ -223,9 +223,36 @@ textarea {
 
 .panel-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px 8px;
   min-height: 24px;
+}
+
+.panel-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.panel-bar-actions .bar-button {
+  margin-left: 0;
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.panel-bar-actions .interactive-gpt-btn {
+  border-color: rgba(110, 220, 230, 0.45);
+  color: #b7eef2;
+}
+
+.panel-bar-actions .close {
+  flex: 0 0 auto;
 }
 
 .panel-bar h1 {
@@ -320,6 +347,25 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.wa-recipient-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(246, 239, 230, 0.72);
+}
+
+.wa-recipient-input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid rgba(196, 132, 74, 0.45);
+  background: rgba(28, 25, 24, 0.92);
+  color: var(--ink, #f6efe6);
+  padding: 8px 10px;
+  font: inherit;
 }
 
 .wa-chooser-title {
@@ -584,7 +630,6 @@ textarea {
 }
 
 .bar-button {
-  margin-left: auto;
   min-height: 22px;
   font-size: 11px;
 }
@@ -1506,6 +1551,24 @@ pre.mail-body.text {
   padding-right: 2px;
 }
 
+.setup {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.setup-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .prefs-text {
   flex: 0 0 auto;
   min-height: 72px;
@@ -1573,6 +1636,34 @@ pre.mail-body.text {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.prefs-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.feedback-form .feedback-preview {
+  margin: 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f6efe6;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.feedback-form .feedback-shot {
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  object-fit: contain;
 }
 
 .mail-setup {
@@ -2543,4 +2634,178 @@ pre.mail-body.text {
   min-height: 72px;
   max-height: 460px;
   resize: none;
+}
+
+/* GPT Mode banner + live hologram (whole-window mirror; noninteractive preview). */
+.gpt-mode-banner {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(80, 200, 220, 0.45);
+  background: rgba(20, 40, 48, 0.55);
+}
+
+.gpt-mode-banner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gpt-mode-banner .panel-detail.note {
+  opacity: 0.75;
+  font-size: 10px;
+  margin: 4px 0 0;
+}
+
+.gpt-hologram {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid rgba(90, 220, 235, 0.55);
+  background: rgba(12, 28, 34, 0.72);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  pointer-events: auto;
+  color: #e8f7fa;
+  font-size: 11px;
+}
+
+.gpt-hologram.is-static {
+  transition: none;
+}
+
+.gpt-hologram-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(90, 220, 235, 0.25);
+}
+
+.gpt-hologram-title {
+  flex: 1;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.gpt-hologram-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.gpt-hologram-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.gpt-hologram-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  background: #0a1216;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.gpt-hologram-empty,
+.gpt-hologram-caption {
+  margin: 0;
+  padding: 6px 8px;
+  opacity: 0.8;
+  line-height: 1.35;
+}
+
+.gpt-hologram-caption {
+  font-size: 9px;
+  border-top: 1px solid rgba(90, 220, 235, 0.2);
+}
+
+.gpt-hologram-empty-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  pointer-events: auto;
+}
+
+.gpt-hologram-picker {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.gpt-hologram-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gpt-pick {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(90, 220, 235, 0.35);
+  background: rgba(8, 18, 22, 0.85);
+  color: inherit;
+  cursor: pointer;
+}
+
+.gpt-pick.is-recommended {
+  border-color: rgba(120, 230, 200, 0.7);
+}
+
+.gpt-pick img,
+.gpt-pick-blank {
+  width: 72px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #0a1216;
+  flex: 0 0 auto;
+}
+
+.gpt-pick-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.gpt-pick-meta strong {
+  font-size: 11px;
+}
+
+.gpt-pick-meta span {
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gpt-pick-meta em {
+  font-style: normal;
+  color: #8fe8c8;
+  font-size: 9px;
 }

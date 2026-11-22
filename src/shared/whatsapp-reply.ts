@@ -141,6 +141,43 @@ export function isAdditiveFollowUp(raw: string): boolean {
 }
 
 /**
+ * Strip instruction wrappers from a held/compound draft body.
+ * “saying”, “reply with”, “tell him”, “say that” are wrappers — not outgoing text.
+ * Does not strip intentional “Ask him …” drafting forms used by the model path.
+ */
+export function stripDraftInstructionFraming(raw: string): string {
+  let t = raw.trim()
+  if (!t) return t
+  for (let i = 0; i < 4; i++) {
+    const next = t
+      .replace(/^(?:please\s+)?(?:(?:can|could)\s+you\s+)?/i, '')
+      .replace(/^reply\s+(?:saying|that|with)\s+/i, '')
+      .replace(/^(?:saying|that|with)\s+/i, '')
+      .replace(/^(?:tell\s+(?:him|her|them)\s+)(?:that\s+)?/i, '')
+      .replace(/^(?:say\s+)(?:that\s+)?/i, '')
+      .replace(/^(?:and\s+)?(?:then\s+)?(?:say|tell(?:\s+(?:him|her|them))?|reply(?:\s+(?:saying|that|with))?)\s+/i, '')
+      .trim()
+    if (next === t) break
+    t = next
+  }
+  return t
+}
+
+/** True when a “type …” body is instruction framing rather than literal paste text. */
+export function isInstructionFramingBody(body: string): boolean {
+  const t = body.trim()
+  if (!t) return false
+  return (
+    /^(?:(?:also|and)\s+)?(?:tell|ask)\s+(?:him|her|them)\b/i.test(t) ||
+    /^(?:(?:also|and)\s+)?add\s+(?:that|this)\b/i.test(t) ||
+    /^let\s+(?:him|her|them)\s+know\b/i.test(t) ||
+    /^(?:and\s+)?say(?:ing)?\s+(?:that\s+)?/i.test(t) ||
+    /^(?:reply\s+)?(?:saying|that|with)\b/i.test(t) ||
+    /^reply\s+(?:saying|that|with)\b/i.test(t)
+  )
+}
+
+/**
  * Decide whether an additive follow-up should revise an unsent composer draft
  * or start a new message. Composer empty alone does not prove the prior draft was sent.
  */
@@ -162,6 +199,18 @@ export function resolveAdditiveFollowUpMode(opts: {
         (opts.draft && composer.includes(opts.draft)) ||
         (opts.insertedText && composer.includes(opts.insertedText))
     )
+  // S17: composer edited outside MIKO — do not silently refine/overwrite.
+  // Also when never inserted: composer text that doesn’t match the panel draft.
+  if (
+    opts.composerStatus === 'has-text' &&
+    composer &&
+    composer !== opts.insertedText &&
+    composer !== opts.draft &&
+    !matchesDraft &&
+    (Boolean(opts.insertedText) || Boolean(opts.draft))
+  ) {
+    return 'blocked-edit'
+  }
   if (
     matchesDraft ||
     (opts.composerStatus === 'has-text' &&
@@ -212,7 +261,8 @@ export function parseWhatsAppSummarizeIntent(
   opts: { messaging?: 'whatsapp' | null; waChat?: string | null } = {}
 ): WhatsAppSummarizeIntent | null {
   const text = stripLead(raw)
-    .replace(/,?\s*don'?t\s+reply\.?$/i, '')
+    .replace(/[,.]?\s*don'?t\s+reply\.?$/i, '')
+    .replace(/[.!?]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim()
   if (!text) return null
@@ -222,10 +272,17 @@ export function parseWhatsAppSummarizeIntent(
   if (/^(?:summari[sz]e|recap|tldr)(?:\s+(?:this|it|that))?(?:\s+(?:for\s+me)?)?$/i.test(text)) {
     return { scope: 'incoming', preferLatest: true, replyHere: true }
   }
+  if (/^(?:summari[sz]e|recap)\s+what\s+they\s+sent$/i.test(text)) {
+    return { scope: 'incoming', preferLatest: true, replyHere: true }
+  }
   if (/^(?:summari[sz]e|recap)\s+(?:the\s+)?(?:latest|last|recent)\s+(?:message|messages|text)?$/i.test(text)) {
     return { scope: 'incoming', preferLatest: true, replyHere: true }
   }
-  if (/^(?:what\s+did\s+they\s+say|what\s+did\s+(?:he|she)\s+say|what(?:'s| is)\s+the\s+(?:latest|last)\s+message)\??$/i.test(text)) {
+  if (
+    /^(?:what\s+did\s+they\s+(?:just\s+)?say|what\s+did\s+(?:he|she)\s+(?:just\s+)?say|what(?:'s| is)\s+the\s+(?:latest|last)\s+message)$/i.test(
+      text
+    )
+  ) {
     return { scope: 'incoming', preferLatest: true, replyHere: true }
   }
   // Paraphrases that look like questions but mean “summarize the open chat”.
@@ -327,16 +384,20 @@ export function parseWhatsAppReplyIntent(
       !/^(?:tell|ask|let)\s+(?:him|her|them)\b/i.test(text)
     ) {
       const body = typeInto[1].trim()
-      // “type Also tell her …” must not paste instruction framing — re-parse as a draft request.
-      const framingBody =
-        /^(?:(?:also|and)\s+)?(?:tell|ask)\s+(?:him|her|them)\b/i.test(body) ||
-        /^(?:(?:also|and)\s+)?add\s+(?:that|this)\b/i.test(body) ||
-        /^let\s+(?:him|her|them)\s+know\b/i.test(body) ||
-        /^(?:and\s+)?say\s+(?:that\s+)?/i.test(body)
-      if (framingBody) {
-        const nested = parseWhatsAppReplyIntent(body, opts)
+      // “type Also tell her …” / “type saying …” must not paste instruction framing.
+      if (isInstructionFramingBody(body)) {
+        const cleaned = stripDraftInstructionFraming(body)
+        const nested = parseWhatsAppReplyIntent(cleaned || body, opts) || parseWhatsAppReplyIntent(body, opts)
         if (nested && !nested.literal) {
           return { ...nested, replyHere: true, autoInsert: true }
+        }
+        if (cleaned) {
+          return {
+            instruction: cleaned,
+            needsContext: false,
+            autoInsert: true,
+            replyHere: true
+          }
         }
       }
       const { instruction, formal } = stripFormalTone(body)
@@ -434,12 +495,34 @@ export function parseWhatsAppReplyIntent(
         additive: /^(?:also)\s+ask\b/i.test(text) || Boolean(opts.draftActive)
       }
     }
+    // “Ask if she wants …” / “Ask if she's free …” / “Ask if they're free …”.
+    const askIf =
+      /^(?:also\s+)?ask\s+if\s+(she|he|they)('s|'re|\s+is|\s+are)?\s+(.+)$/i.exec(text)
+    if (askIf?.[1] && askIf[3]?.trim()) {
+      const subject = askIf[1].toLowerCase()
+      const pronoun: 'him' | 'her' | 'them' =
+        subject === 'she' ? 'her' : subject === 'he' ? 'him' : 'them'
+      const body = askIf[3].trim()
+      const link = askIf[2]?.toLowerCase() || ''
+      const be =
+        /'re|\s+are/.test(link) ? 'are' : /'s|\s+is/.test(link) ? 'is' : ''
+      const instruction = be ? `Ask if ${subject} ${be} ${body}` : `Ask if ${subject} ${body}`
+      return {
+        instruction,
+        pronoun,
+        needsContext: false,
+        autoInsert: true,
+        replyHere: true,
+        additive: /^(?:also)\s+ask\b/i.test(text) || Boolean(opts.draftActive)
+      }
+    }
     const tellThem = /^(?:tell\s+them|say)\s+(.+)$/i.exec(text)
     if (tellThem?.[1]?.trim()) {
       const { instruction, formal } = stripFormalTone(tellThem[1].trim())
       if (instruction) {
         return {
           instruction: formal ? `Write this in a formal, polished way: ${instruction}` : instruction,
+          pronoun: /^tell\s+them\b/i.test(text) ? 'them' : undefined,
           needsContext: false,
           autoInsert: true,
           replyHere: true
@@ -449,21 +532,26 @@ export function parseWhatsAppReplyIntent(
   }
 
   const refineMatch =
-    /^(?:make\s+(?:that|it|the\s+(?:draft|message|reply))\s+)(shorter|longer|briefer|tighter|more\s+\w+|less\s+\w+|friendlier|politer|simpler|formal|casual|friendly|polite|professional)$/i.exec(
+    /^(?:make\s+(?:that|it|the\s+(?:draft|message|reply))\s+)(shorter|longer|briefer|tighter|warmer|cooler|kinder|softer|more\s+\w+|less\s+\w+|friendlier|politer|simpler|formal|casual|friendly|polite|professional)$/i.exec(
       text
     ) ||
-    /^(?:make\s+(?:the\s+)?draft\s+)(shorter|longer|briefer|tighter|more\s+\w+|less\s+\w+|formal|casual|friendly|polite|professional)$/i.exec(
+    /^(?:make\s+(?:the\s+)?draft\s+)(shorter|longer|briefer|tighter|warmer|cooler|kinder|softer|more\s+\w+|less\s+\w+|formal|casual|friendly|polite|professional)$/i.exec(
       text
     ) ||
     /^(?:trim|tighten|shorten)\s+(?:that|it|the\s+(?:draft|message|reply))(?:\s+(?:down|a\s+bit|a\s+little))?$/i.exec(text) ||
-    /^(?:make\s+(?:that|it)\s+)?(more\s+(?:formal|polite|professional|friendly|casual)|shorter|longer|briefer|tighter)$/i.exec(text)
+    /^(?:make\s+(?:that|it)\s+)?(more\s+(?:formal|polite|professional|friendly|casual|warm)|warmer|cooler|kinder|softer|shorter|longer|briefer|tighter)$/i.exec(
+      text
+    )
   if (refineMatch && (opts.draftActive || hasWaTarget)) {
     const rawChange = (refineMatch[1] || 'shorter').toLowerCase()
     const instruction =
-      rawChange.startsWith('more ') || /^(shorter|longer|briefer|tighter)$/i.test(rawChange)
+      rawChange.startsWith('more ') ||
+      /^(shorter|longer|briefer|tighter|warmer|cooler|kinder|softer)$/i.test(rawChange)
         ? rawChange === 'briefer' || rawChange === 'tighter'
           ? 'shorter'
-          : rawChange
+          : rawChange === 'warmer' || rawChange === 'kinder' || rawChange === 'softer'
+            ? `more warm`
+            : rawChange
         : `more ${rawChange}`
     return {
       instruction,
@@ -535,6 +623,7 @@ export function parseWhatsAppReplyIntent(
   }
 
   // “Tell her …” / “Also tell her …” (also matched earlier when hasWaTarget; keep for no-context named opens).
+  // With an active unsent draft, a bare “Tell them …” is additive (don’t wipe the prior draft).
   const tellPronoun = /^(?:(?:also|and)\s+)?tell\s+(him|her|them)\s+(.+)$/i.exec(text)
   if (tellPronoun?.[1] && tellPronoun[2]) {
     return {
@@ -543,7 +632,7 @@ export function parseWhatsAppReplyIntent(
       needsContext: false,
       autoInsert: true,
       replyHere: true,
-      additive: /^(?:also|and)\s+tell\b/i.test(text)
+      additive: /^(?:also|and)\s+tell\b/i.test(text) || Boolean(opts.draftActive)
     }
   }
 
@@ -640,9 +729,52 @@ function fence(tag: string, text: string): string {
   return `<${tag}>\n${safe}\n</${tag}>`
 }
 
+/**
+ * Light POV polish after the model returns a draft.
+ * When framing was “tell them/her/him …”, “take them/her/him …” about the recipient
+ * must become “take you …”. Does not rewrite named third parties (Sam, …).
+ */
+export function polishRecipientAddress(
+  draft: string,
+  pronoun?: 'him' | 'her' | 'them' | null
+): string {
+  if (!pronoun || !draft.trim()) return draft
+  const esc = pronoun.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const verbs = new RegExp(`\\b(take|bring|drive|drop|pick\\s+up)\\s+${esc}\\b`, 'gi')
+  return draft.replace(verbs, (_, verb: string) => `${verb} you`)
+}
+
+/**
+ * “Tell them Sam will join her” — framing pronoun doesn’t match a gendered
+ * third-person in the body; ask who that person is before drafting.
+ */
+export function mismatchedThirdPersonQuestion(
+  instruction: string,
+  framingPronoun?: 'him' | 'her' | 'them' | null
+): string | null {
+  if (!framingPronoun || !instruction.trim()) return null
+  const hasHer = /\bher\b/i.test(instruction)
+  const hasHim = /\bhim\b/i.test(instruction)
+  if (framingPronoun === 'them' && hasHer && !hasHim) {
+    return 'Who does “her” refer to — the person you’re messaging, or someone else?'
+  }
+  if (framingPronoun === 'them' && hasHim && !hasHer) {
+    return 'Who does “him” refer to — the person you’re messaging, or someone else?'
+  }
+  if (framingPronoun === 'her' && hasHim) {
+    return 'Who does “him” refer to — the person you’re messaging, or someone else?'
+  }
+  if (framingPronoun === 'him' && hasHer) {
+    return 'Who does “her” refer to — the person you’re messaging, or someone else?'
+  }
+  return null
+}
+
 /** Dedicated drafting prompt for a WhatsApp message. Output is only the message body. */
 export function whatsAppDraftPrompt(req: WhatsAppDraftRequest): string {
   const recipient = req.chatName.trim() || 'the recipient'
+  // Defense in depth: wrappers like “saying …” must never reach the model as paste text.
+  const cleanedInstruction = stripDraftInstructionFraming(req.instruction) || req.instruction
   const tone =
     req.tone === 'formal'
       ? 'Use clear, polished, professional wording.'
@@ -652,7 +784,7 @@ export function whatsAppDraftPrompt(req: WhatsAppDraftRequest): string {
     `Write from my point of view, addressed directly to ${recipient}.`,
     '',
     'My instruction (what I want to communicate — not the final wording):',
-    fence('instruction', req.instruction.slice(0, MAX_WA_INSTRUCTION))
+    fence('instruction', cleanedInstruction.slice(0, MAX_WA_INSTRUCTION))
   ]
   if (req.pronoun) {
     lines.push(
@@ -662,9 +794,15 @@ export function whatsAppDraftPrompt(req: WhatsAppDraftRequest): string {
   } else {
     lines.push(
       '',
-      `Strip framing like “tell her/him/them …”, “also tell …”, “add that …”, “and say …”, “let her/him/them know …”, and “ask her/him/them …” when it refers to ${recipient}; write the message I would send to them.`
+      `Strip framing like “saying …”, “reply saying/with …”, “tell her/him/them …”, “also tell …”, “add that …”, “and say …”, “let her/him/them know …”, and “ask her/him/them …” when it refers to ${recipient}; write the message I would send to them. Never paste the word “saying” as the start of the message.`
     )
   }
+  // S37: “Tell Alex that Sam will pick him up” — him → you (Alex); keep Sam as the named driver.
+  lines.push(
+    '',
+    `If the instruction names another person who is not ${recipient} (e.g. “Sam will pick him up” while writing to Alex), keep that other person’s name in third person. Only convert pronouns that clearly refer to ${recipient} into “you”. Do not invent a new recipient.`,
+    `Concrete POV example: if I say “I'll take them to the movie tomorrow” and I'm writing to ${recipient}, the draft must be “I'll take you to the movie tomorrow” — never leave “them/her/him” when that word means ${recipient}.`
+  )
   if (req.context?.trim()) {
     lines.push(
       '',
@@ -681,7 +819,7 @@ export function whatsAppDraftPrompt(req: WhatsAppDraftRequest): string {
     `- The message is from me to ${recipient}. Prefer second person (“you”) when I am talking about ${recipient}.`,
     '- Do NOT blindly replace every him/her/them with “you”. If him/her/them clearly refers to a different person (e.g. “I’m taking Gayu to the movie” when writing to Dad), keep that third person.',
     '- “Ask her if she wants …” → a direct question to the recipient (“Would you like …?”), preserving uncertainty. Do not turn a statement into a question unless I asked to ask.',
-    '- Phrases like “Also tell her…”, “Add that…”, “And say…”, “Let her know…”, and “Ask her…” are instructions to compose — never paste that framing into the draft.',
+    '- Phrases like “saying…”, “reply saying…”, “Also tell her…”, “Add that…”, “And say…”, “Let her know…”, and “Ask her…” are instructions to compose — never paste that framing into the draft.',
     '- Nested framing inside an instruction (e.g. “…and tell her to be ready…”) must also become direct address (“Please be ready…”).',
     '- Distinguish invitation, question, and commitment. Keep hedges like “might”, “maybe”, “if”.',
     '',

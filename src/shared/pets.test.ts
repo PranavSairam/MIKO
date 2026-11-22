@@ -41,6 +41,10 @@ describe('pet registry against the real assets', () => {
       // The preferred clip is used when present (no silent fallback on the real assets).
       for (const [role, wanted] of Object.entries(PETS[id].clips)) assert.equal(resolved[role as keyof typeof resolved], wanted[0], `${id} ${role}`)
       assert.deepEqual(usableFlavors(PETS[id], clips), PETS[id].flavors)
+      for (const clip of PETS[id].feedClips) {
+        assert.ok(clips.includes(clip), `${id} feed clip ${clip} exists in the asset`)
+      }
+      assert.ok(PETS[id].feedDrop.radius >= 48, `${id} feed drop is forgiving`)
       const bones = gltf(path).nodes.map((n) => n.name)
       assert.ok(bones.includes(PETS[id].look.head), `${id} head bone`)
       if (PETS[id].look.neck) assert.ok(bones.includes(PETS[id].look.neck as string), `${id} neck bone`)

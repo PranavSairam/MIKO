@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { PetId, SavedChat } from '../../../shared/api'
+import {
+  prefsStoredOnlyMessage,
+  prefsUpdateHelp,
+  releaseLinkLabel,
+  isWindowsPlatform
+} from '../../../shared/platform-copy'
 import { SavedChats, type SavedChatsProps } from './SavedChats'
+import { FeedbackForm } from './FeedbackForm'
+import { SetupTutorial } from './SetupTutorial'
 
 export const COMMANDS_LATER = 'Commands are coming next.'
 
@@ -50,12 +58,15 @@ export type PanelEntry =
         | 'wa-attach-dest'
         | 'wa-download-candidate'
         | 'chrome-fallback'
+        | 'send-destination'
       text: string
       options: PanelChoice[]
       payload?: string
     }
   | { id: number; kind: 'confirm'; purpose: 'launch' | 'force' | 'quit' | 'close' | 'alias'; text: string; appId: string; name: string; alias?: string; destination?: string }
   | { id: number; kind: 'whatsapp'; text: string }
+  /** Contact search returned no match; keep pending draft and ask for a corrected name. */
+  | { id: number; kind: 'wa-recipient'; text: string; query: string }
   | {
       id: number
       kind: 'wa-reply'
@@ -99,6 +110,33 @@ export type PanelEntry =
       pendingAdditive?: string
       /** True when clarifying before merging into an unsent draft. */
       pendingAdditiveRefine?: boolean
+    }
+  | {
+      id: number
+      kind: 'type-dest'
+      /** Destination label shown to the owner. */
+      destinationLabel: string
+      draft: string
+      status: 'preparing' | 'ready' | 'choose-insert' | 'inserting' | 'inserted' | 'unverified' | 'failed' | 'choose-field'
+      detail: string
+      literal?: boolean
+      submitRequested?: boolean
+      error?: string
+    }
+  | {
+      id: number
+      kind: 'gpt-mode'
+      requestId: string
+      text: string
+      status:
+        | 'preparing'
+        | 'text-inserted'
+        | 'submitted'
+        | 'delivery-unverified'
+        | 'choose-insert'
+        | 'failed'
+        | 'cancelled'
+      detail: string
     }
   | { id: number; kind: 'closing'; appId: string; name: string; text: string }
   | {
@@ -161,6 +199,12 @@ interface TextPanelProps {
   onDismiss?: (id: number) => void
   onWhatsAppCancel?: () => void
   onWhatsAppRefine?: (entryId: number) => void
+  onWaRecipientRetry?: (entryId: number, query: string) => void
+  onTypeDest?: (
+    entryId: number,
+    action: 'replace' | 'append' | 'cancel' | 'copy' | 'paste-now' | 'draft'
+  ) => void
+  onWaRecipientCancel?: (entryId: number) => void
   onWaReply?: (
     entryId: number,
     action:
@@ -182,6 +226,7 @@ interface TextPanelProps {
       | { type: 'cancel' }
       | { type: 'return-chat' }
       | { type: 'keep-here' }
+      | { type: 'report' }
   ) => void
   onWaFile?: (
     entryId: number,
@@ -202,9 +247,19 @@ interface TextPanelProps {
   onListenCancel?: () => void
   canSpeak?: boolean
   onSpeak?: (text: string) => void
-  /** 'chats' swaps the conversation for the Saved chats manager. */
-  view?: 'log' | 'chats' | 'prefs'
-  onView?: (view: 'log' | 'chats' | 'prefs') => void
+  /** 'chats' swaps the conversation for the Saved chats manager; 'feedback' is the private report form; 'setup' is first-run / tutorial. */
+  view?: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup'
+  onView?: (view: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup') => void
+  setup?: {
+    platform: string
+    pets?: ReactNode
+    onOpenInteractiveGpt?: () => void
+  }
+  feedback?: {
+    lastCommand: string
+    actionType?: string | null
+    errorCode?: string | null
+  }
   chats?: SavedChat[]
   chatTools?: Omit<SavedChatsProps, 'chats'>
   onDestination?: (id: number, name: string) => void
@@ -241,7 +296,27 @@ interface TextPanelProps {
       note?: string
     }) => Promise<void>
     onOpenChromeChooser?: () => void
+    onOpenFeedback?: () => void
+    onRunTutorial?: () => void
+    platform?: string
+    selectionAvailable?: boolean
     pets?: PetChooserProps
+    versionLine?: string
+    assistantStatus?: string
+    update?: {
+      statusLine: string
+      busy: boolean
+      mode: 'manual' | 'auto'
+      downloadUrl: string
+      canRestart: boolean
+      canDownload: boolean
+      canLater: boolean
+      onCheck: () => void
+      onDownload: () => void
+      onRestart: () => void
+      onLater: () => void
+      onSaveDownloadUrl: (url: string) => void
+    }
   }
   /** Chat / Mail tabs. Mail content replaces the conversation. */
   tab?: 'chat' | 'mail'
@@ -253,6 +328,29 @@ interface TextPanelProps {
     onPreset: (preset: 'small' | 'medium' | 'large' | 'reset') => void
     onResizeStart: (event: ReactPointerEvent<HTMLElement>) => void
   }
+  /** Opt-in GPT Mode (ChatGPT app). Separate from MIKO assistant. */
+  gptMode?: {
+    phase: 'off' | 'paused' | 'active'
+    banner: string
+    lastDetail: string
+    liveView: boolean
+    detailsOpen: boolean
+    onToggleDetails: () => void
+    onToggle: () => void
+    onPause: () => void
+    onResume: () => void
+    onExit: () => void
+    onNewChat: () => void
+    onViewChatGpt: () => void
+    onToggleLiveView: () => void
+    onChooseWindow: () => void
+  }
+  /** Optional real chatgpt.com workspace (separate session from GPT Mode / Lens). */
+  onOpenChatGptWeb?: () => void
+  onGptMode?: (
+    entryId: number,
+    action: 'replace' | 'append' | 'cancel' | 'view'
+  ) => void
 }
 
 export const MAIL_NOTE =
@@ -278,8 +376,14 @@ export function TextPanel({
   onDismiss,
   onWhatsAppCancel,
   onWhatsAppRefine,
+  onWaRecipientRetry,
+  onWaRecipientCancel,
   onWaReply,
+  onTypeDest,
   onWaFile,
+  gptMode,
+  onOpenChatGptWeb,
+  onGptMode,
   listening = false,
   listenDetail = '',
   onListen,
@@ -307,6 +411,8 @@ export function TextPanel({
   onAskInChatGpt,
   assistantThread = '',
   prefs,
+  setup,
+  feedback,
   tab = 'chat',
   onTab,
   mail,
@@ -365,14 +471,14 @@ export function TextPanel({
           <button
             type="button"
             className="icon-button"
-            aria-label={view === 'prefs' ? 'Back' : 'MIKO preferences'}
+            aria-label={view === 'prefs' || view === 'feedback' || view === 'setup' ? 'Back' : 'MIKO preferences'}
             title="MIKO preferences"
-            onClick={() => onView(view === 'prefs' ? 'log' : 'prefs')}
+            onClick={() => onView(view === 'prefs' || view === 'feedback' || view === 'setup' ? 'log' : 'prefs')}
           >
-            {view === 'prefs' ? '←' : '⚙'}
+            {view === 'prefs' || view === 'feedback' || view === 'setup' ? '←' : '⚙'}
           </button>
         ) : null}
-        {onView && tab === 'chat' && view !== 'prefs' ? (
+        {onView && tab === 'chat' && view !== 'prefs' && view !== 'feedback' && view !== 'setup' ? (
           <button
             type="button"
             className="text-button secondary bar-button"
@@ -425,10 +531,72 @@ export function TextPanel({
             ) : null}
           </span>
         ) : null}
-        <button type="button" className="close" onClick={onClose} aria-label="Close">
-          ×
-        </button>
+        <div className="panel-bar-actions">
+          {gptMode && tab === 'chat' ? (
+            <button
+              type="button"
+              className={gptMode.phase !== 'off' ? 'text-button bar-button' : 'text-button secondary bar-button'}
+              aria-pressed={gptMode.phase !== 'off'}
+              title="GPT Mode: forward ordinary MIKO messages to the ChatGPT app (not Interactive GPT)"
+              onClick={() => gptMode.onToggle()}
+            >
+              GPT Mode
+            </button>
+          ) : null}
+          {onOpenChatGptWeb && tab === 'chat' ? (
+            <button
+              type="button"
+              className="text-button secondary bar-button interactive-gpt-btn"
+              title="Interactive GPT: use ChatGPT directly inside MIKO (sandboxed chatgpt.com — not GPT Mode, not Lens)"
+              onClick={() => onOpenChatGptWeb()}
+            >
+              Interactive GPT
+            </button>
+          ) : null}
+          <button type="button" className="close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
       </header>
+      {gptMode && gptMode.phase !== 'off' && tab === 'chat' && view === 'log' ? (
+        <div className="gpt-mode-banner" data-hit="gpt-mode">
+          <div className="gpt-mode-banner-row">
+            <strong>{gptMode.banner || 'GPT Mode'}</strong>
+            <button type="button" className="text-button secondary" onClick={() => gptMode.onToggleDetails()}>
+              {gptMode.detailsOpen ? 'Hide details' : 'Details'}
+            </button>
+          </div>
+          {gptMode.detailsOpen && gptMode.lastDetail ? <p className="panel-detail note">{gptMode.lastDetail}</p> : null}
+          <div className="panel-inline">
+            {gptMode.phase === 'active' ? (
+              <button type="button" className="text-button secondary" onClick={() => gptMode.onPause()}>
+                Pause
+              </button>
+            ) : (
+              <button type="button" className="text-button" onClick={() => gptMode.onResume()}>
+                Resume
+              </button>
+            )}
+            <button type="button" className="text-button secondary" onClick={() => gptMode.onNewChat()}>
+              New chat
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => gptMode.onViewChatGpt()}>
+              View in ChatGPT
+            </button>
+            <button type="button" className="text-button secondary" onClick={() => gptMode.onToggleLiveView()}>
+              {gptMode.liveView ? 'Hide MIKO Lens' : 'MIKO Lens'}
+            </button>
+            {gptMode.liveView ? (
+              <button type="button" className="text-button secondary" onClick={() => gptMode.onChooseWindow()}>
+                Choose window
+              </button>
+            ) : null}
+            <button type="button" className="text-button secondary" onClick={() => gptMode.onExit()}>
+              Exit
+            </button>
+          </div>
+        </div>
+      ) : null}
       {sizing ? (
         <span
           className={`resize-grip ${sizing.side === 'left' ? 'at-left' : 'at-right'}`}
@@ -440,6 +608,20 @@ export function TextPanel({
       ) : null}
       {tab === 'mail' && mail ? (
         mail
+      ) : view === 'setup' && onView ? (
+        <SetupTutorial
+          platform={setup?.platform || 'darwin'}
+          pets={setup?.pets}
+          onOpenInteractiveGpt={setup?.onOpenInteractiveGpt}
+          onClose={() => onView('log')}
+        />
+      ) : view === 'feedback' && onView ? (
+        <FeedbackForm
+          lastCommand={feedback?.lastCommand || ''}
+          actionType={feedback?.actionType}
+          errorCode={feedback?.errorCode}
+          onClose={() => onView('log')}
+        />
       ) : view === 'prefs' && prefs ? (
         <Preferences {...prefs} />
       ) : view === 'chats' && chatTools ? (
@@ -583,6 +765,120 @@ export function TextPanel({
                   </div>
                 </>
               ) : null}
+              {entry.kind === 'wa-recipient' ? (
+                <WhatsAppRecipientRetry
+                  entryId={entry.id}
+                  title={entry.text}
+                  initialQuery={entry.query}
+                  onRetry={(query) => onWaRecipientRetry?.(entry.id, query)}
+                  onCancel={() => onWaRecipientCancel?.(entry.id)}
+                />
+              ) : null}
+              {entry.kind === 'type-dest' ? (
+                <div className="wa-reply">
+                  <p className="panel-detail">
+                    <strong>Destination:</strong> {entry.destinationLabel || 'Choose where to type'}
+                  </p>
+                  <p className="panel-detail">
+                    {entry.status === 'preparing'
+                      ? 'Preparing…'
+                      : entry.status === 'inserting'
+                        ? 'Inserting…'
+                        : entry.status === 'inserted'
+                          ? 'Inserted, not sent'
+                          : entry.status === 'unverified'
+                            ? 'Insertion unverified'
+                            : entry.status === 'choose-insert'
+                              ? 'That field already has text'
+                              : entry.status === 'choose-field'
+                                ? 'Click the field, then Paste now'
+                                : entry.status === 'failed'
+                                  ? entry.error || 'Failed'
+                                  : 'Ready'}
+                  </p>
+                  {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
+                  {entry.draft ? <pre className="wa-reply-draft">{entry.draft}</pre> : null}
+                  {entry.submitRequested ? (
+                    <p className="panel-detail">Submit was requested — only available via a verified Send path. Draft left unsent.</p>
+                  ) : null}
+                  <div className="panel-inline">
+                    {entry.status === 'choose-insert' ? (
+                      <>
+                        <button type="button" className="text-button" onClick={() => onTypeDest?.(entry.id, 'replace')}>
+                          Replace
+                        </button>
+                        <button type="button" className="text-button secondary" onClick={() => onTypeDest?.(entry.id, 'append')}>
+                          Append
+                        </button>
+                      </>
+                    ) : null}
+                    {entry.status === 'choose-field' || entry.status === 'ready' || entry.status === 'unverified' || entry.status === 'failed' ? (
+                      <button type="button" className="text-button" onClick={() => onTypeDest?.(entry.id, 'paste-now')}>
+                        Paste now
+                      </button>
+                    ) : null}
+                    {entry.draft ? (
+                      <button type="button" className="text-button secondary" onClick={() => onTypeDest?.(entry.id, 'copy')}>
+                        Copy
+                      </button>
+                    ) : null}
+                    <button type="button" className="text-button secondary" onClick={() => onTypeDest?.(entry.id, 'cancel')}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {entry.kind === 'gpt-mode' ? (
+                <div className="wa-reply gpt-mode-card">
+                  <p className="panel-detail">
+                    <strong>ChatGPT</strong> ·{' '}
+                    {entry.status === 'preparing'
+                      ? 'Preparing…'
+                      : entry.status === 'text-inserted'
+                        ? 'Text inserted'
+                        : entry.status === 'submitted'
+                          ? 'Submitted'
+                          : entry.status === 'delivery-unverified'
+                            ? 'Delivery unverified'
+                            : entry.status === 'choose-insert'
+                              ? 'Composer already has text'
+                              : entry.status === 'cancelled'
+                                ? 'Cancelled'
+                                : 'Failed'}
+                  </p>
+                  {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
+                  {entry.text ? <pre className="wa-reply-draft">{entry.text}</pre> : null}
+                  <div className="panel-inline">
+                    {entry.status === 'choose-insert' ? (
+                      <>
+                        <button type="button" className="text-button" onClick={() => onGptMode?.(entry.id, 'replace')}>
+                          Replace
+                        </button>
+                        <button type="button" className="text-button secondary" onClick={() => onGptMode?.(entry.id, 'append')}>
+                          Append
+                        </button>
+                        <button type="button" className="text-button secondary" onClick={() => onGptMode?.(entry.id, 'cancel')}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : null}
+                    {entry.status === 'preparing' || entry.status === 'text-inserted' ? (
+                      <button type="button" className="text-button secondary" onClick={() => onGptMode?.(entry.id, 'cancel')}>
+                        Cancel
+                      </button>
+                    ) : null}
+                    {entry.status === 'delivery-unverified' || entry.status === 'failed' || entry.status === 'submitted' ? (
+                      <button type="button" className="text-button secondary" onClick={() => onGptMode?.(entry.id, 'view')}>
+                        View in ChatGPT
+                      </button>
+                    ) : (
+                      <button type="button" className="text-button secondary" onClick={() => onGptMode?.(entry.id, 'view')}>
+                        View in ChatGPT
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : null}
               {entry.kind === 'wa-reply' ? <WhatsAppReplyCard entry={entry} onAction={(action) => onWaReply?.(entry.id, action)} /> : null}
               {entry.kind === 'wa-file' ? <WhatsAppFileCard entry={entry} onAction={(action) => onWaFile?.(entry.id, action)} /> : null}
               {entry.kind === 'choices' && entry.purpose === 'whatsapp' ? (
@@ -703,6 +999,26 @@ type PrefsProps = NonNullable<
       note?: string
     }) => Promise<void>
     onOpenChromeChooser?: () => void
+    onOpenFeedback?: () => void
+    onRunTutorial?: () => void
+    platform?: string
+    selectionAvailable?: boolean
+    versionLine?: string
+    assistantStatus?: string
+    update?: {
+      statusLine: string
+      busy: boolean
+      mode: 'manual' | 'auto'
+      downloadUrl: string
+      canRestart: boolean
+      canDownload: boolean
+      canLater: boolean
+      onCheck: () => void
+      onDownload: () => void
+      onRestart: () => void
+      onLater: () => void
+      onSaveDownloadUrl: (url: string) => void
+    }
     /** Choose your pet: only pets whose assets exist are listed. */
     pets?: PetChooserProps
   }
@@ -719,7 +1035,7 @@ export interface PetChooserProps {
   onChoose: (id: PetId) => void
 }
 
-function PetChooser({
+export function PetChooser({
   available,
   selected,
   busy,
@@ -781,6 +1097,13 @@ function Preferences({
   onRemoveExample,
   onAddExample,
   onOpenChromeChooser,
+  onOpenFeedback,
+  onRunTutorial,
+  platform = 'darwin',
+  selectionAvailable = true,
+  versionLine,
+  assistantStatus,
+  update,
   pets
 }: PrefsProps) {
   const [draft, setDraft] = useState(text)
@@ -792,6 +1115,7 @@ function Preferences({
   const [exWording, setExWording] = useState('')
   const [exKind, setExKind] = useState('open_whatsapp_chat')
   const [exAlias, setExAlias] = useState('')
+  const [releaseUrl, setReleaseUrl] = useState(update?.downloadUrl ?? '')
 
   useEffect(() => {
     setDraft(text)
@@ -802,14 +1126,71 @@ function Preferences({
     setLanguage(structured.preferredLanguage ?? '')
     setNotes(structured.notes ?? '')
   }, [structured])
+  useEffect(() => {
+    setReleaseUrl(update?.downloadUrl ?? '')
+  }, [update?.downloadUrl])
 
   return (
     <div className="prefs">
       {pets ? <PetChooser {...pets} /> : null}
       <p className="panel-detail">
-        <strong>MIKO preferences</strong> — stored only on this Mac. These are approved preferences and aliases, not trained
-        model weights. Separate from ChatGPT&apos;s memory.
+        <strong>MIKO preferences</strong> — {prefsStoredOnlyMessage(platform).replace(/^MIKO preferences — /, '')}
       </p>
+      {versionLine ? <p className="panel-detail">{versionLine}</p> : null}
+      {assistantStatus ? <p className="panel-detail">{assistantStatus}</p> : null}
+      {onRunTutorial ? (
+        <div className="panel-inline">
+          <button type="button" className="text-button secondary" onClick={onRunTutorial}>
+            Run tutorial again
+          </button>
+        </div>
+      ) : null}
+      {update ? (
+        <>
+          <p className="prefs-section">Updates (private beta)</p>
+          <p className="panel-detail">{update.statusLine}</p>
+          <div className="panel-inline">
+            <button type="button" className="text-button secondary" disabled={update.busy} onClick={update.onCheck}>
+              Check for updates
+            </button>
+            {update.canDownload ? (
+              <button type="button" className="text-button" disabled={update.busy} onClick={update.onDownload}>
+                Download latest version
+              </button>
+            ) : null}
+            {update.canRestart ? (
+              <button type="button" className="text-button" onClick={update.onRestart}>
+                Restart now
+              </button>
+            ) : null}
+            {update.canLater ? (
+              <button type="button" className="text-button secondary" onClick={update.onLater}>
+                Later
+              </button>
+            ) : null}
+          </div>
+          {update.mode === 'manual' ? (
+            <label className="prefs-field">
+              {releaseLinkLabel(platform)}
+              <input
+                value={releaseUrl}
+                aria-label="Shared release download URL"
+                placeholder="https://…"
+                onChange={(e) => setReleaseUrl(e.target.value)}
+                onBlur={() => update.onSaveDownloadUrl(releaseUrl.trim())}
+              />
+            </label>
+          ) : null}
+          <p className="panel-detail">{prefsUpdateHelp(platform, update.mode)}</p>
+        </>
+      ) : null}
+      {onOpenFeedback ? (
+        <div className="panel-inline">
+          <button type="button" className="text-button" onClick={onOpenFeedback}>
+            Feedback
+          </button>
+        </div>
+      ) : null}
 
       <p className="prefs-section">Structured</p>
       <label className="prefs-field">
@@ -991,13 +1372,22 @@ function Preferences({
         </p>
       ) : null}
 
-      <p className="prefs-section">Selection shortcut</p>
-      <div className="selection-row">
-        <input value={key} aria-label="Selection assistant shortcut" placeholder="Control+Option+S" onChange={(e) => setKey(e.target.value)} />
-        <button type="button" className="text-button secondary" disabled={!key.trim() || key === shortcut} onClick={() => void onSaveShortcut(key)}>
-          Set selection shortcut
-        </button>
-      </div>
+      {selectionAvailable && !isWindowsPlatform(platform) ? (
+        <>
+          <p className="prefs-section">Selection shortcut</p>
+          <div className="selection-row">
+            <input value={key} aria-label="Selection assistant shortcut" placeholder="Control+Option+S" onChange={(e) => setKey(e.target.value)} />
+            <button type="button" className="text-button secondary" disabled={!key.trim() || key === shortcut} onClick={() => void onSaveShortcut(key)}>
+              Set selection shortcut
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="prefs-section">Selection shortcut</p>
+          <p className="panel-detail">Selected-text capture is available on macOS only.</p>
+        </>
+      )}
     </div>
   )
 }
@@ -1212,7 +1602,7 @@ function WhatsAppFileCard({
               Open
             </button>
             <button type="button" className="text-button" onClick={() => onAction({ type: 'reveal' })}>
-              Show in Finder
+              {/win/i.test(navigator.platform) ? 'Show in File Explorer' : 'Show in Finder'}
             </button>
             <button type="button" className="text-button" onClick={() => onAction({ type: 'copy-file' })}>
               Copy file
@@ -1262,6 +1652,7 @@ function WhatsAppReplyCard({
       | { type: 'cancel' }
       | { type: 'return-chat' }
       | { type: 'keep-here' }
+      | { type: 'report' }
   ) => void
 }): ReactNode {
   return (
@@ -1428,6 +1819,13 @@ function WhatsAppReplyCard({
             </p>
           ) : null}
           {entry.status === 'failed' && entry.error ? <p className="panel-detail note">{entry.error}</p> : null}
+          {entry.status === 'failed' ? (
+            <div className="panel-inline">
+              <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'report' })}>
+                Report this
+              </button>
+            </div>
+          ) : null}
           <label className="wa-reply-label" htmlFor={`wa-draft-${entry.id}`}>
             Draft
           </label>
@@ -1483,12 +1881,77 @@ function WhatsAppReplyCard({
         <>
           <p className="panel-detail note">{entry.error}</p>
           <div className="panel-inline">
+            <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'report' })}>
+              Report this
+            </button>
             <button type="button" className="text-button secondary" onClick={() => onAction({ type: 'cancel' })}>
               Dismiss
             </button>
           </div>
         </>
       ) : null}
+    </div>
+  )
+}
+
+function WhatsAppRecipientRetry({
+  entryId,
+  title,
+  initialQuery,
+  onRetry,
+  onCancel
+}: {
+  entryId: number
+  title: string
+  initialQuery: string
+  onRetry: (query: string) => void
+  onCancel: () => void
+}): ReactNode {
+  const [query, setQuery] = useState(initialQuery)
+  useEffect(() => {
+    setQuery(initialQuery)
+  }, [entryId, initialQuery])
+  return (
+    <div className="wa-chooser">
+      <p className="wa-chooser-title">{title}</p>
+      <label className="wa-recipient-label" htmlFor={`wa-recipient-${entryId}`}>
+        Name
+        <input
+          id={`wa-recipient-${entryId}`}
+          className="wa-recipient-input"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              const next = query.trim()
+              if (next) onRetry(next)
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              onCancel()
+            }
+          }}
+          autoFocus
+        />
+      </label>
+      <p className="panel-detail">Edit the name and Retry, or Cancel to drop the pending message.</p>
+      <div className="panel-inline">
+        <button
+          type="button"
+          className="text-button"
+          disabled={!query.trim()}
+          onClick={() => {
+            const next = query.trim()
+            if (next) onRetry(next)
+          }}
+        >
+          Retry
+        </button>
+        <button type="button" className="text-button secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
     </div>
   )
 }

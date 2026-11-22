@@ -3,7 +3,7 @@ import { join } from 'path'
 import { restoreFollow, startFollowLoop, isFollowEnabled, enableFollow } from './follow'
 import { registerIpc } from './ipc'
 import { createLivingPreview } from './living-preview'
-import { createPetWindow, isPetVisible, setPlacementListener, setQuitting } from './pet-window'
+import { createPetWindow, isPetVisible, setPanelOpenedListener, setPlacementListener, setQuitting } from './pet-window'
 import { availablePets, currentPetChoice, syncTree } from './pets'
 import { PETS } from '../shared/pets'
 import { createPhase2Preview } from './phase2-preview'
@@ -14,15 +14,27 @@ import { IPC } from '../shared/api'
 import { startKeys } from './keys'
 import { postToPet } from './pet-window'
 import { startListening, stopListening } from './speech'
-import { toggleSwitcher, warmSwitcher } from './switcher-window'
+import { hideSwitcher, toggleSwitcher, warmSwitcher } from './switcher-window'
+import { enableGptMode, exitGptMode, getGptModeState, pauseGptMode, resumeGptMode } from './gpt-mode'
 import { assistantEnabled, chatgptAutoPaste, setAssistantEnabled, setChatgptAutoPaste, setVoiceAutoExecute, voiceAutoExecute } from './settings'
 import { stopAllBridges } from './bridge'
 import { startSelectionShortcut } from './selection-shortcut'
 import { disarmPaste } from './selection'
+import { startUpdater, stopUpdater } from './updater'
+import { migrateSettingsIfNeeded } from './session-flush'
 
 app.setName('MIKO')
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.miko.pet')
+  app.setAppUserModelId('com.pranavsairam.miko')
+}
+// Packaged beta uses a distinct folder. On case-insensitive APFS,
+// Application Support/MIKO collides with the lowercase "miko" npm-start profile
+// (aliases, mail tokens, prefs) — never reuse that for distributed builds.
+const cliUserData = process.argv.find((arg) => arg.startsWith('--user-data-dir='))
+if (cliUserData) {
+  app.setPath('userData', cliUserData.slice('--user-data-dir='.length))
+} else if (app.isPackaged) {
+  app.setPath('userData', join(app.getPath('appData'), 'MIKO-Beta'))
 }
 
 const phase2Preview = process.argv.includes('--phase2-preview')
@@ -71,6 +83,7 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     setQuitting(true)
+    stopUpdater()
     unregisterShortcut()
     stopKeys()
     stopSelection()
@@ -91,11 +104,13 @@ if (!gotLock) {
       app.dock.hide()
     }
 
+    migrateSettingsIfNeeded()
     const shortcut = registerSummonShortcut(app.getPath('userData'), () => presence.toggle())
     unregisterShortcut = shortcut.unregister
-    registerIpc(presence)
+    registerIpc(presence, shortcut)
     restoreFollow()
     startFollowLoop()
+    startUpdater()
     const tray = createTray({
       pets: () => ({ available: availablePets().map((id) => ({ id, name: PETS[id].name })), selected: currentPetChoice() }),
       choosePet: (id) => {
@@ -105,6 +120,10 @@ if (!gotLock) {
       openPetChooser: () => {
         presence.show()
         postToPet(IPC.petCommand, { kind: 'choose' })
+      },
+      openSetup: () => {
+        presence.show()
+        postToPet(IPC.uiHint, { openSetup: true })
       },
       show: () => presence.show(),
       hide: () => presence.hide(),
@@ -118,6 +137,13 @@ if (!gotLock) {
       },
       autoPaste: chatgptAutoPaste,
       setAutoPaste: setChatgptAutoPaste,
+      gptModePhase: () => getGptModeState().phase,
+      setGptMode: (action) => {
+        if (action === 'enable') void enableGptMode(process.pid)
+        else if (action === 'pause') pauseGptMode()
+        else if (action === 'resume') resumeGptMode()
+        else exitGptMode()
+      },
       bridge: assistantEnabled,
       setBridge: (enabled) => {
         setAssistantEnabled(enabled)
@@ -131,6 +157,7 @@ if (!gotLock) {
     })
     refresh = tray.refresh
     setPlacementListener(syncTree)
+    setPanelOpenedListener(() => hideSwitcher(true))
     createPetWindow({
       onVisibility: () => {
         tray.refresh()
@@ -141,6 +168,42 @@ if (!gotLock) {
     })
     // Show MIKO as soon as it starts (⌘⇧R or the paw menu still hide it).
     presence.show()
+
+    if (process.env['MIKO_VERIFY_INTERACTIVE_GPT'] === '1') {
+      void import('./verify-interactive-gpt').then(({ runInteractiveGptAccessVerify }) =>
+        runInteractiveGptAccessVerify(() => presence.show())
+      )
+    }
+
+    if (process.env['MIKO_VERIFY_CHATGPT_WEB_DND'] === '1') {
+      void import('./verify-chatgpt-web-dnd').then(({ runChatGptWebDndVerify }) =>
+        runChatGptWebDndVerify(() => presence.show())
+      )
+    }
+
+    if (process.env['MIKO_VERIFY_WA_GPT_TRANSFER'] === '1') {
+      void import('./verify-wa-gpt-transfer').then(({ runWaGptTransferVerify }) =>
+        runWaGptTransferVerify(() => presence.show())
+      )
+    }
+
+    if (process.env['MIKO_VERIFY_PET_INTERACTION'] === '1') {
+      void import('./verify-pet-interaction').then(({ runPetInteractionVerify }) =>
+        runPetInteractionVerify(() => presence.show())
+      )
+    }
+
+    if (process.env['MIKO_VERIFY_SEND_IT'] === '1') {
+      void import('./verify-send-it').then(({ runSendItVerify }) =>
+        runSendItVerify(() => presence.show())
+      )
+    }
+
+    if (process.env['MIKO_VERIFY_WA_CONVERSATION'] === '1') {
+      void import('./verify-wa-conversation').then(({ runWaConversationVerify }) =>
+        runWaConversationVerify(() => presence.show())
+      )
+    }
 
     warmSwitcher()
     stopSelection = startSelectionShortcut(() => presence.show())

@@ -79,6 +79,52 @@ export function cleanContactQuery(raw: string): string | null {
   return name
 }
 
+/**
+ * While a WhatsApp open is awaiting a corrected recipient (“No match… Who did you mean?”):
+ * “Santosh G”, “I meant Santosh G”, “Search Santosh G instead”.
+ * Returns a clean contact query, or null when the text is not a recipient correction.
+ */
+export function parseWaRecipientCorrection(raw: string): string | null {
+  const text = normalizeContact(raw).replace(/[.!?]+$/g, '').trim()
+  if (!text || text.length > MAX_CONTACT) return null
+  // Local commands / questions are not recipient corrections.
+  if (
+    /^(?:leave it|never mind|nevermind|cancel|stop that|forget it|scratch that|abort that|drop it|skip that)\b/i.test(
+      text
+    )
+  ) {
+    return null
+  }
+  if (
+    /^(?:sit|stand|stay|wander|home|come\s+back|follow|move|walk|clear|quit|force\s+quit)\b/i.test(text)
+  ) {
+    return null
+  }
+  if (/^(?:how|what|why|when|where|who|which|explain|write|draft a|tell me)\b/i.test(text)) return null
+
+  const meant = /^(?:(?:please\s+)?(?:i\s+)?(?:meant|mean)(?:\s+to\s+say)?)\s+(.+)$/i.exec(text)
+  if (meant?.[1]) return cleanContactQuery(meant[1].replace(/^(?:my|the)\s+/i, '').replace(/\s+chat$/i, ''))
+
+  const instead = /^(?:(?:search(?:\s+for)?|find|look\s+for|try|use)\s+)?(.+?)\s+instead$/i.exec(text)
+  if (instead?.[1]) return cleanContactQuery(instead[1].replace(/^(?:my|the)\s+/i, '').replace(/\s+chat$/i, ''))
+
+  // “search/find/try X” — not “open X” (known apps must still launch and supersede).
+  const search = /^(?:search(?:\s+for)?|find|look\s+for|try|use)\s+(.+)$/i.exec(text)
+  if (search?.[1]) {
+    const rest = search[1].trim().replace(/\s+instead$/i, '')
+    if (/\b(?:in|on)\s+whats\s*app/i.test(rest)) return null
+    if (/\band\s+(?:type|tell|say|write|draft|reply)/i.test(rest)) return null
+    return cleanContactQuery(rest.replace(/^(?:my|the)\s+/i, '').replace(/\s+chat$/i, '').replace(/^(?:for\s+)/i, ''))
+  }
+
+  // Bare name: a few words, no command verbs.
+  if (/^(?:open|launch|start|close|quit|ask|type|tell|reply|send|summari)/i.test(text)) return null
+  if (/\s+(?:in|on)\s+/i.test(text) || /\band\b/i.test(text)) return null
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length === 0 || words.length > 6) return null
+  return cleanContactQuery(text)
+}
+
 export function buildMatches(
   rows: { name: string; snippet?: string; kind?: 'contact' | 'group' }[],
   query: string

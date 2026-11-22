@@ -24,11 +24,26 @@ import {
   type BehaviorOrder
 } from '../../../shared/doberman'
 import { ARRIVE_EPS, clampTravel, guideDestination, nextGuideTarget } from '../../../shared/guide'
-import { canvasOrigin, lookTarget, pointerToViewport } from '../../../shared/look'
+import { LOOK_PITCH_LIMIT, canvasOrigin, lookTarget, pointerToViewport } from '../../../shared/look'
 import { roamFor } from '../../../shared/movement'
 import { EXIT_MS } from '../../../shared/summon'
-import { TextPanel, type PanelEntry } from '../components/TextPanel'
+import { TextPanel, PetChooser, type PanelEntry } from '../components/TextPanel'
 import { ChromeProfileFan } from '../components/ChromeProfileFan'
+import {
+  deliveryStatusLabel,
+  emptyGptModeState,
+  gptModeBanner,
+  isTerminalGptStatus,
+  newGptRequestId,
+  parseGptModeLocalAction,
+  type GptModeState
+} from '../../../shared/gpt-mode'
+import { parseInteractiveGptLocalAction } from '../../../shared/interactive-gpt'
+import {
+  looksLikeWhatsAppApp,
+  parseInteractiveGptTransferAction,
+  selectionUsableForGptTransfer
+} from '../../../shared/interactive-gpt-transfer'
 import {
   matchChromeProfiles,
   parseChromeUsePhrase,
@@ -50,18 +65,48 @@ import {
   applyTimeClarification,
   detectAmbiguousTimes,
   formatVisibleContext,
+  mismatchedThirdPersonQuestion,
   parseDraft,
+  polishRecipientAddress,
   recipientMatchesOpenChat,
   resolveAdditiveFollowUpMode,
+  stripDraftInstructionFraming,
   stripFormalTone,
   whatsAppDraftPrompt,
   whatsAppSummarizePrompt,
   type WhatsAppReplyIntent,
   type WhatsAppSummarizeIntent
 } from '../../../shared/whatsapp-reply'
-import { emptyContext, isFresh, messagesFingerprint, type WorkingContext } from '../../../shared/context'
-import { cancelTask, createTask, type TaskRecord } from '../../../shared/task'
 import {
+  buildContextSnapshot,
+  choiceExpired,
+  draftRefineCandidates,
+  emptyContext,
+  messagesFingerprint,
+  resolveRequestReferences,
+  type ContextSnapshot,
+  type DraftRef,
+  type TaskHistoryEntry,
+  type WorkingContext
+} from '../../../shared/context'
+import {
+  resolveSendDestination,
+  type InteractiveGptDraftBinding
+} from '../../../shared/send-destination'
+import {
+  cancelTask,
+  createTask,
+  isLive,
+  patchPurpose,
+  recordTaskOutcome,
+  resumeTask,
+  setPhase,
+  supersedeTask,
+  suspendTask,
+  type TaskRecord
+} from '../../../shared/task'
+import {
+  bindPlanToSnapshot,
   interpretPrompt,
   parseInterpretResult,
   shouldTryInterpreter,
@@ -69,9 +114,26 @@ import {
 } from '../../../shared/interpret'
 import type { ActionPlan } from '../../../shared/actions'
 import type { CorrectionExample, MikoStructuredPreferences } from '../../../shared/preferences'
-import { DEFAULT_PREFERENCES } from '../../../shared/preferences'
+import { DEFAULT_PREFERENCES, retrieveExamples } from '../../../shared/preferences'
 import { newActionId, toneFromText } from '../../../shared/actions'
+import {
+  bumpPurposeRevision,
+  clarificationExpired,
+  heldDraftFromInstruction,
+  parseRecipientRetarget,
+  resolveClarificationAnswer,
+  reviseInstructionTiming,
+  type HeldWaDraft,
+  type PendingClarification
+} from '../../../shared/task-purpose'
 import { availableKinds, capability } from '../../../shared/capabilities'
+import {
+  assistantNotSignedInMessage,
+  assistantUnavailableMessage,
+  chromeProfilesMissingMessage,
+  showInFileBrowserLabel,
+  unsupportedOnDeviceMessage
+} from '../../../shared/platform-copy'
 import {
   filterAttachments,
   pickLatest,
@@ -105,7 +167,25 @@ export function MotionApp() {
   const [listening, setListening] = useState(false)
   const [listenDetail, setListenDetail] = useState('')
   const [canSpeak, setCanSpeak] = useState(false)
-  const [panelView, setPanelView] = useState<'log' | 'chats' | 'prefs'>('log')
+  const [gptMode, setGptMode] = useState<GptModeState>(() => emptyGptModeState())
+  const gptModeRef = useRef(gptMode)
+  gptModeRef.current = gptMode
+  const [gptDetailsOpen, setGptDetailsOpen] = useState(false)
+  const [, setStageSize] = useState({ width: 800, height: 600 })
+  const [panelView, setPanelView] = useState<'log' | 'chats' | 'prefs' | 'feedback' | 'setup'>('log')
+  const [hostPlatform, setHostPlatform] = useState('darwin')
+  const [feedbackCtx, setFeedbackCtx] = useState<{
+    lastCommand: string
+    actionType?: string | null
+    errorCode?: string | null
+  }>({ lastCommand: '' })
+  const [versionLine, setVersionLine] = useState('')
+  const [assistantStatus, setAssistantStatus] = useState('')
+  const [updateStatus, setUpdateStatus] = useState<import('../../../shared/updater').UpdateStatus | null>(null)
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const lastCommandRef = useRef('')
+  const draftRef = useRef(draft)
+  draftRef.current = draft
   // Pet chooser (Preferences → Choose your pet, the paw menu, and "switch to the cat").
   const [petListing, setPetListing] = useState<PetListing | null>(null)
   const [petBusy, setPetBusy] = useState<PetId | null>(null)
@@ -124,6 +204,10 @@ export function MotionApp() {
   const panelRef = useRef(false)
   const panelSideRef = useRef(panelSide)
   const draggingRef = useRef(false)
+  /** Tab+Q feed-to-close: one-shot snack reaction when an app/tab is dropped on the pet. */
+  const feedPulseRef = useRef(false)
+  /** Brief upward glance when the pet has no snack clip (Doberman). */
+  const feedLookUntilRef = useRef(0)
   const guidingRef = useRef(false)
   const followGoal = useRef<{ x: number; y: number } | null>(null)
   const sitRequest = useRef(false)
@@ -134,6 +218,10 @@ export function MotionApp() {
   const voiceBridge = useRef<(text: string) => void>(() => undefined)
   const handledSession = useRef(0)
   const voiceAutoRef = useRef(true)
+  /** Explicit Dictate-to-GPT arm: next mic final → Interactive GPT composer once (not merely open). */
+  const dictateToGptRef = useRef(false)
+  /** Typed vs voice for shared router decisions (e.g. type-in-gpt → Interactive GPT). */
+  const inputSourceRef = useRef<'typed' | 'voice'>('typed')
   const messagingRef = useRef<'whatsapp' | null>(null)
   /** Last verified WhatsApp chat header (survives MIKO focus; cleared on chat/app switch). */
   const waChatRef = useRef<string | null>(null)
@@ -150,11 +238,19 @@ export function MotionApp() {
   const chromeChooserRef = useRef(chromeChooser)
   chromeChooserRef.current = chromeChooser
   const [reducedMotion, setReducedMotionState] = useState(false)
-  /** Held “type …” from open+type until the chat is verified. */
-  const pendingWaDraftRef = useRef<string | null>(null)
+  /** Held open+tell draft until the chat is verified (instruction + tone/pronoun). */
+  const pendingWaDraftRef = useRef<HeldWaDraft | null>(null)
+  /** Contact search returned no match; waiting for a corrected recipient name. */
+  const awaitingWaRecipientRef = useRef(false)
+  /** Active clarification mirrored into WorkingContext.choice / task.purpose. */
+  const pendingClarificationRef = useRef<PendingClarification | null>(null)
   const lastWebsiteRef = useRef<{ url: string; name: string; browser: string | null; openedAt: number } | null>(null)
   const workingContextRef = useRef<WorkingContext>(emptyContext())
   const activeTaskRef = useRef<TaskRecord | null>(null)
+  /** Parked task while a read-only summarize/question runs — resume must find this. */
+  const suspendedTaskRef = useRef<TaskRecord | null>(null)
+  /** Bounded recent tasks for reference resolution (“that file”, “shorter”, …). */
+  const taskHistoryRef = useRef<TaskHistoryEntry[]>([])
   /** One-off bridge waits (AI interpret). Cancelled tasks never resolve into actions. */
   const interpretWaiters = useRef(
     new Map<string, { resolve: (reply: string | null) => void; token: number; taskId: string }>()
@@ -184,6 +280,29 @@ export function MotionApp() {
 
   async function applyPanel(open: boolean, mode: 'chat' | 'mail' = 'chat'): Promise<void> {
     if (typeof window.miko === 'undefined') return
+    // Capture external editable field BEFORE MIKO steals focus (“type here”).
+    if (open && !panelRef.current) {
+      try {
+        const here = await window.miko.typeDestCaptureHere()
+        if (here && !here.secure) {
+          workingContextRef.current = {
+            ...workingContextRef.current,
+            typeDestination: here,
+            lastExternalApp: here.pid
+              ? {
+                  name: here.appName,
+                  bundleId: here.bundleId,
+                  pid: here.pid,
+                  capturedAt: here.capturedAt
+                }
+              : workingContextRef.current.lastExternalApp,
+            updatedAt: Date.now()
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     const request = ++panelRequest.current
     window.miko.setHitRects([])
     const layout: PanelLayout = await window.miko.setPanelOpen(open, mode)
@@ -195,6 +314,7 @@ export function MotionApp() {
       setPanelView('log')
       whatsAppToken.current += 1
       window.miko.whatsappCancel()
+      window.miko.typeDestCancel()
       window.miko.pasteCancel()
       window.miko.listenCancel()
       setListening(false)
@@ -321,6 +441,74 @@ export function MotionApp() {
   guidingRef.current = gestures.guiding
   cancelGesture.current = gestures.cancel
 
+  /** CDP / live-check bridge: open the real panel and submit as if typed (no parallel path). */
+  useEffect(() => {
+    const w = window as Window & {
+      __mikoPanel?: {
+        open: () => Promise<void>
+        close: () => Promise<void>
+        submit: (text: string) => Promise<void>
+        snapshot: () => unknown
+      }
+    }
+    w.__mikoPanel = {
+      open: async () => {
+        await applyPanel(true, 'chat')
+      },
+      close: async () => {
+        if (panelRef.current) await applyPanel(false)
+      },
+      submit: async (text: string) => {
+        await applyPanel(true, 'chat')
+        await onSubmit(text)
+      },
+      snapshot: () => ({
+        panelOpen: panelRef.current,
+        entries: entriesRef.current.map((e) => {
+          if (e.kind === 'wa-reply') {
+            return {
+              kind: e.kind,
+              status: e.status,
+              chatName: e.chatName,
+              draft: e.draft,
+              instruction: e.instruction,
+              notice: e.notice,
+              error: e.error
+            }
+          }
+          if (e.kind === 'note' || e.kind === 'bridge') {
+            return {
+              kind: e.kind,
+              text: 'text' in e ? e.text : undefined,
+              reply: 'reply' in e ? e.reply : undefined,
+              detail: 'detail' in e ? e.detail : undefined,
+              status: 'status' in e ? e.status : undefined
+            }
+          }
+          if (e.kind === 'choices') {
+            return { kind: e.kind, purpose: e.purpose, text: e.text, options: e.options?.map((o) => o.name) }
+          }
+          if (e.kind === 'gpt-mode') {
+            return {
+              kind: e.kind,
+              requestId: e.requestId,
+              status: e.status,
+              detail: e.detail,
+              text: e.text
+            }
+          }
+          if (e.kind === 'type-dest') {
+            return { kind: e.kind, status: e.status, detail: e.detail, draft: e.draft }
+          }
+          return { kind: e.kind }
+        })
+      })
+    }
+    return () => {
+      delete w.__mikoPanel
+    }
+  })
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || typeof window.miko === 'undefined') return
@@ -427,6 +615,27 @@ export function MotionApp() {
       flavorSerial += 1
       flavor = { clip: chosen.clip, token: -flavorSerial }
       rig.playLoops(chosen.clip, chosen.loops, flavor.token)
+    }
+
+    /** Gentle snack reaction for feed-to-close (existing clips only; never invent bones). */
+    const stepFeedPulse = (): void => {
+      if (!feedPulseRef.current || media.matches || draggingRef.current) {
+        if (media.matches) feedPulseRef.current = false
+        return
+      }
+      feedPulseRef.current = false
+      const pet = rig.current()
+      const preferred = pet?.feedClips ?? []
+      for (const name of preferred) {
+        if (rig.hasClip(name)) {
+          flavorSerial += 1
+          flavor = { clip: name, token: -flavorSerial }
+          rig.playLoops(name, 1, flavor.token)
+          return
+        }
+      }
+      // No snack clip (Doberman): brief upward glance via the existing look damper.
+      feedLookUntilRef.current = performance.now() + 520
     }
 
     /** Bird: plan a flight to the perch, or from the perch back to the ground. */
@@ -774,10 +983,12 @@ export function MotionApp() {
         if (actor.phase !== before.phase || actor.token !== before.token) sync()
         else rig.setYaw(actor.yaw)
         if (actor.phase === 'idle' || actor.phase === 'sitIdle') stepFlavor(dt, actor.phase)
+        stepFeedPulse()
         }
       } else if (actor) {
         wasDragging = draggingRef.current
         rig.setPaused(true)
+        stepFeedPulse()
       }
       rig.setPaused(freezeClip())
       rig.advance(freezeClip() ? 0 : dt)
@@ -792,6 +1003,9 @@ export function MotionApp() {
         const goal = lookTarget(head.x, head.y, local.x, local.y)
         goalYaw = goal.yaw
         goalPitch = goal.pitch
+      }
+      if (!blendingOut && !media.matches && performance.now() < feedLookUntilRef.current) {
+        goalPitch = Math.max(goalPitch, LOOK_PITCH_LIMIT * 0.85)
       }
       rig.dampLook(goalYaw, goalPitch, blendingOut ? 0 : 1, dt)
       if (mode === 'live' || mode === 'exit') rig.render()
@@ -862,6 +1076,10 @@ export function MotionApp() {
         cancelGesture.current()
         if (actor) actor = silence({ ...actor, errand: 'auto', remaining: 0 })
         rig.stop()
+        // Dismiss tucks the chat panel in React too (main already closed layout).
+        panelRef.current = false
+        setPanelOpen(false)
+        setListening(false)
         return
       }
       if (event.phase === 'shown') {
@@ -965,7 +1183,28 @@ export function MotionApp() {
     void refreshPets()
     return window.miko.onPetCommand((command) => {
       if (command.kind === 'switch') void switchPet(command.pet, true)
+      else if (command.kind === 'feed') feedPulseRef.current = true
       else void openPetChooser()
+    })
+  }, [])
+
+  // Interactive GPT open → tuck the regular chat panel (workspace is the reading surface).
+  useEffect(() => {
+    if (typeof window.miko?.onUiHint !== 'function') return
+    return window.miko.onUiHint((hint) => {
+      if (hint.tuckPanel && panelRef.current) void applyPanel(false)
+      if (typeof hint.dictateToGpt === 'boolean') {
+        // Chrome / main arm the session; pet only syncs the ref (notes come from the arming UI/command).
+        dictateToGptRef.current = hint.dictateToGpt
+      }
+      if (hint.openSetup || hint.runTutorial) {
+        void (async () => {
+          if (hint.runTutorial) await window.miko.setupUpdate({ action: 'restart-tutorial' })
+          else await window.miko.setupUpdate({ action: 'start' })
+          setPanelView('setup')
+          if (!panelRef.current) await applyPanel(true, 'chat')
+        })()
+      }
     })
   }, [])
 
@@ -1018,7 +1257,7 @@ export function MotionApp() {
       observer.disconnect()
       window.removeEventListener('resize', schedule)
     }
-  }, [panelOpen, panelSide, hit, chromeChooser])
+  }, [panelOpen, panelSide, hit, chromeChooser, gptMode.liveView])
 
   useEffect(() => {
     return () => {
@@ -1061,6 +1300,37 @@ export function MotionApp() {
     if (typeof window.miko === 'undefined') return
     void window.miko.bridgeStatus().then((st) => setAssistantThread(st?.thread ?? ''))
     void window.miko.prefsGet().then(setPrefs)
+    void window.miko.appInfo().then((info) => {
+      const platform = info.platform || 'darwin'
+      setHostPlatform(platform)
+      setVersionLine(
+        `${info.name} ${info.version} · build ${info.buildId} · ${info.channel}${info.packaged ? '' : ' · dev'}`
+      )
+      void window.miko.bridgeStatus().then((status) => {
+        if (!status) {
+          setAssistantStatus('Assistant status unavailable.')
+          return
+        }
+        if (!status.available) setAssistantStatus(assistantUnavailableMessage(platform))
+        else if (!status.signedIn) setAssistantStatus(assistantNotSignedInMessage(platform))
+        else {
+          setAssistantStatus('Assistant ready (your ChatGPT sign-in via Codex). Interactive GPT web login is separate.')
+        }
+      })
+    })
+    void window.miko.updateGet().then(setUpdateStatus)
+    void window.miko.updateStartup().then((startup) => {
+      if (startup.draft) setDraft(startup.draft)
+      if (startup.notice) pushEntry({ id: 0, kind: 'note', text: startup.notice })
+    })
+    void window.miko.setupGet().then((setup) => {
+      if (setup.status === 'pending') {
+        void window.miko.setupUpdate({ action: 'start' }).then(() => {
+          setPanelView('setup')
+          if (!panelRef.current) void applyPanel(true, 'chat')
+        })
+      }
+    })
     void window.miko.selectionShortcutGet().then(setSelectionKey)
     void window.miko.prefsStructuredGet().then((p) => {
       if (p) setStructuredPrefs(p)
@@ -1085,15 +1355,15 @@ export function MotionApp() {
     const tick = window.setInterval(() => {
       if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) setTick((n) => n + 1)
     }, 1000)
+    const stopUpdate = window.miko.onUpdateStatus((s) => setUpdateStatus(s))
     const stop = window.miko.onBridge((u) => {
       const waiter = interpretWaiters.current.get(u.requestId)
       if (waiter) {
         if (u.phase === 'running') return
         interpretWaiters.current.delete(u.requestId)
+        // Interpret waits are token-scoped so they do not clobber an in-flight WA/attachment task id.
         const live =
-          activeTaskRef.current?.id === waiter.taskId &&
-          activeTaskRef.current.phase !== 'cancelled' &&
-          waiter.token === interpretToken.current
+          waiter.token === interpretToken.current && activeTaskRef.current?.phase !== 'cancelled'
         waiter.resolve(live && u.phase === 'done' ? u.reply ?? '' : null)
         return
       }
@@ -1129,9 +1399,84 @@ export function MotionApp() {
     return () => {
       window.clearInterval(tick)
       stop()
+      stopUpdate()
       stopSelection()
       stopPaste()
     }
+  }, [])
+
+  useEffect(() => {
+    if (!updateStatus || !updateStatus.availableVersion) return
+    if (updateStatus.silencedVersion === updateStatus.availableVersion) return
+    const ver = updateStatus.availableVersion
+    if (updateStatus.mode === 'manual' && updateStatus.phase === 'available') {
+      const marker = `Update available — ${ver}`
+      if (entriesRef.current.some((e) => e.kind === 'note' && e.text.includes(marker))) return
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: `${marker}. Preferences → Download latest version (automatic install is off).`
+      })
+      return
+    }
+    if (updateStatus.phase === 'download-opened') {
+      const marker = 'Download opened'
+      if (entriesRef.current.some((e) => e.kind === 'note' && e.text.includes(marker))) return
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text:
+          hostPlatform === 'win32'
+            ? 'Download opened. Quit MIKO, run the new .exe installer, reopen. SmartScreen may warn — More info → Run anyway.'
+            : 'Download opened. Quit MIKO, replace the app from the new DMG, reopen. Do not disable Gatekeeper.'
+      })
+      return
+    }
+    if (updateStatus.phase === 'installed') {
+      const marker = 'Update installed'
+      if (entriesRef.current.some((e) => e.kind === 'note' && e.text.includes(marker))) return
+      pushEntry({ id: 0, kind: 'note', text: updateStatus.message || 'Update installed.' })
+      return
+    }
+    if (updateStatus.phase !== 'ready') return
+    const already = entriesRef.current.some(
+      (e) => e.kind === 'note' && e.text.includes(`Update ready — ${ver}`)
+    )
+    if (already) return
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text: `Update ready — ${ver}. Restart now / Later (Preferences → Updates).`
+    })
+  }, [updateStatus?.phase, updateStatus?.availableVersion, updateStatus?.silencedVersion, updateStatus?.mode, updateStatus?.message])
+
+  useEffect(() => {
+    if (typeof window.miko?.gptModeGet !== 'function') return
+    void window.miko.gptModeGet().then((s) => {
+      if (s) setGptMode(s)
+    })
+    return window.miko.onGptModeState((s) => {
+      setGptMode(s)
+      // Keep request cards in sync with shared main-process status (fixes stuck Preparing).
+      if (s.lastRequestId && s.lastStatus && isTerminalGptStatus(s.lastStatus)) {
+        setEntries((items) =>
+          items.map((item) =>
+            item.kind === 'gpt-mode' && item.requestId === s.lastRequestId && item.status !== s.lastStatus
+              ? { ...item, status: s.lastStatus!, detail: s.lastDetail || deliveryStatusLabel(s.lastStatus!) }
+              : item
+          )
+        )
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    const syncStage = (): void => {
+      setStageSize({ width: window.innerWidth || 800, height: window.innerHeight || 600 })
+    }
+    syncStage()
+    window.addEventListener('resize', syncStage)
+    return () => window.removeEventListener('resize', syncStage)
   }, [])
 
   useEffect(() => {
@@ -1337,6 +1682,69 @@ export function MotionApp() {
     return e?.kind === 'bridge' && e.selection && e.status === 'done' ? e : null
   }
 
+  function liveDraftRef(): DraftRef | null {
+    for (let i = entriesRef.current.length - 1; i >= 0; i -= 1) {
+      const e = entriesRef.current[i]
+      if (e.kind !== 'wa-reply') continue
+      if (e.status === 'failed' && !e.draft) continue
+      if (!(e.draft || e.status === 'drafting' || e.status === 'review' || e.status === 'ready' || e.status === 'inserted' || e.status === 'clarify-time' || e.status === 'question' || e.status === 'choose-insert')) {
+        continue
+      }
+      return {
+        text: e.draft || '',
+        chatName: e.chatName || waChatRef.current || '',
+        insertedText: e.insertedText || '',
+        instruction: e.instruction || '',
+        tone: null,
+        updatedAt: Date.now()
+      }
+    }
+    return null
+  }
+
+  function syncWorkingContextDraft(): void {
+    const draft = liveDraftRef()
+    workingContextRef.current = {
+      ...workingContextRef.current,
+      draft,
+      whatsapp: waChatRef.current
+        ? {
+            header: waChatRef.current,
+            verifiedAt: workingContextRef.current.whatsapp?.verifiedAt ?? Date.now(),
+            atLatest: workingContextRef.current.whatsapp?.atLatest
+          }
+        : workingContextRef.current.whatsapp,
+      lastWebsite: lastWebsiteRef.current
+        ? {
+            url: lastWebsiteRef.current.url,
+            name: lastWebsiteRef.current.name,
+            browser: lastWebsiteRef.current.browser,
+            openedAt: lastWebsiteRef.current.openedAt
+          }
+        : workingContextRef.current.lastWebsite,
+      updatedAt: Date.now()
+    }
+  }
+
+  function freshSnapshot(): ContextSnapshot {
+    syncWorkingContextDraft()
+    const platform = navigator.platform.toLowerCase().includes('win') ? 'win32' : 'darwin'
+    const waDraftActive = Boolean(liveDraftRef())
+    return buildContextSnapshot({
+      working: workingContextRef.current,
+      platform,
+      messaging: messagingRef.current,
+      waChat: waChatRef.current,
+      waDraftActive,
+      liveDraft: liveDraftRef(),
+      pendingUrl: pendingUrlRef.current,
+      recentTasks: taskHistoryRef.current,
+      activeTaskId: activeTaskRef.current?.id ?? null,
+      mailTab: tabRef.current === 'mail',
+      assistantActive: Boolean(assistantThreadRef.current)
+    })
+  }
+
   function commandContext(): {
     mailTab: boolean
     assistantActive: boolean
@@ -1347,43 +1755,464 @@ export function MotionApp() {
     hasSelection: boolean
     lastWebsite: { url: string; name: string; browser?: string | null } | null
     hasRetrievedFile: boolean
+    awaitingWaRecipient: boolean
+    typeDestActive: boolean
+    typeDestKind: string | null
+    lastExternalApp: { name: string; bundleId?: string } | null
   } {
-    const waDraftActive = entriesRef.current.some(
-      (e) =>
-        e.kind === 'wa-reply' &&
-        e.status !== 'failed' &&
-        (e.draft ||
-          e.status === 'drafting' ||
-          e.status === 'review' ||
-          e.status === 'ready' ||
-          e.status === 'inserted' ||
-          e.status === 'clarify-time' ||
-          e.status === 'question' ||
-          e.status === 'choose-insert')
-    )
-    const sel = workingContextRef.current.selection
-    const retrieved = workingContextRef.current.retrievedFile
+    const snap = freshSnapshot()
+    const typeDest = workingContextRef.current.typeDestination
+    const ext = workingContextRef.current.lastExternalApp
     return {
-      mailTab: tabRef.current === 'mail',
-      assistantActive: Boolean(assistantThreadRef.current),
-      messaging: messagingRef.current,
-      waDraftActive,
-      pendingUrl: pendingUrlRef.current,
-      waChat: waChatRef.current,
-      hasSelection: Boolean(sel && isFresh(sel.capturedAt, Date.now(), 10 * 60 * 1000)),
-      lastWebsite: lastWebsiteRef.current,
-      hasRetrievedFile: Boolean(retrieved?.path && isFresh(retrieved.retrievedAt, Date.now(), 60 * 60 * 1000))
+      mailTab: snap.mailTab,
+      assistantActive: snap.assistantActive,
+      messaging: snap.messaging,
+      waDraftActive: snap.waDraftActive,
+      pendingUrl: snap.pendingUrl,
+      waChat: snap.waChat,
+      hasSelection: snap.selectionFresh,
+      lastWebsite: snap.lastWebsite,
+      hasRetrievedFile: Boolean(snap.retrievedFile),
+      awaitingWaRecipient: awaitingWaRecipientRef.current,
+      typeDestActive: Boolean(typeDest && !typeDest.secure),
+      typeDestKind: typeDest?.kind ?? null,
+      lastExternalApp: ext ? { name: ext.name, bundleId: ext.bundleId } : null
     }
+  }
+
+  function clearWaRecipientEntries(note = 'WhatsApp search cancelled.'): void {
+    setEntries((items) =>
+      items.map((item) => {
+        if (item.kind === 'wa-recipient') return { id: item.id, kind: 'note', text: note }
+        return item
+      })
+    )
+  }
+
+  /** Drop the awaiting-recipient wait. Pending draft is cleared only when `dropPending` is true (cancel / supersede). */
+  function endWaRecipientWait(opts?: { dropPending?: boolean; note?: string }): void {
+    const wasAwaiting = awaitingWaRecipientRef.current
+    awaitingWaRecipientRef.current = false
+    pendingClarificationRef.current = null
+    workingContextRef.current = { ...workingContextRef.current, choice: null, updatedAt: Date.now() }
+    if (opts?.dropPending) pendingWaDraftRef.current = null
+    if (wasAwaiting || opts?.note) clearWaRecipientEntries(opts?.note || 'WhatsApp search cancelled.')
+  }
+
+  /** Resume a suspended task on “continue” / “pick it up”. */
+  async function takeSuspendedResume(text: string): Promise<boolean> {
+    const task =
+      (activeTaskRef.current?.phase === 'suspended' ? activeTaskRef.current : null) ||
+      (suspendedTaskRef.current?.phase === 'suspended' ? suspendedTaskRef.current : null)
+    if (!task) return false
+    if (
+      !/^(?:continue|resume|pick\s+it\s+up|go\s+on|back\s+to\s+(?:that|it)|continue\s+(?:my\s+)?(?:message|request|task|draft)|resume\s+(?:my\s+)?(?:message|request|task))$/i.test(
+        text.trim().replace(/[.!?]+$/g, '')
+      )
+    ) {
+      return false
+    }
+    suspendedTaskRef.current = null
+    activeTaskRef.current = resumeTask(task, task.purpose.clarification?.question || 'Continuing where we left off.')
+    taskHistoryRef.current = recordTaskOutcome(taskHistoryRef.current, activeTaskRef.current)
+    if (task.purpose.clarification) {
+      pendingClarificationRef.current = task.purpose.clarification
+      pushEntry({ id: 0, kind: 'note', text: task.purpose.clarification.question })
+    } else if (task.purpose.unresolvedQuery) {
+      awaitingWaRecipientRef.current = true
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: `Still looking for “${task.purpose.unresolvedQuery}”. Say the name to search again.`
+      })
+    } else {
+      pushEntry({ id: 0, kind: 'note', text: 'Okay — continuing that request.' })
+    }
+    return true
+  }
+
+  /** Apply a short clarification answer before general routing / assistant fallback. */
+  async function takeClarificationAnswer(text: string): Promise<boolean> {
+    if (await takeSuspendedResume(text)) return true
+    const clarification = pendingClarificationRef.current
+    if (!clarification) return false
+    if (clarificationExpired(clarification)) {
+      const answer = resolveClarificationAnswer(text, { ...clarification, kind: 'resume' })
+      if (answer.kind === 'resume_yes') {
+        pendingClarificationRef.current = { ...clarification, createdAt: Date.now(), expiresAt: Date.now() + 30 * 60 * 1000 }
+        pushEntry({ id: 0, kind: 'note', text: clarification.question })
+        return true
+      }
+      if (answer.kind === 'resume_no' || answer.kind === 'cancel') {
+        endWaRecipientWait({ dropPending: true, note: 'Okay — I dropped the old pending request.' })
+        if (activeTaskRef.current) {
+          const cancelled = cancelTask(activeTaskRef.current, 'Expired clarification discarded.')
+          activeTaskRef.current = cancelled
+          taskHistoryRef.current = recordTaskOutcome(taskHistoryRef.current, cancelled)
+        }
+        return true
+      }
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: `That request went quiet. Say “yes” to resume (“${clarification.question.slice(0, 60)}”), or “no” to drop it.`
+      })
+      return true
+    }
+
+    const answer = resolveClarificationAnswer(text, clarification)
+    if (answer.kind === 'unrelated') return false
+    if (answer.kind === 'cancel' || answer.kind === 'start_over') {
+      cancelWorkflow(answer.kind === 'start_over' ? 'Okay — starting over.' : 'Okay. Cancelled.')
+      return true
+    }
+    if (answer.kind === 'go_back') {
+      pushEntry({ id: 0, kind: 'note', text: clarification.question })
+      return true
+    }
+    if (answer.kind === 'recipient') {
+      awaitingWaRecipientRef.current = false
+      pendingClarificationRef.current = null
+      await runWhatsApp(answer.query, answer.query)
+      return true
+    }
+    if (answer.kind === 'chooser') {
+      if (clarification.kind === 'send_destination') {
+        pendingClarificationRef.current = null
+        if (answer.optionId === 'chatgpt' || /^chatgpt$/i.test(answer.name)) {
+          await submitInteractiveGptDraft()
+          return true
+        }
+        if (answer.optionId === 'whatsapp' || /^whatsapp$/i.test(answer.name)) {
+          const snap = freshSnapshot()
+          const chat = snap.draft?.chatName || snap.waChat || 'WhatsApp'
+          pushEntry({
+            id: 0,
+            kind: 'note',
+            text: `The draft for “${chat}” stays unsent — press Send in WhatsApp when you want it delivered.`
+          })
+          return true
+        }
+        pushEntry({ id: 0, kind: 'note', text: 'Say ChatGPT or WhatsApp.' })
+        return true
+      }
+      if (clarification.kind === 'ambiguous_ref') {
+        const change = clarification.held?.instruction || 'shorter'
+        pendingClarificationRef.current = null
+        if (answer.optionId === 'resume' || /^the paused/i.test(answer.name)) {
+          await takeSuspendedResume('continue')
+          return true
+        }
+        if (answer.optionId === 'file' || /\.pdf\b/i.test(answer.name) || /verified file/i.test(answer.name)) {
+          const catalog = await loadCatalog()
+          if (!catalog) return true
+          await runDecision(routeCommand('copy that file', 'typed', catalog, await loadChats(), commandContext()))
+          return true
+        }
+        if (answer.optionId === 'other' || /^something else/i.test(answer.name)) {
+          pushEntry({
+            id: 0,
+            kind: 'note',
+            text: 'Okay — say what you meant. The paused request stays until you continue or cancel it.'
+          })
+          return true
+        }
+        // “Tell them Sam will join her” — who is her? Merge into the existing draft.
+        if (answer.optionId === 'recipient' || /^the person/i.test(answer.name)) {
+          const active = activeWaReply()
+          const held = clarification.held
+          const addition = (held?.instruction || '').replace(/\b(her|him)\b/gi, 'you') || 'Sam will join you'
+          if (active && active.kind === 'wa-reply') {
+            const mergedInstruction = active.draft
+              ? `${active.instruction}; also: ${addition}`
+              : addition
+            patchWaReply(active.id, {
+              instruction: mergedInstruction,
+              notice: 'Got it — treating that as the person you’re messaging.',
+              status: active.draft ? active.status : 'ready'
+            })
+            await sendWaDraft(active.id, {
+              chatName: active.chatName,
+              instruction: mergedInstruction,
+              context: active.context,
+              previous: active.draft || undefined,
+              change: active.draft
+                ? `Add this while keeping every sentence of the current draft: ${addition}. Convert her/him to you when it means the recipient. Keep Sam (or other named people) in third person.`
+                : undefined,
+              pronoun: held?.pronoun ?? active.pronoun
+            })
+            return true
+          }
+          pushEntry({ id: 0, kind: 'note', text: 'Got it — say the message again and I’ll draft it to them.' })
+          return true
+        }
+        if (answer.optionId === 'someone-else' || /^someone else/i.test(answer.name)) {
+          const active = activeWaReply()
+          const held = clarification.held
+          const addition = held?.instruction || ''
+          if (active && active.kind === 'wa-reply' && addition) {
+            const mergedInstruction = active.draft
+              ? `${active.instruction}; also: ${addition}`
+              : addition
+            patchWaReply(active.id, {
+              instruction: mergedInstruction,
+              notice: 'Got it — keeping that person in third person.',
+              status: active.draft ? active.status : 'ready'
+            })
+            await sendWaDraft(active.id, {
+              chatName: active.chatName,
+              instruction: mergedInstruction,
+              context: active.context,
+              previous: active.draft || undefined,
+              change: active.draft
+                ? `Add this while keeping every sentence of the current draft: ${addition}. Keep her/him in third person (not the recipient). Keep named people as written.`
+                : undefined,
+              pronoun: held?.pronoun ?? active.pronoun
+            })
+            return true
+          }
+          pushEntry({
+            id: 0,
+            kind: 'note',
+            text: 'Okay — keep using their name or say who you mean, then I’ll draft it.'
+          })
+          return true
+        }
+        const target = entriesRef.current.find(
+          (e) => e.kind === 'wa-reply' && e.draft && sameContact(e.chatName, answer.name)
+        )
+        if (target && target.kind === 'wa-reply') {
+          await sendWaDraft(target.id, {
+            chatName: target.chatName,
+            instruction: target.instruction,
+            context: target.context,
+            previous: target.draft,
+            change,
+            pronoun: target.pronoun
+          })
+          return true
+        }
+        pushEntry({ id: 0, kind: 'note', text: `I’ll refine the draft for “${answer.name}”.` })
+        return true
+      }
+      const chooser = activeWhatsAppChooser()
+      if (chooser) {
+        const rememberAs = chooser.payload || answer.name
+        await runWhatsApp(rememberAs, rememberAs, answer.optionId, chooser.id)
+        pendingClarificationRef.current = null
+        return true
+      }
+      pushEntry({ id: 0, kind: 'note', text: `Using “${answer.name}”.` })
+      pendingClarificationRef.current = null
+      return true
+    }
+    if (answer.kind === 'browser' && pendingUrlRef.current) {
+      pendingClarificationRef.current = null
+      const catalog = await loadCatalog()
+      if (!catalog) return true
+      await runDecision(
+        routeCommand(`open ${pendingUrlRef.current.name} in ${answer.browser}`, 'typed', catalog, await loadChats(), commandContext())
+      )
+      return true
+    }
+    if (answer.kind === 'time') {
+      const reply = activeWaReply()
+      if (reply && (reply.status === 'clarify-time' || reply.timeChoices?.length)) {
+        const token = reply.ambiguousTimeToken || ''
+        const source =
+          (reply.pendingAdditiveRefine ? reply.pendingAdditive : reply.instruction) || reply.instruction
+        const choice = answer.choice.trim()
+        const isPreset =
+          /^keep as written$/i.test(choice) ||
+          /^\d{1,2}:\d{2}\s*(?:A\.?M\.?|P\.?M\.?)$/i.test(choice) ||
+          /^keep\s+.+/i.test(choice)
+        const finalInstruction = isPreset ? applyTimeClarification(source, token, choice) : choice
+        patchWaReply(reply.id, {
+          instruction: reply.pendingAdditiveRefine && reply.draft ? reply.instruction : finalInstruction,
+          pendingAdditive: '',
+          pendingAdditiveRefine: false,
+          question: '',
+          answer: '',
+          timeChoices: [],
+          ambiguousTimeToken: '',
+          notice: ''
+        })
+        await sendWaDraft(reply.id, {
+          chatName: reply.chatName,
+          instruction: finalInstruction,
+          context: reply.context,
+          pronoun: reply.pronoun
+        })
+        pendingClarificationRef.current = null
+        return true
+      }
+    }
+    if (answer.kind === 'attachment') {
+      pendingClarificationRef.current = null
+      if (answer.label === 'other' && !/\b(?:pdf|file|document|image)/i.test(answer.text)) {
+        pushEntry({ id: 0, kind: 'note', text: 'Okay — say what you wanted to copy.' })
+        return true
+      }
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: `Okay — I’ll use the ${answer.label === 'other' ? 'file' : answer.label}.`
+      })
+      const catalog = await loadCatalog()
+      if (!catalog) return true
+      await runDecision(routeCommand(`copy that ${answer.label === 'pdf' ? 'PDF' : 'file'}`, 'typed', catalog, await loadChats(), commandContext()))
+      return true
+    }
+    return false
+  }
+
+  /**
+   * S38: “No, this is for B” — drop authorization to insert into A, open/search B, keep draft text.
+   */
+  async function takeRecipientRetarget(text: string): Promise<boolean> {
+    const name = parseRecipientRetarget(text)
+    if (!name) return false
+    const reply = activeWaReply()
+    const held = pendingWaDraftRef.current
+    if (!reply?.draft && !held?.instruction && !reply?.instruction) return false
+    const prior = reply?.chatName || waChatRef.current || ''
+    if (prior && sameContact(prior, name)) {
+      pushEntry({ id: 0, kind: 'note', text: `Already drafting for “${prior}”.` })
+      return true
+    }
+    // Invalidate insert into the old chat.
+    setWhatsAppTarget(null)
+    if (reply) {
+      patchWaReply(reply.id, {
+        chatName: name,
+        status: 'switched',
+        pendingHeader: '',
+        notice: prior
+          ? `Okay — this is for “${name}”, not “${prior}”. I’ll open that chat before inserting.`
+          : `Okay — this is for “${name}”. I’ll open that chat before inserting.`,
+        autoInsert: true
+      })
+      if (reply.instruction) setHeldWaDraft(reply.instruction, { tone: reply.pronoun ? null : null, pronoun: reply.pronoun })
+    } else if (held) {
+      setHeldWaDraft(held.instruction, { tone: held.tone, pronoun: held.pronoun, literal: held.literal })
+    }
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text: `Switching the draft to “${name}”. Nothing will be inserted into the previous chat.`
+    })
+    await runWhatsApp(name, name)
+    return true
+  }
+
+  /** “Actually, next week” / “Not tomorrow, Friday” revises timing instead of stacking both. */
+  async function takeInstructionRevision(text: string): Promise<boolean> {
+    const reply = activeWaReply()
+    const held = pendingWaDraftRef.current
+    const base = reply?.instruction || held?.instruction
+    if (!base) return false
+    const trimmed = text.trim()
+    // Refines like “Make it shorter / more formal” are not timing revisions.
+    if (
+      /^(?:make\s+it\s+(?:shorter|longer|more\s+\w+|less\s+\w+|casual|formal|polite|friendlier)|shorter|longer|more\s+formal|more\s+casual|more\s+polite)\b/i.test(
+        trimmed
+      )
+    ) {
+      return false
+    }
+    if (
+      !/^(?:actually|instead|change\s+that\s+to|make\s+it|no,|not\s+)/i.test(trimmed) &&
+      !/^(?:next\s+week|tomorrow)$/i.test(trimmed)
+    ) {
+      return false
+    }
+    const revised = reviseInstructionTiming(base, text)
+    if (!revised || revised === base) return false
+    if (held) setHeldWaDraft(revised, { tone: held.tone, pronoun: held.pronoun, literal: held.literal })
+    if (reply) {
+      patchWaReply(reply.id, { instruction: revised, notice: 'Updated the timing in your instruction.' })
+      if (reply.status === 'ready' || reply.status === 'inserted' || reply.status === 'failed' || reply.status === 'choose-insert') {
+        await sendWaDraft(reply.id, {
+          chatName: reply.chatName,
+          instruction: revised,
+          context: reply.context,
+          previous: reply.draft || undefined,
+          change: reply.draft
+            ? `Update the timing only per: “${trimmed}”. Keep every other sentence and question from the current draft (including free/evening asks). Do not drop content unrelated to the day/time change.`
+            : undefined,
+          pronoun: reply.pronoun
+        })
+      }
+    } else {
+      pushEntry({ id: 0, kind: 'note', text: `Updated to: “${revised}”.` })
+    }
+    return true
+  }
+
+  function finishActiveTask(
+    phase: 'completed' | 'failed' | 'cancelled',
+    progress: string,
+    artifacts?: TaskHistoryEntry['artifacts']
+  ): void {
+    const cur = activeTaskRef.current
+    if (!cur) return
+    const next = { ...cur, phase, progress, updatedAt: Date.now(), error: phase === 'failed' ? progress : cur.error }
+    activeTaskRef.current = next
+    taskHistoryRef.current = recordTaskOutcome(taskHistoryRef.current, next, artifacts)
+    if (phase !== 'cancelled') {
+      workingContextRef.current = { ...workingContextRef.current, taskId: null, updatedAt: Date.now() }
+    }
+  }
+
+  /** Start a new exclusive action task; supersede any still-live prior task. */
+  function beginExclusiveTask(plan: ActionPlan): TaskRecord {
+    const prior = activeTaskRef.current
+    if (prior && prior.phase !== 'cancelled' && prior.phase !== 'completed' && prior.phase !== 'failed') {
+      const cancelled = supersedeTask(prior)
+      if (cancelled) {
+        activeTaskRef.current = cancelled
+        taskHistoryRef.current = recordTaskOutcome(taskHistoryRef.current, cancelled)
+      }
+      // A newer exclusive plan replaces a stuck recipient wait.
+      if (awaitingWaRecipientRef.current || pendingWaDraftRef.current) {
+        endWaRecipientWait({ dropPending: true, note: 'Superseded by a newer request — pending WhatsApp message dropped.' })
+      }
+    }
+    const task = createTask(plan)
+    activeTaskRef.current = task
+    workingContextRef.current = { ...workingContextRef.current, taskId: task.id, updatedAt: Date.now() }
+    return task
   }
 
   function setWhatsAppTarget(header: string | null): void {
     if (header) {
       messagingRef.current = 'whatsapp'
       waChatRef.current = header
+      workingContextRef.current = {
+        ...workingContextRef.current,
+        whatsapp: { header, verifiedAt: Date.now(), source: 'observed' },
+        updatedAt: Date.now()
+      }
+      const task = activeTaskRef.current
+      if (task && task.phase !== 'cancelled' && task.phase !== 'failed') {
+        activeTaskRef.current = patchPurpose(
+          task,
+          bumpPurposeRevision(task.purpose, {
+            destination: header,
+            destinationSource: 'observed',
+            unresolvedQuery: null
+          })
+        )
+      }
       return
     }
     messagingRef.current = null
     waChatRef.current = null
+    workingContextRef.current = {
+      ...workingContextRef.current,
+      whatsapp: null,
+      updatedAt: Date.now()
+    }
   }
 
   /** Last non-MIKO front app bundle — used to detect a real switch away from WhatsApp. */
@@ -1425,25 +2254,39 @@ export function MotionApp() {
 
   function cancelWorkflow(note = 'Okay. Cancelled.'): void {
     pendingUrlRef.current = null
+    endWaRecipientWait({ dropPending: true, note: 'Cancelled — pending WhatsApp message dropped.' })
     pendingWaDraftRef.current = null
+    suspendedTaskRef.current = null
     dismissChromeChooser()
     interpretToken.current += 1
     attachmentToken.current += 1
+    clearInteractiveGptDraft('cancelled')
+    if (typeof window.miko.chatgptWebCancelSubmit === 'function') {
+      void window.miko.chatgptWebCancelSubmit()
+    }
     for (const [id, waiter] of interpretWaiters.current) {
       window.miko.bridgeCancel(id)
       waiter.resolve(null)
     }
     interpretWaiters.current.clear()
-    if (activeTaskRef.current) activeTaskRef.current = cancelTask(activeTaskRef.current, note)
+    if (activeTaskRef.current) {
+      const cancelled = cancelTask(activeTaskRef.current, note)
+      activeTaskRef.current = cancelled
+      taskHistoryRef.current = recordTaskOutcome(taskHistoryRef.current, cancelled)
+    }
     const keptFile = workingContextRef.current.retrievedFile
     workingContextRef.current = {
       ...workingContextRef.current,
       taskId: null,
       choice: null,
       pendingAttach: null,
+      // Keep draft + retrievedFile so unsent drafts and “that file” survive cancel of a different step.
+      draft: workingContextRef.current.draft,
+      retrievedFile: keptFile,
       updatedAt: Date.now()
     }
     cancelWaReplyWork()
+    window.miko.typeDestCancel()
     // Cancel in-flight assistant / summarize one-offs that belong to the active workflow.
     for (const e of entriesRef.current) {
       if (e.kind === 'bridge' && e.requestId && (e.status === 'sending' || e.status === 'running')) {
@@ -1558,7 +2401,7 @@ export function MotionApp() {
       pushEntry({
         id: 0,
         kind: 'note',
-        text: 'Chrome has no readable profiles on this Mac. Nothing was invented.'
+        text: chromeProfilesMissingMessage(hostPlatform)
       })
       return
     }
@@ -1674,14 +2517,18 @@ export function MotionApp() {
     const held = pendingWaDraftRef.current
     if (!held || !waChatRef.current) return
     pendingWaDraftRef.current = null
-    const formal = stripFormalTone(held)
+    pendingClarificationRef.current = null
+    const formal = stripFormalTone(held.instruction)
     const toned = toneFromText(formal.instruction)
+    const tone = held.tone || toned.tone
     const polished =
-      formal.formal || toned.tone === 'formal' || toned.tone === 'professional'
-        ? `Write this in a formal, polished way: ${toned.rest}`
-        : toned.tone === 'friendly'
-          ? `Write this in a friendly way: ${toned.rest}`
-          : toned.rest
+      held.literal
+        ? held.instruction
+        : formal.formal || tone === 'formal' || tone === 'professional'
+          ? `Write this in a formal, polished way: ${toned.rest}`
+          : tone === 'friendly' || tone === 'casual'
+            ? `Write this in a friendly way: ${toned.rest}`
+            : toned.rest
     // Held open+tell / open+say content is always a drafting instruction — never literal paste.
     // Only explicit “type exactly …” / Draft: paths set literal.
     await startWhatsAppReply({
@@ -1689,12 +2536,74 @@ export function MotionApp() {
       needsContext: false,
       autoInsert: true,
       replyHere: true,
-      literal: false
+      literal: held.literal === true,
+      pronoun: held.pronoun
     })
   }
 
+  /** Collapse Interactive GPT to a pill when WhatsApp is the active surface — keep session/draft. */
+  async function tuckInteractiveGptForWhatsApp(): Promise<void> {
+    if (typeof window.miko === 'undefined' || typeof window.miko.chatgptWebStatus !== 'function') return
+    try {
+      const st = await window.miko.chatgptWebStatus()
+      if (!st.open || st.collapsed || st.visible === false) return
+      if (typeof window.miko.chatgptWebCollapse === 'function') {
+        await window.miko.chatgptWebCollapse()
+      }
+    } catch {
+      /* ignore — WhatsApp path still proceeds */
+    }
+  }
+
+  function setHeldWaDraft(instruction: string, opts?: { tone?: HeldWaDraft['tone']; pronoun?: HeldWaDraft['pronoun']; literal?: boolean }): void {
+    const cleaned =
+      opts?.literal === true ? instruction.trim() : stripDraftInstructionFraming(instruction) || instruction.trim()
+    const held = heldDraftFromInstruction(cleaned, opts)
+    pendingWaDraftRef.current = held
+    const task = activeTaskRef.current
+    if (task) {
+      activeTaskRef.current = patchPurpose(
+        task,
+        bumpPurposeRevision(task.purpose, { heldDraft: held, suspended: false })
+      )
+    }
+  }
+
+  function setPendingClarification(clarification: PendingClarification | null): void {
+    pendingClarificationRef.current = clarification
+    const priorRev = workingContextRef.current.choice?.revision ?? 0
+    workingContextRef.current = {
+      ...workingContextRef.current,
+      choice: clarification
+        ? {
+            purpose: clarification.kind,
+            options: clarification.options || [],
+            held: clarification.held
+              ? { content: clarification.held.instruction, tone: clarification.held.tone ?? null, kind: 'draft_whatsapp' }
+              : undefined,
+            createdAt: clarification.createdAt,
+            revision: priorRev + 1,
+            source: 'explicit'
+          }
+        : null,
+      updatedAt: Date.now()
+    }
+    const task = activeTaskRef.current
+    if (task) {
+      activeTaskRef.current = patchPurpose(
+        setPhase(task, clarification ? 'needs_choice' : task.phase === 'needs_choice' ? 'executing' : task.phase),
+        bumpPurposeRevision(task.purpose, { clarification, suspended: false })
+      )
+    }
+  }
+
   function patchWaReply(id: number, patch: Partial<Extract<PanelEntry, { kind: 'wa-reply' }>>): void {
-    setEntries((items) => items.map((item) => (item.kind === 'wa-reply' && item.id === id ? { ...item, ...patch } : item)))
+    // Keep entriesRef in sync immediately — callers like maybeAutoInsert read it
+    // before React re-renders (otherwise draft stays empty and auto-insert no-ops).
+    entriesRef.current = entriesRef.current.map((item) =>
+      item.kind === 'wa-reply' && item.id === id ? { ...item, ...patch } : item
+    )
+    setEntries(entriesRef.current)
   }
 
   function activeWaReply(): Extract<PanelEntry, { kind: 'wa-reply' }> | null {
@@ -1756,6 +2665,7 @@ export function MotionApp() {
       items.map((item) => {
         if (item.id === exceptId) return item
         if (item.kind === 'whatsapp') return { id: item.id, kind: 'note', text: 'WhatsApp search cancelled.' }
+        if (item.kind === 'wa-recipient') return { id: item.id, kind: 'note', text: 'WhatsApp search cancelled.' }
         if (item.kind === 'choices' && item.purpose === 'whatsapp') {
           return { id: item.id, kind: 'note', text: 'WhatsApp search cancelled.' }
         }
@@ -1764,23 +2674,61 @@ export function MotionApp() {
     )
   }
 
+  function showWaRecipientRetry(id: number, query: string): void {
+    awaitingWaRecipientRef.current = true
+    messagingRef.current = 'whatsapp'
+    waChatRef.current = null
+    const question = `No match for ${query}. Who did you mean?`
+    setPendingClarification({
+      kind: 'recipient',
+      question,
+      held: pendingWaDraftRef.current,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000
+    })
+    if (activeTaskRef.current && activeTaskRef.current.phase !== 'cancelled' && activeTaskRef.current.phase !== 'failed') {
+      activeTaskRef.current = patchPurpose(
+        setPhase(activeTaskRef.current, 'needs_choice', question),
+        bumpPurposeRevision(activeTaskRef.current.purpose, {
+          unresolvedQuery: query,
+          heldDraft: pendingWaDraftRef.current,
+          nextStep: 'open_whatsapp_chat'
+        })
+      )
+    }
+    replaceEntry(id, {
+      id,
+      kind: 'wa-recipient',
+      text: question,
+      query
+    })
+  }
+
   function showWhatsAppChoices(id: number, rememberAs: string, result: WhatsAppOpenResult): void {
     const matches = result.matches.length
       ? result.matches
       : result.names.map((name): WhatsAppMatch => ({ id: name, name, snippet: '', exact: sameContact(name, rememberAs) }))
+    const options = matches.map((match) => ({
+      id: match.id,
+      name: match.name,
+      familiar: true,
+      detail: match.snippet || undefined,
+      kind: match.kind,
+      exact: match.exact
+    }))
+    setPendingClarification({
+      kind: 'chooser',
+      question: result.reason || 'Which chat did you mean?',
+      options: options.map((o) => ({ id: o.id, name: o.name, detail: o.detail })),
+      held: pendingWaDraftRef.current,
+      createdAt: Date.now()
+    })
     replaceEntry(id, {
       id,
       kind: 'choices',
       purpose: 'whatsapp',
       text: result.reason || 'Which chat did you mean?',
-      options: matches.map((match) => ({
-        id: match.id,
-        name: match.name,
-        familiar: true,
-        detail: match.snippet || undefined,
-        kind: match.kind,
-        exact: match.exact
-      })),
+      options,
       payload: rememberAs
     })
   }
@@ -1821,9 +2769,39 @@ export function MotionApp() {
       return
     }
     const work = (async () => {
+      await tuckInteractiveGptForWhatsApp()
       const token = ++whatsAppToken.current
+      awaitingWaRecipientRef.current = false
       clearWhatsAppChoosers(entryId ?? 0)
       if (!pickId) window.miko.whatsappCancel()
+
+      // If the verified open chat already matches the corrected recipient, reuse it.
+      if (!pickId) {
+        try {
+          const peek = await window.miko.whatsappPeek(false)
+          if (
+            token === whatsAppToken.current &&
+            peek.status === 'peeked' &&
+            peek.header &&
+            recipientMatchesOpenChat(query, peek.header)
+          ) {
+            const id =
+              entryId ??
+              pushEntry({ id: 0, kind: 'note', text: `“${peek.header}” is already open in WhatsApp.` })
+            if (entryId) {
+              replaceEntry(entryId, { id: entryId, kind: 'note', text: `“${peek.header}” is already open in WhatsApp.` })
+            } else {
+              replaceEntry(id, { id, kind: 'note', text: `“${peek.header}” is already open in WhatsApp.` })
+            }
+            setWhatsAppTarget(peek.header)
+            await resumePendingWaDraft()
+            return
+          }
+        } catch {
+          // Fall through to a normal search.
+        }
+      }
+
       const id =
         entryId ??
         pushEntry({
@@ -1842,23 +2820,43 @@ export function MotionApp() {
       if (token !== whatsAppToken.current) return
       if (result.status === 'choices') {
         // Keep any held draft; resume only after the owner picks a chat.
+        awaitingWaRecipientRef.current = false
         showWhatsAppChoices(id, rememberAs, result)
         return
       }
-      replaceEntry(id, { id, kind: 'note', text: whatsAppLine(query, result) })
       if (result.status === 'opened') {
+        awaitingWaRecipientRef.current = false
+        replaceEntry(id, { id, kind: 'note', text: whatsAppLine(query, result) })
         setWhatsAppTarget(result.header || rememberAs)
         offerWhatsAppAlias(rememberAs, result.header)
         await resumePendingWaDraft()
         return
       }
-      // Navigation failed — drop the held draft so it cannot paste into the wrong chat later.
-      if (pendingWaDraftRef.current) {
-        pendingWaDraftRef.current = null
-        pushEntry({ id: 0, kind: 'note', text: 'I dropped the pending message until a WhatsApp chat is open.' })
+      // No match: keep the held message and ask for a corrected name (do not use a prior chat).
+      if (result.status === 'none') {
+        waChatRef.current = null
+        showWaRecipientRetry(id, query)
+        return
       }
-      if (result.status === 'lost-focus' || result.status === 'failed' || result.status === 'none') {
-        setWhatsAppTarget(null)
+      // Other failures: keep any held draft; clear destination so we never paste into the wrong chat.
+      replaceEntry(id, { id, kind: 'note', text: whatsAppLine(query, result) })
+      if (result.status === 'lost-focus' || result.status === 'failed' || result.status === 'assisted') {
+        waChatRef.current = null
+        if (pendingWaDraftRef.current) {
+          awaitingWaRecipientRef.current = true
+          messagingRef.current = 'whatsapp'
+          pushEntry({
+            id: 0,
+            kind: 'note',
+            text: 'The pending message is still held. Say the contact name to try again, or Cancel.'
+          })
+        } else {
+          messagingRef.current = null
+        }
+      }
+      if (result.status === 'cancelled') {
+        // Explicit cancel path — drop held work.
+        endWaRecipientWait({ dropPending: true })
       }
     })()
     if (!pickId) waOpenTasks.current.set(coalesceKey, work)
@@ -2023,8 +3021,21 @@ export function MotionApp() {
       return
     }
     if (locked.header !== entry.chatName) patchWaReply(entryId, { chatName: locked.header })
-    const check = await window.miko.whatsappInsert({ expectHeader: locked.header, text: '', mode: 'ask' })
+    let check = await window.miko.whatsappInsert({ expectHeader: locked.header, text: '', mode: 'ask' })
     if (token !== waReplyToken.current) return
+    // Fallback peek when ask can’t classify (focus/AX blip) — empty composer should still insert.
+    if (check.status !== 'empty' && check.status !== 'has-text' && check.status !== 'switched') {
+      const peek = await window.miko.whatsappPeek(false)
+      if (token !== waReplyToken.current) return
+      if (peek.status === 'peeked' && recipientMatchesOpenChat(locked.header, peek.header)) {
+        check = {
+          ...check,
+          status: (peek.composerText || '').trim() ? 'has-text' : 'empty',
+          composerText: peek.composerText || '',
+          header: peek.header
+        }
+      }
+    }
     if (check.status === 'switched') {
       patchWaReply(entryId, { status: 'switched', pendingHeader: check.header, draft: entry.draft, notice: check.reason })
       return
@@ -2053,7 +3064,8 @@ export function MotionApp() {
       patchWaReply(entryId, { status: 'failed', error: 'No draft came back.', requestId: '' })
       return
     }
-    patchWaReply(entryId, { draft: parsed.text, requestId: '', status: entry.autoInsert ? 'drafting' : 'ready', error: '' })
+    const polished = polishRecipientAddress(parsed.text, entry.pronoun)
+    patchWaReply(entryId, { draft: polished, requestId: '', status: entry.autoInsert ? 'drafting' : 'ready', error: '' })
     void maybeAutoInsert(entryId, token)
   }
 
@@ -2220,19 +3232,54 @@ export function MotionApp() {
       draftEditedLocally: Boolean(active.insertedText && active.draft !== active.insertedText && active.status !== 'choose-insert')
     })
     if (mode === 'blocked-edit') {
+      const outside =
+        composerStatus === 'has-text' &&
+        (check.composerText || '') !== active.draft &&
+        (check.composerText || '') !== active.insertedText
       patchWaReply(active.id, {
-        status: 'ready',
-        notice: 'You edited the draft in MIKO. Confirm refine to overwrite, or insert the edited text first.',
+        status: outside ? 'choose-insert' : 'ready',
+        notice: outside
+          ? 'The WhatsApp message box was edited outside MIKO. Choose Replace, Append, or Keep — I won’t overwrite it silently.'
+          : 'You edited the draft in MIKO. Confirm refine to overwrite, or insert the edited text first.',
         followUp: intent.instruction,
         pronoun: intent.pronoun ?? active.pronoun
       })
       return 'blocked'
     }
     if (mode === 'refine-unsent') {
+      const whoAsk = mismatchedThirdPersonQuestion(intent.instruction, intent.pronoun ?? active.pronoun)
+      if (whoAsk) {
+        setPendingClarification({
+          kind: 'ambiguous_ref',
+          question: whoAsk,
+          options: [
+            { id: 'recipient', name: 'The person I’m messaging' },
+            { id: 'someone-else', name: 'Someone else' }
+          ],
+          held: heldDraftFromInstruction(intent.instruction, {
+            pronoun: intent.pronoun ?? active.pronoun
+          }),
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 30 * 60 * 1000
+        })
+        patchWaReply(active.id, {
+          status: 'question',
+          question: whoAsk,
+          pronoun: intent.pronoun ?? active.pronoun,
+          notice: ''
+        })
+        pushEntry({ id: 0, kind: 'note', text: whoAsk })
+        return 'handled'
+      }
+      const mergedInstruction = `${active.instruction}; also: ${intent.instruction}`
       const change = `Add this to the existing draft (keep prior content; integrate naturally; strip tell/say/ask framing): ${intent.instruction}`
+      patchWaReply(active.id, {
+        instruction: mergedInstruction,
+        pronoun: intent.pronoun ?? active.pronoun
+      })
       await sendWaDraft(active.id, {
         chatName: active.chatName,
-        instruction: `${active.instruction}; also: ${intent.instruction}`,
+        instruction: mergedInstruction,
         context: active.context,
         previous: active.draft,
         change,
@@ -2261,13 +3308,76 @@ export function MotionApp() {
 
   async function startWhatsAppReply(intent: WhatsAppReplyIntent): Promise<void> {
     messagingRef.current = 'whatsapp'
+    await tuckInteractiveGptForWhatsApp()
+    // Natural drafts: strip instruction wrappers again before model/insert (typed + voice share this path).
+    if (!intent.literal && intent.instruction) {
+      const cleaned = stripDraftInstructionFraming(intent.instruction)
+      if (cleaned && cleaned !== intent.instruction) intent = { ...intent, instruction: cleaned }
+    }
+    // Bare “tell them …” with an unsent draft must merge, not wipe (continuous panel flow).
+    const live = activeWaReply()
+    if (
+      !intent.refine &&
+      !intent.literal &&
+      !intent.additive &&
+      live?.draft &&
+      intent.pronoun &&
+      intent.replyHere
+    ) {
+      intent = { ...intent, additive: true }
+    }
     if (intent.refine) {
+      const snap = freshSnapshot()
+      const candidates = draftRefineCandidates(snap)
+      if (candidates.length > 1) {
+        const question =
+          'Which draft should I change — the one for “' + candidates.map((c) => c.chatName).join('” or “') + '”?'
+        setPendingClarification({
+          kind: 'ambiguous_ref',
+          question,
+          options: candidates.map((c) => ({ id: c.chatName, name: c.chatName })),
+          held: heldDraftFromInstruction(intent.instruction),
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 30 * 60 * 1000
+        })
+        pushEntry({ id: 0, kind: 'note', text: question })
+        return
+      }
       const active = activeWaReply()
       if (!active?.draft) {
         pushEntry({ id: 0, kind: 'note', text: 'There’s no WhatsApp draft to refine yet.' })
         return
       }
-      if (active.insertedText && active.draft !== active.insertedText) {
+      // S17 first: composer edited outside MIKO — do not silently refine/overwrite.
+      const peek = await window.miko.whatsappPeek(false)
+      let composer = peek.composerText || ''
+      if (!composer.trim()) {
+        const composerCheck = await window.miko.whatsappInsert({ expectHeader: active.chatName, text: '', mode: 'ask' })
+        if (composerCheck.status === 'has-text') composer = composerCheck.composerText || ''
+      }
+      if (composer.trim()) {
+        const matches =
+          composer === active.draft ||
+          composer === active.insertedText ||
+          (active.draft && composer.includes(active.draft)) ||
+          (active.insertedText && composer.includes(active.insertedText))
+        if (!matches) {
+          patchWaReply(active.id, {
+            status: 'choose-insert',
+            notice:
+              'The WhatsApp message box was edited outside MIKO. Choose Replace, Append, or Keep — I won’t overwrite it silently.',
+            followUp: intent.instruction
+          })
+          return
+        }
+      }
+      // Panel-only edit: draft text diverged from last inserted text while composer still matches inserted.
+      if (
+        active.insertedText &&
+        active.draft !== active.insertedText &&
+        composer.trim() &&
+        (composer === active.insertedText || composer.includes(active.insertedText))
+      ) {
         patchWaReply(active.id, {
           status: 'ready',
           notice: 'You edited the draft in MIKO. Confirm Refine to overwrite, or insert the edited text first.',
@@ -2346,6 +3456,33 @@ export function MotionApp() {
       return
     }
 
+    const whoAsk = mismatchedThirdPersonQuestion(intent.instruction, intent.pronoun)
+    if (whoAsk) {
+      setPendingClarification({
+        kind: 'ambiguous_ref',
+        question: whoAsk,
+        options: [
+          { id: 'recipient', name: 'The person I’m messaging' },
+          { id: 'someone-else', name: 'Someone else' }
+        ],
+        held: heldDraftFromInstruction(intent.instruction, {
+          pronoun: intent.pronoun,
+          literal: intent.literal
+        }),
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 30 * 60 * 1000
+      })
+      patchWaReply(id, {
+        status: 'question',
+        question: whoAsk,
+        instruction: intent.instruction,
+        pronoun: intent.pronoun,
+        chatName: locked.header
+      })
+      pushEntry({ id: 0, kind: 'note', text: whoAsk })
+      return
+    }
+
     if (intent.needsContext) {
       await presentWhatsAppContext(id, locked.header, token, false)
       return
@@ -2363,10 +3500,45 @@ export function MotionApp() {
     if (!chooser) return false
     const index = parseChooserIndex(text, chooser.options.length)
     if (index === null) return false
+    const stored = workingContextRef.current.choice
+    if (stored && choiceExpired(stored)) {
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Those choices went stale. Search again and I’ll show a fresh list.'
+      })
+      clearWhatsAppChoosers()
+      workingContextRef.current = { ...workingContextRef.current, choice: null, updatedAt: Date.now() }
+      pendingClarificationRef.current = null
+      return true
+    }
     const option = chooser.options[index]
     if (!option) return false
     const rememberAs = chooser.payload || option.name
     await runWhatsApp(rememberAs, rememberAs, option.id, chooser.id)
+    return true
+  }
+
+  /** Bare “copy it” when a file and another recent result both fit — ask once (playbook S22). */
+  function maybeClarifyBareCopy(text: string): boolean {
+    if (!/^copy\s+(?:it|that|this)\.?$/i.test(text.trim().replace(/[.!]+$/g, ''))) return false
+    const snap = freshSnapshot()
+    const amb = resolveRequestReferences(text, snap).find((r) => r.kind === 'ambiguous')
+    if (!amb || amb.kind !== 'ambiguous') return false
+    const file = snap.retrievedFile
+    setPendingClarification({
+      kind: 'ambiguous_ref',
+      question: amb.question,
+      options: file
+        ? [
+            { id: 'file', name: file.filename, detail: 'Verified file' },
+            { id: 'other', name: 'Something else' }
+          ]
+        : undefined,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000
+    })
+    pushEntry({ id: 0, kind: 'note', text: amb.question })
     return true
   }
 
@@ -2401,6 +3573,7 @@ export function MotionApp() {
 
   async function startWhatsAppSummarize(intent: WhatsAppSummarizeIntent): Promise<void> {
     const token = ++waReplyToken.current
+    const parked = suspendedTaskRef.current?.phase === 'suspended' ? suspendedTaskRef.current : null
     const task = createTask({
       id: newActionId(),
       source: 'typed',
@@ -2410,16 +3583,25 @@ export function MotionApp() {
       pending: null
     })
     activeTaskRef.current = task
-    pushEntry({ id: 0, kind: 'note', text: 'Reading the latest message…' })
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text: intent.preferLatest ? 'Reading the chat…' : 'Reading visible messages…'
+    })
     const peek = await window.miko.whatsappPeek(true, intent.preferLatest)
-    if (token !== waReplyToken.current || activeTaskRef.current?.id !== task.id) return
+    if (token !== waReplyToken.current) return
+    if (activeTaskRef.current?.id !== task.id && activeTaskRef.current?.phase === 'cancelled') return
     if (peek.status !== 'peeked' || !peek.header) {
       pushEntry({
         id: 0,
         kind: 'note',
-        text: peek.reason || 'I couldn’t read the open WhatsApp chat. Open one, then say “summarize”.'
+        text:
+          peek.status === 'lost-focus' || /couldn.?t read|permission|AX/i.test(peek.reason || '')
+            ? (peek.reason || 'I couldn’t read that message.') + ' Select the text in WhatsApp and try again, or scroll to a readable message.'
+            : peek.reason || 'I couldn’t read the open WhatsApp chat. Open one, then say “summarize”.'
       })
-      activeTaskRef.current = { ...task, phase: 'failed' }
+      // Restore parked draft task so “continue my message” still works (S15 / continuous flow).
+      activeTaskRef.current = parked || { ...task, phase: 'failed' }
       return
     }
     if (waChatRef.current && !recipientMatchesOpenChat(waChatRef.current, peek.header) && peek.header !== waChatRef.current) {
@@ -2431,26 +3613,29 @@ export function MotionApp() {
     const composerBefore = peek.composerText
     let messages = peek.messages
     if (intent.scope === 'incoming') messages = messages.filter((m) => !m.mine)
+    // S14: older visible history must not be claimed as “just said” / latest without a choice.
+    if (peek.atLatest === false && intent.preferLatest) {
+      pushEntry({
+        id: 0,
+        kind: 'choices',
+        purpose: 'wa-summarize-range',
+        text: 'Older history is visible — not the latest messages. Summarize what’s on screen, or go to the latest?',
+        options: [
+          { id: 'visible', name: 'Summarize visible messages', familiar: true },
+          { id: 'latest', name: 'Go to latest', familiar: true }
+        ],
+        payload: peek.header
+      })
+      if (parked) activeTaskRef.current = parked
+      return
+    }
     if (!messages.length) {
-      if (peek.atLatest === false) {
-        pushEntry({
-          id: 0,
-          kind: 'choices',
-          purpose: 'wa-summarize-range',
-          text: 'Older history is visible. Summarize what’s on screen, or go to the latest?',
-          options: [
-            { id: 'visible', name: 'Summarize visible messages', familiar: true },
-            { id: 'latest', name: 'Go to latest', familiar: true }
-          ],
-          payload: peek.header
-        })
-        return
-      }
       pushEntry({
         id: 0,
         kind: 'note',
         text: 'I couldn’t find an incoming text message in the visible chat. Scroll to the latest message, then try again.'
       })
+      if (parked) activeTaskRef.current = parked
       return
     }
     const context = formatVisibleContext(messages, peek.header, peek.atLatest !== false)
@@ -2476,6 +3661,7 @@ export function MotionApp() {
             ? 'Sign in to ChatGPT in the ChatGPT app first.'
             : 'The ChatGPT app’s Codex CLI wasn’t found.'
       })
+      if (parked) activeTaskRef.current = parked
       return
     }
     pushEntry({ id: 0, kind: 'note', text: 'Preparing your summary…' })
@@ -2497,6 +3683,7 @@ export function MotionApp() {
     })
     if (token !== waReplyToken.current) {
       window.miko.bridgeCancel(requestId)
+      if (parked) activeTaskRef.current = parked
       return
     }
     if (!sent.ok) {
@@ -2511,6 +3698,7 @@ export function MotionApp() {
         detail: sent.reason,
         kept: false
       })
+      if (parked) activeTaskRef.current = parked
       return
     }
     // Verify composer was not touched (read-only summarize).
@@ -2522,6 +3710,8 @@ export function MotionApp() {
         text: 'Warning: WhatsApp’s message box changed during the summary. I did not insert anything on purpose — check the composer.'
       })
     }
+    // Keep suspended draft recoverable after a read-only summarize.
+    if (parked) activeTaskRef.current = parked
   }
 
   function patchWaFile(id: number, patch: Partial<Extract<PanelEntry, { kind: 'wa-file' }>>): void {
@@ -2585,7 +3775,11 @@ export function MotionApp() {
     }
     if (intent.op === 'show-finder') {
       const ok = await window.miko.revealFile(file.path)
-      pushEntry({ id: 0, kind: 'note', text: ok ? 'Showing it in Finder.' : 'That file isn’t on disk anymore.' })
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: ok ? `Showing it in ${hostPlatform === 'win32' ? 'File Explorer' : 'Finder'}.` : 'That file isn’t on disk anymore.'
+      })
       return true
     }
     if (intent.op === 'open') {
@@ -2644,7 +3838,7 @@ export function MotionApp() {
           ? { id: `app:${external.bundleId}`, name: `${external.name} (copy file instead if paste isn’t supported)`, familiar: true }
           : null,
         { id: 'copy', name: 'Copy file', familiar: true },
-        { id: 'finder', name: 'Show in Finder', familiar: true }
+        { id: 'finder', name: showInFileBrowserLabel(hostPlatform), familiar: true }
       ].filter(Boolean) as { id: string; name: string; familiar: boolean }[]
       workingContextRef.current = {
         ...workingContextRef.current,
@@ -2655,7 +3849,7 @@ export function MotionApp() {
         id: 0,
         kind: 'choices',
         purpose: 'wa-attach-dest',
-        text: 'Where should I attach that file? (Unsupported apps get Copy file / Show in Finder.)',
+        text: `Where should I attach that file? (Unsupported apps get Copy file / ${showInFileBrowserLabel(hostPlatform)}.)`,
         options,
         payload: JSON.stringify({ path, filename, taskId })
       })
@@ -2699,7 +3893,7 @@ export function MotionApp() {
           result.header ? { id: `wa:${result.header}`, name: `Use “${result.header}”`, familiar: true } : null,
           { id: `wa:${expect}`, name: `Retry “${expect}”`, familiar: true },
           { id: 'copy', name: 'Copy file', familiar: true },
-          { id: 'finder', name: 'Show in Finder', familiar: true }
+          { id: 'finder', name: showInFileBrowserLabel(hostPlatform), familiar: true }
         ].filter(Boolean) as { id: string; name: string; familiar: boolean }[],
         payload: JSON.stringify({ path, filename, taskId })
       })
@@ -2978,8 +4172,9 @@ export function MotionApp() {
   }
 
   async function interpretUnfamiliar(text: string, source: 'typed' | 'voice'): Promise<ActionPlan | null> {
+    const snap = freshSnapshot()
     const deterministic = tryDeterministicPlan(text, source)
-    if (deterministic) return deterministic
+    if (deterministic) return bindPlanToSnapshot(deterministic, snap)
 
     const status = await window.miko.bridgeStatus()
     if (!status?.enabled || !status.available || !status.signedIn) return null
@@ -2988,31 +4183,26 @@ export function MotionApp() {
       return null
     }
 
-    const task = createTask({
-      id: newActionId(),
-      source: 'interpreted',
-      original: text,
-      steps: [{ kind: 'clarify' }],
-      clarification: null,
-      pending: null
-    })
-    activeTaskRef.current = task
+    // Interpret wait uses its own token; do not clobber an in-flight attachment/reply task until a plan runs.
+    const interpretTaskId = newActionId()
     const token = ++interpretToken.current
     const examples = await window.miko.examplesList()
     const prefs = await window.miko.prefsStructuredGet()
     const requestId = `interp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    const platform = snap.platform
     const prompt = interpretPrompt(text, {
-      platform: navigator.platform.toLowerCase().includes('win') ? 'win32' : 'darwin',
-      waChat: waChatRef.current,
-      lastWebsite: lastWebsiteRef.current?.name ?? null,
+      platform,
+      waChat: snap.waChat,
+      lastWebsite: snap.lastWebsite?.name ?? null,
       preferredBrowser: prefs?.preferredBrowser ?? null,
-      examples: examples.slice(0, 3),
-      preferences: prefs
+      examples: retrieveExamples(examples, text, 3),
+      preferences: prefs,
+      snapshot: snap
     })
 
     pushEntry({ id: 0, kind: 'note', text: 'Understanding…' })
     const reply = await new Promise<string | null>((resolve) => {
-      interpretWaiters.current.set(requestId, { resolve, token, taskId: task.id })
+      interpretWaiters.current.set(requestId, { resolve, token, taskId: interpretTaskId })
       void window.miko.bridgeSend(requestId, prompt, { fresh: true }).then((sent) => {
         if (!sent.ok) {
           interpretWaiters.current.delete(requestId)
@@ -3022,11 +4212,12 @@ export function MotionApp() {
       })
     })
 
-    if (token !== interpretToken.current || activeTaskRef.current?.phase === 'cancelled') return null
+    if (token !== interpretToken.current) return null
+    if (activeTaskRef.current?.phase === 'cancelled') return null
     if (reply === null) return null
 
-    const plan = parseInterpretResult(reply, text, source)
-    if (!plan) {
+    const parsed = parseInterpretResult(reply, text, source, platform)
+    if (!parsed) {
       pushEntry({
         id: 0,
         kind: 'note',
@@ -3034,36 +4225,44 @@ export function MotionApp() {
       })
       return null
     }
+    const plan = bindPlanToSnapshot(parsed, freshSnapshot())
     if (plan.clarification && (plan.steps.length === 0 || plan.steps.every((s) => s.kind === 'clarify'))) {
       pushEntry({ id: 0, kind: 'note', text: plan.clarification })
-      activeTaskRef.current = { ...task, phase: 'needs_choice', progress: plan.clarification }
+      beginExclusiveTask(plan)
+      finishActiveTask('completed', plan.clarification)
       return null
     }
     return plan
   }
 
   async function runActionPlan(plan: ActionPlan): Promise<void> {
-    const task = createTask(plan)
-    activeTaskRef.current = task
-    workingContextRef.current = { ...workingContextRef.current, taskId: task.id, updatedAt: Date.now() }
-    const platform = navigator.platform.toLowerCase().includes('win') ? 'win32' : 'darwin'
+    const snap = freshSnapshot()
+    const bound = bindPlanToSnapshot(plan, snap)
+    if (bound.steps.every((s) => s.kind === 'clarify')) {
+      pushEntry({ id: 0, kind: 'note', text: bound.clarification || bound.steps[0]?.content || 'Could you clarify that?' })
+      return
+    }
+    const task = beginExclusiveTask(bound)
+    const platform = snap.platform
     const allowed = new Set(availableKinds(platform))
+    let artifacts: TaskHistoryEntry['artifacts'] = {}
 
     const aborted = (): boolean => {
       const cur = activeTaskRef.current
       return !cur || cur.id !== task.id || cur.phase === 'cancelled'
     }
 
-    for (let i = 0; i < plan.steps.length; i += 1) {
+    for (let i = 0; i < bound.steps.length; i += 1) {
       if (aborted()) return
-      const step = plan.steps[i]
+      const step = bound.steps[i]
       const meta = capability(step.kind)
       if (!meta || !allowed.has(step.kind)) {
         pushEntry({
           id: 0,
           kind: 'note',
-          text: `“${step.kind}” isn’t available on this Mac yet.`
+          text: unsupportedOnDeviceMessage(hostPlatform, `“${step.kind}”`)
         })
+        finishActiveTask('failed', `Unavailable: ${step.kind}`, artifacts)
         return
       }
 
@@ -3072,34 +4271,39 @@ export function MotionApp() {
         return
       }
       if (step.kind === 'clarify') {
-        pushEntry({ id: 0, kind: 'note', text: plan.clarification || 'Could you clarify that?' })
-        activeTaskRef.current = { ...activeTaskRef.current, phase: 'needs_choice' }
+        pushEntry({ id: 0, kind: 'note', text: bound.clarification || step.content || 'Could you clarify that?' })
+        finishActiveTask('completed', bound.clarification || 'Needs clarification', artifacts)
         return
       }
       if (step.kind === 'unsupported') {
-        pushEntry({ id: 0, kind: 'note', text: 'I can’t do that on this Mac yet.' })
+        pushEntry({ id: 0, kind: 'note', text: unsupportedOnDeviceMessage(hostPlatform) })
+        finishActiveTask('failed', 'Unsupported', artifacts)
         return
       }
       if (step.kind === 'open_whatsapp_chat' && step.target) {
         pushEntry({ id: 0, kind: 'note', text: `Finding ${step.target}…` })
-        if (plan.pending?.content) pendingWaDraftRef.current = plan.pending.content
-        else if (step.content) pendingWaDraftRef.current = step.content
+        if (bound.pending?.content) {
+          setHeldWaDraft(bound.pending.content, { tone: bound.pending.tone ?? null })
+        } else if (step.content) {
+          setHeldWaDraft(step.content)
+        }
         // Hold draft content from a following draft step; that step is skipped after open resumes it.
-        const next = plan.steps[i + 1]
+        const next = bound.steps[i + 1]
         let skipNextDraft = false
         if (next?.kind === 'draft_whatsapp' && next.content) {
-          const toneBit =
-            next.tone === 'formal' || next.tone === 'professional'
-              ? `${next.content} professionally`
-              : next.tone === 'friendly'
-                ? `${next.content} friendly`
-                : next.content
-          pendingWaDraftRef.current = toneBit
+          setHeldWaDraft(next.content, { tone: next.tone ?? null })
           skipNextDraft = true
         }
         messagingRef.current = 'whatsapp'
         await runWhatsApp(step.target, step.target)
         if (aborted()) return
+        // No match / recipient wait: keep the task live with the held draft — do not mark completed.
+        if (awaitingWaRecipientRef.current) return
+        if (!waChatRef.current) {
+          finishActiveTask('failed', 'WhatsApp open did not verify a chat', artifacts)
+          return
+        }
+        artifacts = { ...artifacts, waChat: waChatRef.current || step.target }
         if (skipNextDraft) i += 1
         continue
       }
@@ -3109,6 +4313,7 @@ export function MotionApp() {
         if (aborted()) return
         if (peek.status !== 'peeked' || !peek.header) {
           pushEntry({ id: 0, kind: 'note', text: peek.reason || 'Open the WhatsApp chat first, then try again.' })
+          finishActiveTask('failed', 'Chat not verified', artifacts)
           return
         }
         if (step.target && !recipientMatchesOpenChat(step.target, peek.header)) {
@@ -3118,9 +4323,11 @@ export function MotionApp() {
             text: `The open chat is “${peek.header}”, not “${step.target}”. I didn’t insert anything.`
           })
           setWhatsAppTarget(peek.header)
+          finishActiveTask('failed', 'Chat switched', artifacts)
           return
         }
         setWhatsAppTarget(peek.header)
+        artifacts = { ...artifacts, waChat: peek.header, draftChat: peek.header }
         const toneBit =
           step.tone === 'formal' || step.tone === 'professional'
             ? `Write this in a formal, polished way: ${step.content}`
@@ -3138,6 +4345,7 @@ export function MotionApp() {
         continue
       }
       if (step.kind === 'refine_draft') {
+        artifacts = { ...artifacts, draftChat: waChatRef.current || artifacts.draftChat }
         await startWhatsAppReply({
           instruction: step.content || 'shorter',
           needsContext: false,
@@ -3161,6 +4369,8 @@ export function MotionApp() {
         step.kind === 'copy_file' ||
         step.kind === 'attach_file'
       ) {
+        const file = workingContextRef.current.retrievedFile
+        if (file) artifacts = { ...artifacts, filePath: file.path, fileName: file.filename, waChat: file.chatName }
         await startWhatsAppAttachment({
           op:
             step.kind === 'attach_file'
@@ -3189,12 +4399,12 @@ export function MotionApp() {
           name: step.target || lastWebsiteRef.current?.name || 'site',
           url: step.url || lastWebsiteRef.current?.url,
           host: step.target || undefined,
-          all: /all/i.test(plan.original)
+          all: /all/i.test(bound.original)
         })
         continue
       }
       if (step.kind === 'ask_assistant') {
-        await startAssistant(plan.original)
+        await startAssistant(bound.original)
         continue
       }
       if (step.kind === 'search_mail' && step.content) {
@@ -3204,17 +4414,461 @@ export function MotionApp() {
       }
     }
     if (activeTaskRef.current?.id === task.id && activeTaskRef.current.phase !== 'cancelled') {
-      activeTaskRef.current = { ...activeTaskRef.current, phase: 'completed', progress: 'Done.' }
+      finishActiveTask('completed', 'Done.', artifacts)
     }
   }
 
-  async function onSubmit(): Promise<void> {
-    const text = draft.trim()
+  async function handleInteractiveGptTransfer(
+    action: NonNullable<ReturnType<typeof parseInteractiveGptTransferAction>>
+  ): Promise<void> {
+    if (typeof window.miko === 'undefined') return
+    if (typeof window.miko.chatgptWebPasteClipboard !== 'function' && typeof window.miko.chatgptWebInsertTranscript !== 'function') {
+      pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT isn’t available in this build.' })
+      return
+    }
+
+    if (action === 'paste-clipboard') {
+      if (typeof window.miko.chatgptWebPasteClipboard !== 'function') {
+        pushEntry({ id: 0, kind: 'note', text: 'Paste clipboard into GPT isn’t available in this build.' })
+        return
+      }
+      const result = await window.miko.chatgptWebPasteClipboard()
+      if (result.ok && result.text?.trim()) {
+        await bindInteractiveGptDraft(result.text.trim(), 'paste-clipboard')
+      }
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: result.ok
+          ? `Paste clipboard into GPT: ${result.reason}`
+          : result.reason || 'Couldn’t paste clipboard into Interactive GPT.'
+      })
+      return
+    }
+
+    // wa-message-to-gpt: only explicit selection (or ask). Never silently take latest chat message.
+    const sel = latestSelection()
+    if (selectionUsableForGptTransfer(sel) && sel) {
+      if (typeof window.miko.chatgptWebOpen === 'function') {
+        await window.miko.chatgptWebOpen()
+      }
+      const inserted = await window.miko.chatgptWebInsertTranscript(sel.text)
+      if (inserted.ok) await bindInteractiveGptDraft(sel.text, 'transfer')
+      const fromWa = looksLikeWhatsAppApp(sel.app)
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: inserted.ok
+          ? `${fromWa ? 'WhatsApp selection' : 'Selected text'} → Interactive GPT: ${inserted.reason}`
+          : inserted.reason || 'Couldn’t insert into Interactive GPT.'
+      })
+      return
+    }
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text:
+        'Select the WhatsApp message text first (or Copy it in WhatsApp), then say “Paste clipboard into GPT”. I won’t take the latest chat message automatically.'
+    })
+  }
+
+  async function handleInteractiveGptLocal(
+    action: NonNullable<ReturnType<typeof parseInteractiveGptLocalAction>>
+  ): Promise<void> {
+    if (typeof window.miko === 'undefined') return
+    if (action === 'hide') {
+      if (typeof window.miko.chatgptWebCollapse !== 'function') {
+        pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT isn’t available in this build.' })
+        return
+      }
+      const st = await window.miko.chatgptWebStatus()
+      if (!st.open) {
+        pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT isn’t open.' })
+        return
+      }
+      dictateToGptRef.current = false
+      if (typeof window.miko.chatgptWebDictateArm === 'function') await window.miko.chatgptWebDictateArm(false)
+      await window.miko.chatgptWebCollapse()
+      pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT collapsed to a pill near MIKO.' })
+      return
+    }
+    if (action === 'dictate' || action === 'stop-dictate') {
+      if (typeof window.miko.chatgptWebDictateArm !== 'function') {
+        pushEntry({ id: 0, kind: 'note', text: 'Dictate to GPT isn’t available in this build.' })
+        return
+      }
+      if (action === 'stop-dictate') {
+        dictateToGptRef.current = false
+        await window.miko.chatgptWebDictateArm(false)
+        pushEntry({ id: 0, kind: 'note', text: 'Dictate to GPT cancelled.' })
+        return
+      }
+      if (typeof window.miko.chatgptWebOpen === 'function') await window.miko.chatgptWebOpen()
+      dictateToGptRef.current = true
+      await window.miko.chatgptWebDictateArm(true)
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Dictate to GPT armed — speak with MIKO mic once. That final transcript inserts into Interactive GPT unsent; then Dictate turns off. Local commands still work when Dictate is off.'
+      })
+      return
+    }
+    if (typeof window.miko.chatgptWebOpen !== 'function') {
+      pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT isn’t available in this build.' })
+      return
+    }
+    const result = await window.miko.chatgptWebOpen()
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text: result.ok
+        ? action === 'show'
+          ? 'Showing Interactive GPT (ChatGPT Web inside MIKO — not GPT Mode, not Lens).'
+          : 'Opened Interactive GPT — use ChatGPT directly inside MIKO. GPT Mode forwarding stays unchanged. Ordinary voice still runs local commands.'
+        : result.reason || 'Couldn’t open Interactive GPT.'
+    })
+  }
+
+  /**
+   * Shared early locals for typed + voice (input source is explicit metadata only).
+   * Merely having Interactive GPT open never redirects here.
+   */
+  async function handleSharedLocalControls(text: string, source: 'typed' | 'voice'): Promise<boolean> {
+    const gptLocal = parseGptModeLocalAction(text)
+    if (gptLocal && (gptModeRef.current.phase !== 'off' || gptLocal === 'enable')) {
+      if (source === 'voice') pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      await handleGptModeLocal(gptLocal)
+      return true
+    }
+    const igptLocal = parseInteractiveGptLocalAction(text)
+    if (igptLocal) {
+      if (source === 'voice') pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      await handleInteractiveGptLocal(igptLocal)
+      return true
+    }
+    const igptTransfer = parseInteractiveGptTransferAction(text)
+    if (igptTransfer) {
+      if (source === 'voice') pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      await handleInteractiveGptTransfer(igptTransfer)
+      return true
+    }
+    return false
+  }
+
+  function clearInteractiveGptDraft(status: 'cancelled' | 'submitted' = 'cancelled'): void {
+    const prev = workingContextRef.current.interactiveGptDraft
+    if (!prev) return
+    workingContextRef.current = {
+      ...workingContextRef.current,
+      interactiveGptDraft: {
+        ...prev,
+        status,
+        generation: prev.generation + 1,
+        insertedAt: Date.now()
+      },
+      updatedAt: Date.now()
+    }
+  }
+
+  async function bindInteractiveGptDraft(
+    text: string,
+    source: InteractiveGptDraftBinding['source']
+  ): Promise<void> {
+    const trimmed = text.trim().slice(0, 8000)
+    if (!trimmed) return
+    let partition = 'persist:miko-chatgpt-web'
+    try {
+      if (typeof window.miko.chatgptWebStatus === 'function') {
+        const web = await window.miko.chatgptWebStatus()
+        if (web.partition) partition = web.partition
+      }
+    } catch {
+      /* keep default partition */
+    }
+    const prev = workingContextRef.current.interactiveGptDraft
+    workingContextRef.current = {
+      ...workingContextRef.current,
+      interactiveGptDraft: {
+        expectedText: trimmed,
+        insertedAt: Date.now(),
+        partition,
+        source,
+        generation: (prev?.generation ?? 0) + 1,
+        status: 'pending'
+      },
+      updatedAt: Date.now()
+    }
+  }
+
+  async function submitInteractiveGptDraft(): Promise<void> {
+    if (typeof window.miko === 'undefined' || typeof window.miko.chatgptWebSubmitDraft !== 'function') {
+      pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT submit isn’t available.' })
+      return
+    }
+    const binding = workingContextRef.current.interactiveGptDraft
+    if (!binding || binding.status !== 'pending') {
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Nothing to send in Interactive GPT — dictate or type into GPT first.'
+      })
+      return
+    }
+    const generation = binding.generation
+    const result = await window.miko.chatgptWebSubmitDraft({
+      expectedText: binding.expectedText
+    })
+    // Stale binding after cancel/source change — never report success.
+    const latest = workingContextRef.current.interactiveGptDraft
+    if (!latest || latest.generation !== generation || latest.status !== 'pending') {
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Send cancelled — destination changed before submit finished.'
+      })
+      return
+    }
+    if (result.status === 'empty') {
+      pushEntry({ id: 0, kind: 'note', text: result.reason })
+      return
+    }
+    if (result.status === 'changed') {
+      // Allow a confirmed retry against whatever is live now (still explicit “Send it”).
+      workingContextRef.current = {
+        ...workingContextRef.current,
+        interactiveGptDraft: { ...latest, expectedText: '', insertedAt: Date.now() },
+        updatedAt: Date.now()
+      }
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: `${result.reason} Say “Send it” again to submit the current composer, or cancel.`
+      })
+      return
+    }
+    if (result.status === 'cancelled' || result.status === 'unavailable' || result.status === 'failed') {
+      pushEntry({ id: 0, kind: 'note', text: result.reason })
+      return
+    }
+    clearInteractiveGptDraft('submitted')
+    if (result.status === 'submitted-observed') {
+      pushEntry({ id: 0, kind: 'note', text: result.reason })
+    } else {
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: result.reason || 'Send was attempted — delivery unverified. I won’t press Send again.'
+      })
+    }
+  }
+
+  async function handleSendIt(): Promise<void> {
+    const snap = freshSnapshot()
+    const decision = resolveSendDestination({
+      gptBinding: snap.interactiveGptDraft,
+      waDraftActive: snap.waDraftActive,
+      waDraftChat: snap.draft?.chatName || snap.waChat
+    })
+    if (decision.kind === 'clarify') {
+      setPendingClarification({
+        kind: 'send_destination',
+        question: decision.question,
+        options: decision.options.map((o) => ({ id: o.id, name: o.name })),
+        createdAt: Date.now()
+      })
+      pushEntry({
+        id: 0,
+        kind: 'choices',
+        purpose: 'send-destination',
+        text: decision.question,
+        options: decision.options.map((o) => ({ id: o.id, name: o.name, familiar: true }))
+      })
+      return
+    }
+    if (decision.kind === 'interactive-gpt') {
+      await submitInteractiveGptDraft()
+      return
+    }
+    if (decision.kind === 'whatsapp-unsent') {
+      pushEntry({ id: 0, kind: 'note', text: decision.reason })
+      return
+    }
+    pushEntry({ id: 0, kind: 'note', text: decision.reason })
+  }
+
+  /** One-shot Dictate-to-GPT: insert final transcript once, unsent, then disarm. */
+  async function consumeDictateToGptSession(text: string): Promise<boolean> {
+    if (!dictateToGptRef.current || typeof window.miko === 'undefined') return false
+    if (typeof window.miko.chatgptWebInsertTranscript !== 'function') {
+      dictateToGptRef.current = false
+      return false
+    }
+    dictateToGptRef.current = false
+    if (typeof window.miko.chatgptWebDictateArm === 'function') await window.miko.chatgptWebDictateArm(false)
+    pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+    if (typeof window.miko.chatgptWebOpen === 'function') await window.miko.chatgptWebOpen()
+    const inserted = await window.miko.chatgptWebInsertTranscript(text.trim())
+    if (inserted.ok) await bindInteractiveGptDraft(text.trim(), 'dictate')
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text: inserted.ok
+        ? `Dictate to GPT: ${inserted.reason}`
+        : `Dictate to GPT failed: ${inserted.reason}`
+    })
+    return true
+  }
+
+  /** Prefer Interactive GPT composer when that workspace is open; else ChatGPT app handoff. */
+  async function insertExplicitGptText(text: string, source: 'typed' | 'voice'): Promise<void> {
+    if (typeof window.miko === 'undefined') return
+    if (typeof window.miko.chatgptWebStatus === 'function' && typeof window.miko.chatgptWebInsertTranscript === 'function') {
+      try {
+        const web = await window.miko.chatgptWebStatus()
+        if (web.open && web.visible !== false && !web.collapsed) {
+          const inserted = await window.miko.chatgptWebInsertTranscript(text)
+          if (inserted.ok) await bindInteractiveGptDraft(text, 'type-in-gpt')
+          pushEntry({
+            id: 0,
+            kind: 'note',
+            text: inserted.ok
+              ? `Interactive GPT (${source}): ${inserted.reason}`
+              : `Interactive GPT insert failed: ${inserted.reason}`
+          })
+          return
+        }
+      } catch {
+        /* fall through to ChatGPT app */
+      }
+    }
+    if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
+    const entry: Extract<PanelEntry, { kind: 'handoff' }> = {
+      id: 0,
+      kind: 'handoff',
+      prompt: text,
+      status: 'ready',
+      detail: 'Typing this into ChatGPT for you\u2026',
+      destination: ''
+    }
+    const id = pushEntry(entry)
+    await handToChatGpt({ ...entry, id })
+  }
+
+  async function handleGptModeLocal(action: NonNullable<ReturnType<typeof parseGptModeLocalAction>>): Promise<void> {
+    if (typeof window.miko === 'undefined') return
+    if (action === 'cancel') {
+      window.miko.gptModeCancel()
+      if (listening) {
+        window.miko.listenCancel()
+        setListening(false)
+      }
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Cancelled. If ChatGPT already sent the prompt, MIKO can’t recall it.'
+      })
+      return
+    }
+    if (action === 'exit') {
+      const s = await window.miko.gptModeExit()
+      if (s) setGptMode(s)
+      pushEntry({ id: 0, kind: 'note', text: 'Exited GPT Mode. Ordinary MIKO routing is back.' })
+      return
+    }
+    if (action === 'pause') {
+      const s = await window.miko.gptModePause()
+      if (s) setGptMode(s)
+      pushEntry({ id: 0, kind: 'note', text: 'GPT Mode paused.' })
+      return
+    }
+    if (action === 'resume' || action === 'enable') {
+      const s = action === 'enable' ? await window.miko.gptModeEnable() : await window.miko.gptModeResume()
+      if (s) setGptMode(s)
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text:
+          s?.phase === 'active'
+            ? 'GPT Mode on · Messages go to ChatGPT (insert + submit). Separate from the MIKO assistant.'
+            : s?.lastDetail || 'GPT Mode updated.'
+      })
+      return
+    }
+    if (action === 'new-chat') {
+      const result = await window.miko.gptModeNewChat()
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: result.ok
+          ? result.verified
+            ? 'New ChatGPT chat ready.'
+            : result.reason || 'New chat started (unverified). Next message targets this chat.'
+          : result.reason || 'New chat failed — nothing was sent into the previous conversation.'
+      })
+    }
+  }
+
+  async function forwardToGptMode(text: string, mode: 'replace' | 'append' | 'ask' = 'ask'): Promise<void> {
+    if (typeof window.miko === 'undefined') return
+    const requestId = newGptRequestId()
+    const entryId = pushEntry({
+      id: 0,
+      kind: 'gpt-mode',
+      requestId,
+      text,
+      status: 'preparing',
+      detail: 'Preparing…'
+    })
+    try {
+      const result = await window.miko.gptModeSend({ requestId, text, mode })
+      const status = isTerminalGptStatus(result.status) || result.status === 'text-inserted' ? result.status : 'delivery-unverified'
+      replaceEntry(entryId, {
+        id: entryId,
+        kind: 'gpt-mode',
+        requestId: result.requestId || requestId,
+        text,
+        status,
+        detail: result.detail || deliveryStatusLabel(status)
+      })
+    } catch {
+      replaceEntry(entryId, {
+        id: entryId,
+        kind: 'gpt-mode',
+        requestId,
+        text,
+        status: 'failed',
+        detail: 'Delivery failed unexpectedly. Check ChatGPT.'
+      })
+    }
+  }
+
+  function openGptWindowPicker(): void {
+    if (typeof window.miko === 'undefined') return
+    // Floating reading window owns the picker — never bind a wrong pet thumbnail.
+    window.miko.gptModeOpenPicker()
+  }
+
+  async function onSubmit(fromPanel?: string): Promise<void> {
+    const text = (typeof fromPanel === 'string' ? fromPanel : draft).trim()
     if (!text || typeof window.miko === 'undefined') return
     setDraft('')
+    inputSourceRef.current = 'typed'
+    // Shared locals (typed) — same path as voice; Interactive GPT open does not change this.
+    if (await handleSharedLocalControls(text, 'typed')) return
+    // Active GPT Mode: ordinary text goes only to ChatGPT — no local router / assistant.
+    if (gptModeRef.current.phase === 'active') {
+      lastCommandRef.current = text.slice(0, 500)
+      await forwardToGptMode(text, 'ask')
+      return
+    }
     if (await takeWhatsAppChooserPick(text)) return
     if (await takeTabChooserPick(text)) return
     if (await takeChromeChooserPick(text)) return
+    if (await takeClarificationAnswer(text)) return
+    if (await takeInstructionRevision(text)) return
+    if (await takeRecipientRetarget(text)) return
+    if (maybeClarifySuspendedIt(text)) return
+    if (maybeClarifyBareCopy(text)) return
     const catalog = await loadCatalog()
     if (!catalog) return
     await revalidateMessagingContext()
@@ -3229,8 +4883,14 @@ export function MotionApp() {
       await runSelectionAction(sel.id, selCmd.action, selCmd.instruction)
       return
     }
+    lastCommandRef.current = text.trim().slice(0, 500)
     const decision = routeCommand(text, 'typed', catalog, await loadChats(), ctx)
     logRouteDecision(text, decision)
+    maybeSuspendActiveTask(decision)
+    if (decision.type === 'feedback') {
+      await runDecision(decision)
+      return
+    }
     if (shouldTryInterpreter(decision, text, ctx) && text.trim()) {
       const planned = tryDeterministicPlan(text, 'typed')
       if (planned) {
@@ -3277,9 +4937,85 @@ export function MotionApp() {
    * Clear commands run; closing and quitting ask first; questions open the ChatGPT card;
    * anything ambiguous or unclear, or everything when automatic execution is off, goes to the chat box for review.
    */
+  /** Park a live task when the owner asks an unrelated general question — don’t erase purpose. */
+  function maybeSuspendActiveTask(decision: CommandResult): void {
+    const task = activeTaskRef.current
+    if (!task) return
+    if (task.phase === 'cancelled' || task.phase === 'completed' || task.phase === 'failed' || task.phase === 'suspended') {
+      return
+    }
+    // Read-only summarize mid-draft must not cancel the drafting task (playbook continuous flow).
+    const parks =
+      decision.type === 'question' ||
+      decision.type === 'ask-gpt' ||
+      decision.type === 'bridge-test' ||
+      decision.type === 'bridge-new' ||
+      decision.type === 'whatsapp-summarize'
+    if (!parks) return
+    // Don’t suspend while answering a clarification — that was handled earlier.
+    if (pendingClarificationRef.current) return
+    // Only park when there is something worth resuming (held draft / destination / clarification).
+    const worth =
+      Boolean(task.purpose.heldDraft?.instruction) ||
+      Boolean(task.purpose.clarification) ||
+      Boolean(task.purpose.unresolvedQuery) ||
+      Boolean(pendingWaDraftRef.current) ||
+      Boolean(activeWaReply()?.draft)
+    if (!worth && decision.type === 'whatsapp-summarize') return
+    const parked = suspendTask(
+      task,
+      decision.type === 'whatsapp-summarize'
+        ? 'Paused the draft while summarizing — say “continue my message” when you’re ready.'
+        : 'Paused — say “continue” or finish that WhatsApp step when you’re ready.'
+    )
+    activeTaskRef.current = parked
+    suspendedTaskRef.current = parked
+    taskHistoryRef.current = recordTaskOutcome(taskHistoryRef.current, parked)
+  }
+
+  /**
+   * After a general answer mid-task, a bare “it/that” could mean the paused task or the answer.
+   * Ask once instead of guessing “most recent”.
+   */
+  function maybeClarifySuspendedIt(text: string): boolean {
+    const task = activeTaskRef.current
+    if (!task || task.phase !== 'suspended') return false
+    if (pendingClarificationRef.current) return false
+    const t = text.trim()
+    if (!/\b(?:it|that|this)\b/i.test(t)) return false
+    // Nouns that already bind (file / draft / chat) — let normal routing resolve them.
+    if (/\b(?:pdf|file|document|attachment|draft|message|chat|contact)\b/i.test(t)) return false
+    if (/^(?:continue|resume|pick\s+it\s+up|cancel|never\s*mind)/i.test(t)) return false
+    const question = `Do you mean the paused request (“${task.purpose.goal.slice(0, 48)}”), or something else?`
+    setPendingClarification({
+      kind: 'ambiguous_ref',
+      question,
+      options: [
+        { id: 'resume', name: 'The paused request' },
+        { id: 'other', name: 'Something else' }
+      ],
+      held: heldDraftFromInstruction(t),
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000
+    })
+    pushEntry({ id: 0, kind: 'note', text: question })
+    return true
+  }
+
   async function onVoice(text: string): Promise<void> {
     if (typeof window.miko === 'undefined') return
     const auto = voiceAutoRef.current
+    inputSourceRef.current = 'voice'
+    // Final transcript only (partials never reach here). Same locals as typed (source=voice).
+    if (await handleSharedLocalControls(text, 'voice')) return
+    // Explicit Dictate-to-GPT session only — never because Interactive GPT is merely open.
+    if (await consumeDictateToGptSession(text)) return
+    if (gptModeRef.current.phase === 'active') {
+      pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      lastCommandRef.current = text.trim().slice(0, 500)
+      await forwardToGptMode(text.trim(), 'ask')
+      return
+    }
     if (await takeWhatsAppChooserPick(text)) {
       if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
       return
@@ -3289,6 +5025,26 @@ export function MotionApp() {
       return
     }
     if (await takeChromeChooserPick(text)) {
+      if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      return
+    }
+    if (await takeClarificationAnswer(text)) {
+      if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      return
+    }
+    if (await takeInstructionRevision(text)) {
+      if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      return
+    }
+    if (await takeRecipientRetarget(text)) {
+      if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      return
+    }
+    if (maybeClarifySuspendedIt(text)) {
+      if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
+      return
+    }
+    if (maybeClarifyBareCopy(text)) {
       if (auto) pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
       return
     }
@@ -3314,8 +5070,14 @@ export function MotionApp() {
       await runSelectionAction(sel.id, selCmd.action, selCmd.instruction)
       return
     }
+    lastCommandRef.current = text.trim().slice(0, 500)
     const decision = routeCommand(text, 'voice', catalog, await loadChats(), ctx)
     logRouteDecision(text, decision)
+    maybeSuspendActiveTask(decision)
+    if (decision.type === 'feedback') {
+      await runDecision(decision)
+      return
+    }
     // Same unfamiliar-wording path as typed when automatic voice execution is on.
     if (auto && shouldTryInterpreter(decision, text, ctx) && text.trim()) {
       const planned = tryDeterministicPlan(text, 'voice')
@@ -3357,7 +5119,42 @@ export function MotionApp() {
     void onVoice(text)
   }
 
+  function openFeedback(opts?: { lastCommand?: string; actionType?: string | null; errorCode?: string | null }): void {
+    setFeedbackCtx({
+      lastCommand: opts?.lastCommand ?? lastCommandRef.current,
+      actionType: opts?.actionType ?? null,
+      errorCode: opts?.errorCode ?? null
+    })
+    setPanelView('feedback')
+    if (!panelRef.current || tabRef.current !== 'chat') void applyPanel(true, 'chat')
+  }
+
   async function runDecision(decision: CommandResult): Promise<void> {
+    const keepsWaRecipientWait =
+      decision.type === 'whatsapp' ||
+      decision.type === 'whatsapp-reply' ||
+      decision.type === 'whatsapp-summarize' ||
+      decision.type === 'whatsapp-attachment' ||
+      decision.type === 'whatsapp-aliases' ||
+      decision.type === 'whatsapp-forget' ||
+      decision.type === 'chat-or-whatsapp' ||
+      decision.type === 'cancel-workflow'
+    if (!keepsWaRecipientWait && (awaitingWaRecipientRef.current || pendingWaDraftRef.current)) {
+      // Explicit unrelated command supersedes a stuck recipient wait (distinct from a failed search).
+      endWaRecipientWait({
+        dropPending: true,
+        note: 'Moved on — pending WhatsApp message dropped.'
+      })
+    }
+    if (decision.type === 'feedback') {
+      openFeedback({ lastCommand: lastCommandRef.current })
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Opening feedback. This stays separate from commands and the assistant.'
+      })
+      return
+    }
     if (
       decision.type === 'move' ||
       decision.type === 'corner' ||
@@ -3454,18 +5251,14 @@ export function MotionApp() {
       setEntries([])
       return
     }
+    if (decision.type === 'type-dest') {
+      await runTypeDestIntent(decision.intent)
+      return
+    }
     if (decision.type === 'type-in-gpt') {
-      if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
-      const entry: Extract<PanelEntry, { kind: 'handoff' }> = {
-        id: 0,
-        kind: 'handoff',
-        prompt: decision.text,
-        status: 'ready',
-        detail: 'Typing this into ChatGPT for you\u2026',
-        destination: ''
-      }
-      const id = pushEntry(entry)
-      await handToChatGpt({ ...entry, id })
+      // Explicit “type/dictate into GPT …” — Interactive GPT when open; else ChatGPT app.
+      // Does not run the body as a MIKO command.
+      await insertExplicitGptText(decision.text, inputSourceRef.current)
       return
     }
     if (decision.type === 'bridge-test') {
@@ -3556,6 +5349,10 @@ export function MotionApp() {
       cancelWorkflow('Okay. Cancelled.')
       return
     }
+    if (decision.type === 'send-it') {
+      await handleSendIt()
+      return
+    }
     if (decision.type === 'chrome-profiles') {
       await beginChromeProfiles({
         forceChooser: decision.forceChooser,
@@ -3638,7 +5435,8 @@ export function MotionApp() {
     }
     if (decision.type === 'whatsapp') {
       messagingRef.current = 'whatsapp'
-      if (decision.pendingDraft) pendingWaDraftRef.current = decision.pendingDraft
+      // Correction retries keep the held draft; a fresh open+tell may replace it.
+      if (decision.pendingDraft) setHeldWaDraft(decision.pendingDraft)
       await runWhatsApp(decision.query, decision.query)
       return
     }
@@ -3735,10 +5533,22 @@ export function MotionApp() {
       return
     }
     // Remaining CommandResult: launch (confirm already returned above).
-    if (decision.appId === 'whatsapp') messagingRef.current = 'whatsapp'
-    pushEntry({ id: 0, kind: 'note', text: `Opening ${decision.name}.` })
+    if (decision.appId === 'whatsapp') {
+      messagingRef.current = 'whatsapp'
+      await tuckInteractiveGptForWhatsApp()
+    }
+    const noteId = pushEntry({ id: 0, kind: 'note', text: `Switching to ${decision.name}…` })
     const result = await window.miko.launchApp({ id: decision.appId, confirm: true })
-    if (!result.ok) pushEntry({ id: 0, kind: 'note', text: result.reason })
+    if (!result.ok) {
+      replaceEntry(noteId, { id: noteId, kind: 'note', text: result.reason || `I couldn’t open ${decision.name}.` })
+      return
+    }
+    // Report success only after the open/activate call succeeded (focus when already running).
+    replaceEntry(noteId, {
+      id: noteId,
+      kind: 'note',
+      text: result.reason?.trim() ? result.reason : `Opened ${decision.name}.`
+    })
   }
 
   function logRouteDecision(raw: string, decision: CommandResult): void {
@@ -3773,6 +5583,320 @@ export function MotionApp() {
    * identify it (Append/Replace if it has text; success only after read-back), otherwise type
    * nothing, copy the prompt and say why. Saved-chat destinations open in the browser + copy.
    */
+  async function runTypeDestIntent(
+    intent: import('../../../shared/type-plan').TypeIntent,
+    insertMode?: 'replace' | 'append' | 'ask'
+  ): Promise<void> {
+    if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
+    const task = beginExclusiveTask(intent.plan)
+    let content = intent.content
+    let dest = workingContextRef.current.typeDestination
+
+    // Resolve selection for “summarize this”
+    if (intent.contentKind === 'from-selection') {
+      const sel = latestSelection()
+      if (!sel?.text?.trim()) {
+        pushEntry({
+          id: 0,
+          kind: 'note',
+          text: 'What should I summarize? Select the text first, or paste it here.'
+        })
+        finishActiveTask('failed', 'No selection for summarize-this')
+        return
+      }
+      content = `Summarize this:\n\n${sel.text.slice(0, 6000)}`
+    }
+
+    const id = pushEntry({
+      id: 0,
+      kind: 'type-dest',
+      destinationLabel: dest ? `${dest.appName}${dest.label ? ` · ${dest.label}` : ''}` : '…',
+      draft: content,
+      status: 'preparing',
+      detail: 'Preparing…',
+      literal: intent.contentKind === 'literal',
+      submitRequested: intent.submit
+    })
+
+    const patch = (p: Partial<Extract<PanelEntry, { kind: 'type-dest' }>>): void => {
+      setEntries((items) =>
+        items.map((item) => (item.kind === 'type-dest' && item.id === id ? { ...item, ...p } : item))
+      )
+    }
+
+    // Polish non-literal content via assistant when tone/recipient requested — keep literal exact.
+    if (content && intent.contentKind === 'polish' && intent.tone) {
+      // Leave content as-is for now; formal tone is applied lightly without inventing facts.
+      if (intent.tone === 'formal' || intent.tone === 'professional') {
+        content = content.replace(/\bi'll\b/gi, "I'll").trim()
+      }
+    }
+
+    workingContextRef.current = {
+      ...workingContextRef.current,
+      typeDraft: content ? { text: content, literal: intent.contentKind === 'literal', updatedAt: Date.now() } : workingContextRef.current.typeDraft,
+      updatedAt: Date.now()
+    }
+
+    for (let i = 0; i < intent.plan.steps.length; i += 1) {
+      if (!isLive(activeTaskRef.current, task.token) || activeTaskRef.current?.id !== task.id) {
+        patch({ status: 'failed', detail: 'Cancelled.', error: 'Cancelled.' })
+        return
+      }
+      const step = intent.plan.steps[i]
+      if (!step) continue
+
+      if (step.kind === 'open_application' && step.app === 'chatgpt') {
+        patch({ detail: 'Opening ChatGPT…', status: 'preparing' })
+        const opened = await window.miko.typeDestOpenChatGpt()
+        if (!opened.ok) {
+          patch({ status: 'failed', detail: opened.reason, error: opened.reason })
+          finishActiveTask('failed', opened.reason)
+          return
+        }
+        if (opened.dest) {
+          dest = opened.dest
+          workingContextRef.current = { ...workingContextRef.current, typeDestination: dest, updatedAt: Date.now() }
+          patch({ destinationLabel: `${dest.appName}${dest.label ? ` · ${dest.label}` : ''}`, detail: opened.reason || 'ChatGPT ready.' })
+        }
+        continue
+      }
+
+      if (step.kind === 'open_application' && step.app === 'notes') {
+        patch({ detail: 'Opening Notes…', status: 'preparing' })
+        const opened = await window.miko.typeDestOpenNotes()
+        if (!opened.ok) {
+          patch({ status: 'failed', detail: opened.reason, error: opened.reason })
+          finishActiveTask('failed', opened.reason)
+          return
+        }
+        dest = opened.dest
+        if (dest) {
+          workingContextRef.current = { ...workingContextRef.current, typeDestination: dest, updatedAt: Date.now() }
+          patch({
+            destinationLabel: 'Notes',
+            detail: opened.reason || 'Notes ready.',
+            status: dest.verified ? 'ready' : 'choose-field'
+          })
+        }
+        continue
+      }
+
+      if (step.kind === 'chatgpt_new_chat') {
+        patch({ detail: 'Starting a new ChatGPT chat…', status: 'preparing' })
+        const created = await window.miko.typeDestNewChat()
+        if (!created.ok) {
+          patch({
+            status: 'choose-field',
+            detail: created.reason,
+            error: created.reason,
+            destinationLabel: created.dest ? 'ChatGPT' : 'ChatGPT (unverified)'
+          })
+          if (created.dest) {
+            workingContextRef.current = { ...workingContextRef.current, typeDestination: created.dest, updatedAt: Date.now() }
+          }
+          // Do not insert into a failed new-chat (may be previous conversation).
+          if (content) {
+            workingContextRef.current = {
+              ...workingContextRef.current,
+              typeDraft: { text: content, literal: intent.contentKind === 'literal', updatedAt: Date.now() },
+              updatedAt: Date.now()
+            }
+            patch({ draft: content, detail: created.reason + ' Draft kept — say “Paste now” after New Chat.' })
+          }
+          finishActiveTask('failed', created.reason)
+          return
+        }
+        dest = created.dest
+        if (dest) {
+          workingContextRef.current = { ...workingContextRef.current, typeDestination: dest, updatedAt: Date.now() }
+          patch({
+            destinationLabel: 'ChatGPT · New chat',
+            detail: created.reason || (created.verified ? 'New chat ready.' : 'New chat started (composer unverified).')
+          })
+        }
+        continue
+      }
+
+      if (step.kind === 'focus_omnibox' && step.content) {
+        patch({ draft: step.content, detail: 'Setting Chrome address bar…', status: 'inserting', destinationLabel: 'Chrome · address bar' })
+        const result = await window.miko.typeDestOmnibox(step.content)
+        if (result.destination) {
+          workingContextRef.current = { ...workingContextRef.current, typeDestination: result.destination, updatedAt: Date.now() }
+        }
+        if (result.status === 'inserted' && result.verified) {
+          patch({ status: 'inserted', detail: result.reason || 'Address bar set — not navigated.' })
+          finishActiveTask('completed', 'omnibox set')
+        } else if (result.status === 'pasted-unverified') {
+          patch({ status: 'unverified', detail: result.reason })
+          finishActiveTask('completed', 'omnibox unverified')
+        } else {
+          patch({ status: 'failed', detail: result.reason, error: result.reason })
+          finishActiveTask('failed', result.reason)
+        }
+        return
+      }
+
+      if (step.kind === 'choose_type_destination') {
+        workingContextRef.current = {
+          ...workingContextRef.current,
+          typeDraft: content
+            ? { text: content, literal: intent.contentKind === 'literal', updatedAt: Date.now() }
+            : workingContextRef.current.typeDraft,
+          updatedAt: Date.now()
+        }
+        patch({
+          status: 'choose-field',
+          draft: content || workingContextRef.current.typeDraft?.text || '',
+          detail: 'Click the field where you want this, then say “Paste now”. I won’t intercept every click.',
+          destinationLabel: 'Choose where to type'
+        })
+        finishActiveTask('completed', 'awaiting paste-now')
+        return
+      }
+
+      if (step.kind === 'insert_text') {
+        const text = (step.content || content || workingContextRef.current.typeDraft?.text || '').trim()
+        if (!text) {
+          patch({ status: 'failed', detail: 'Nothing to type.', error: 'Nothing to type.' })
+          finishActiveTask('failed', 'empty')
+          return
+        }
+        patch({ draft: text })
+
+        if (step.target === 'here') {
+          dest = workingContextRef.current.typeDestination
+          if (!dest || dest.secure) {
+            const captured = await window.miko.typeDestCaptureHere()
+            dest = captured
+          }
+          if (!dest || dest.secure) {
+            patch({
+              status: 'choose-field',
+              detail: dest?.secure
+                ? 'That’s a password field. MIKO won’t type there. Copy instead, or choose another field.'
+                : 'I couldn’t verify the field you were using. Click it, then say “Paste now”.',
+              destinationLabel: dest?.appName || 'Previous field'
+            })
+            workingContextRef.current = {
+              ...workingContextRef.current,
+              typeDraft: { text, literal: intent.contentKind === 'literal', updatedAt: Date.now() },
+              updatedAt: Date.now()
+            }
+            finishActiveTask('failed', 'here unverified')
+            return
+          }
+        }
+
+        if (step.target === 'focused-now' || step.target === 'active-or-choose') {
+          if (step.target === 'focused-now' || !dest) {
+            const focused = await window.miko.typeDestCapture()
+            if (focused && !focused.secure) dest = focused
+          }
+          if (!dest) {
+            dest = workingContextRef.current.typeDestination
+          }
+        }
+
+        if (!dest && intent.destinationHint === 'chatgpt') {
+          const opened = await window.miko.typeDestOpenChatGpt()
+          dest = opened.dest
+        }
+
+        if (!dest) {
+          workingContextRef.current = {
+            ...workingContextRef.current,
+            typeDraft: { text, literal: true, updatedAt: Date.now() },
+            updatedAt: Date.now()
+          }
+          patch({
+            status: 'choose-field',
+            draft: text,
+            detail: 'Where should I type this? Click the field, then say “Paste now”. Or say Copy.',
+            destinationLabel: 'Choose where to type'
+          })
+          finishActiveTask('completed', 'need destination')
+          return
+        }
+
+        workingContextRef.current = { ...workingContextRef.current, typeDestination: dest, updatedAt: Date.now() }
+        patch({
+          destinationLabel: `${dest.appName}${dest.label ? ` · ${dest.label}` : ''}`,
+          status: 'inserting',
+          detail: 'Inserting…'
+        })
+
+        const result = await window.miko.typeDestInsert({
+          text,
+          dest,
+          mode: insertMode ?? 'ask',
+          allowUnexposedChatGpt: dest.kind === 'chatgpt-composer' || intent.destinationHint === 'chatgpt'
+        })
+
+        if (result.status === 'has-text') {
+          patch({
+            status: 'choose-insert',
+            detail: result.reason,
+            destinationLabel: result.destination
+              ? `${result.destination.appName}${result.destination.label ? ` · ${result.destination.label}` : ''}`
+              : undefined
+          })
+          workingContextRef.current = {
+            ...workingContextRef.current,
+            typeDraft: { text, literal: intent.contentKind === 'literal', updatedAt: Date.now() },
+            typeDestination: result.destination || dest,
+            updatedAt: Date.now()
+          }
+          finishActiveTask('completed', 'choose insert')
+          return
+        }
+
+        if (result.status === 'inserted' && result.verified) {
+          patch({ status: 'inserted', detail: 'Inserted — not sent.', draft: text })
+          if (intent.submit) {
+            patch({
+              detail: 'Inserted — not sent. I won’t press Enter/Send unless there’s a verified submit path; none is available here.'
+            })
+          }
+          finishActiveTask('completed', 'inserted')
+          return
+        }
+
+        if (result.status === 'pasted-unverified') {
+          patch({ status: 'unverified', detail: result.reason, draft: text })
+          finishActiveTask('completed', 'unverified')
+          return
+        }
+
+        if (result.status === 'switched' || result.status === 'secure' || result.status === 'unsupported' || result.status === 'failed') {
+          patch({
+            status: result.status === 'switched' ? 'choose-field' : 'failed',
+            detail: result.reason,
+            error: result.reason
+          })
+          workingContextRef.current = {
+            ...workingContextRef.current,
+            typeDraft: { text, literal: intent.contentKind === 'literal', updatedAt: Date.now() },
+            updatedAt: Date.now()
+          }
+          finishActiveTask('failed', result.reason)
+          return
+        }
+
+        if (result.status === 'cancelled') {
+          patch({ status: 'failed', detail: 'Cancelled.', error: 'Cancelled.' })
+          finishActiveTask('cancelled', 'cancelled')
+          return
+        }
+      }
+    }
+
+    if (content && !intent.plan.steps.some((s) => s.kind === 'insert_text' || s.kind === 'focus_omnibox')) {
+      patch({ status: 'ready', draft: content, detail: 'Ready. Say “Paste now” or continue typing.' })
+    }
+    finishActiveTask('completed', 'type-dest done')
+  }
+
   async function handToChatGpt(entry: Extract<PanelEntry, { kind: 'handoff' }>, mode?: 'append' | 'replace'): Promise<void> {
     const destination = entry.destination ?? ''
     if (destination) {
@@ -3892,6 +6016,25 @@ export function MotionApp() {
       replaceEntry(entryId, { id: entryId, kind: 'note', text: option.id === 'gpt' ? 'Sending it to ChatGPT.' : 'Asking MIKO.' })
       if (option.id === 'gpt') await runDecision({ type: 'type-in-gpt', text })
       else await startAssistant(text)
+      return
+    }
+    if (entry.purpose === 'send-destination') {
+      pendingClarificationRef.current = null
+      replaceEntry(entryId, {
+        id: entryId,
+        kind: 'note',
+        text: option.id === 'chatgpt' ? 'Sending in Interactive GPT…' : 'Keeping WhatsApp unsent.'
+      })
+      if (option.id === 'chatgpt') await submitInteractiveGptDraft()
+      else {
+        const snap = freshSnapshot()
+        const chat = snap.draft?.chatName || snap.waChat || 'WhatsApp'
+        pushEntry({
+          id: 0,
+          kind: 'note',
+          text: `The draft for “${chat}” stays unsent — press Send in WhatsApp when you want it delivered.`
+        })
+      }
       return
     }
     if (entry.purpose === 'mail-or-app') {
@@ -4122,7 +6265,13 @@ export function MotionApp() {
       }
       if (option.id === 'finder') {
         const ok = await window.miko.revealFile(path)
-        replaceEntry(entryId, { id: entryId, kind: 'note', text: ok ? 'Showing it in Finder.' : 'That file isn’t on disk.' })
+        replaceEntry(entryId, {
+          id: entryId,
+          kind: 'note',
+          text: ok
+            ? `Showing it in ${hostPlatform === 'win32' ? 'File Explorer' : 'Finder'}.`
+            : 'That file isn’t on disk.'
+        })
         return
       }
       if (option.id.startsWith('wa:')) {
@@ -4155,7 +6304,7 @@ export function MotionApp() {
           id: entryId,
           kind: 'note',
           text: copied.verified
-            ? `That app isn’t a verified file-insert target. Copied “${filename}” as a file — paste it there, or use Show in Finder.`
+            ? `That app isn’t a verified file-insert target. Copied “${filename}” as a file — paste it there, or use ${showInFileBrowserLabel(hostPlatform)}.`
             : copied.reason || 'I couldn’t copy the file for that destination.'
         })
         return
@@ -4167,9 +6316,17 @@ export function MotionApp() {
       replaceEntry(entryId, { id: entryId, kind: 'note', text: saved.ok ? `Forgot \u201c${option.id}\u201d for WhatsApp.` : saved.reason })
       return
     }
-    replaceEntry(entryId, { id: entryId, kind: 'note', text: `Opening ${option.name}.` })
+    replaceEntry(entryId, { id: entryId, kind: 'note', text: `Switching to ${option.name}…` })
     const result = await window.miko.launchApp({ id: appId, confirm: true })
-    if (!result.ok) pushEntry({ id: 0, kind: 'note', text: result.reason })
+    if (!result.ok) {
+      replaceEntry(entryId, { id: entryId, kind: 'note', text: result.reason || `I couldn’t open ${option.name}.` })
+      return
+    }
+    replaceEntry(entryId, {
+      id: entryId,
+      kind: 'note',
+      text: result.reason?.trim() ? result.reason : `Opened ${option.name}.`
+    })
   }
 
   async function onConfirm(id: number): Promise<void> {
@@ -4200,9 +6357,17 @@ export function MotionApp() {
       return
     }
     if (entry.appId === 'whatsapp') messagingRef.current = 'whatsapp'
-    replaceEntry(id, { id, kind: 'note', text: `Opening ${entry.name}.` })
+    replaceEntry(id, { id, kind: 'note', text: `Switching to ${entry.name}…` })
     const result = await window.miko.launchApp({ id: entry.appId, confirm: true })
-    if (!result.ok) pushEntry({ id: 0, kind: 'note', text: result.reason })
+    if (!result.ok) {
+      replaceEntry(id, { id, kind: 'note', text: result.reason || `I couldn’t open ${entry.name}.` })
+      return
+    }
+    replaceEntry(id, {
+      id,
+      kind: 'note',
+      text: result.reason?.trim() ? result.reason : `Opened ${entry.name}.`
+    })
   }
 
   if (bridgeMissing) {
@@ -4236,6 +6401,80 @@ export function MotionApp() {
             void onSubmit()
           }}
           sizing={{ side: panelSide, onPreset: (p) => void presetPanel(p), onResizeStart: startPanelResize }}
+          gptMode={{
+            phase: gptMode.phase,
+            banner: gptModeBanner(gptMode),
+            lastDetail: gptMode.lastDetail,
+            liveView: gptMode.liveView,
+            detailsOpen: gptDetailsOpen,
+            onToggleDetails: () => setGptDetailsOpen((v) => !v),
+            onToggle: () => {
+              void (async () => {
+                if (gptModeRef.current.phase === 'off') {
+                  const s = await window.miko.gptModeEnable()
+                  if (s) setGptMode(s)
+                } else {
+                  const s = await window.miko.gptModeExit()
+                  if (s) setGptMode(s)
+                }
+              })()
+            },
+            onPause: () => {
+              void window.miko.gptModePause().then((s) => s && setGptMode(s))
+            },
+            onResume: () => {
+              void window.miko.gptModeResume().then((s) => s && setGptMode(s))
+            },
+            onExit: () => {
+              void window.miko.gptModeExit().then((s) => s && setGptMode(s))
+            },
+            onNewChat: () => {
+              void (async () => {
+                const result = await window.miko.gptModeNewChat()
+                // One short note only when New chat fails hard.
+                if (!result.ok) pushEntry({ id: 0, kind: 'note', text: result.reason || 'New chat failed.' })
+              })()
+            },
+            onViewChatGpt: () => {
+              void window.miko.gptModeFocus()
+            },
+            onToggleLiveView: () => {
+              void (async () => {
+                const next = !gptModeRef.current.liveView
+                const s = await window.miko.gptModeSetLiveView(next)
+                if (s) setGptMode(s)
+                if (next && !gptModeRef.current.captureSourceId) openGptWindowPicker()
+              })()
+            },
+            onChooseWindow: () => {
+              openGptWindowPicker()
+            }
+          }}
+          onOpenChatGptWeb={() => {
+            void handleInteractiveGptLocal('open')
+          }}
+          onGptMode={(entryId, action) => {
+            void (async () => {
+              const entry = entriesRef.current.find((item) => item.id === entryId)
+              if (entry?.kind !== 'gpt-mode') return
+              if (action === 'view') {
+                await window.miko.gptModeFocus()
+                return
+              }
+              if (action === 'cancel') {
+                window.miko.gptModeCancel()
+                replaceEntry(entryId, {
+                  ...entry,
+                  status: 'cancelled',
+                  detail: 'Cancelled. If already submitted in ChatGPT, MIKO can’t recall it.'
+                })
+                return
+              }
+              if (action === 'replace' || action === 'append') {
+                await forwardToGptMode(entry.text, action)
+              }
+            })()
+          }}
           tab={tab}
           onTab={(next) => {
             if (next !== tabRef.current) void applyPanel(true, next)
@@ -4422,6 +6661,97 @@ export function MotionApp() {
             onOpenChromeChooser: () => {
               setPanelView('log')
               void beginChromeProfiles({ forceChooser: true, profileQuery: null, url: null, name: null })
+            },
+            onOpenFeedback: () => openFeedback({ lastCommand: lastCommandRef.current }),
+            onRunTutorial: () => {
+              void window.miko.setupUpdate({ action: 'restart-tutorial' }).then(() => {
+                setPanelView('setup')
+                if (!panelRef.current) void applyPanel(true, 'chat')
+              })
+            },
+            platform: hostPlatform,
+            selectionAvailable: hostPlatform !== 'win32',
+            versionLine,
+            assistantStatus,
+            update: {
+              statusLine: updateStatus
+                ? [
+                    `Mode: ${updateStatus.mode}`,
+                    `Installed: ${updateStatus.currentVersion}`,
+                    updateStatus.phase === 'available'
+                      ? 'Status: update available'
+                      : updateStatus.phase === 'download-opened'
+                        ? 'Status: download opened'
+                        : updateStatus.phase === 'installed'
+                          ? 'Status: update installed'
+                          : updateStatus.phase === 'ready'
+                            ? 'Status: update ready to restart'
+                            : updateStatus.phase !== 'idle'
+                              ? `Status: ${updateStatus.phase}`
+                              : 'Status: idle',
+                    updateStatus.message || null,
+                    updateStatus.availableVersion ? `Available: ${updateStatus.availableVersion}` : null,
+                    updateStatus.unsigned ? updateStatus.installBlockedReason : null
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : 'Update status loading…',
+              busy: updateBusy || updateStatus?.phase === 'checking' || updateStatus?.phase === 'downloading',
+              mode: updateStatus?.mode === 'auto' ? 'auto' : 'manual',
+              downloadUrl: updateStatus?.downloadUrl || '',
+              canRestart: updateStatus?.mode === 'auto' && updateStatus?.phase === 'ready',
+              canDownload: Boolean(updateStatus?.downloadUrl),
+              canLater:
+                updateStatus?.phase === 'available' ||
+                updateStatus?.phase === 'ready' ||
+                updateStatus?.phase === 'download-opened',
+              onCheck: () => {
+                setUpdateBusy(true)
+                void window.miko.updateCheck().then((s) => {
+                  setUpdateStatus(s)
+                  setUpdateBusy(false)
+                })
+              },
+              onDownload: () => {
+                setUpdateBusy(true)
+                void window.miko.updateOpenDownload(draftRef.current).then((r) => {
+                  setUpdateBusy(false)
+                  if (!r.ok) pushEntry({ id: 0, kind: 'note', text: r.reason })
+                  else void window.miko.updateGet().then(setUpdateStatus)
+                })
+              },
+              onRestart: () => {
+                void window.miko.updateRestart(draftRef.current).then((r) => {
+                  if (!r.ok) pushEntry({ id: 0, kind: 'note', text: r.reason })
+                })
+              },
+              onLater: () => {
+                void window.miko.updateLater().then(setUpdateStatus)
+              },
+              onSaveDownloadUrl: (url) => {
+                void window.miko.updateManualReleaseSet({ downloadUrl: url }).then((r) => {
+                  if (!r.ok) pushEntry({ id: 0, kind: 'note', text: r.reason })
+                  else void window.miko.updateGet().then(setUpdateStatus)
+                })
+              }
+            }
+          }}
+          feedback={feedbackCtx}
+          setup={{
+            platform: hostPlatform,
+            pets: petListing ? (
+              <PetChooser
+                available={petListing.available}
+                selected={petListing.selected}
+                busy={petBusy}
+                message={petMessage}
+                thumbs={petThumbs}
+                focus={petFocus}
+                onChoose={(id) => void switchPet(id, false)}
+              />
+            ) : null,
+            onOpenInteractiveGpt: () => {
+              void window.miko.chatgptWebOpen()
             }
           }}
           onUseChatGpt={(id) => {
@@ -4447,6 +6777,7 @@ export function MotionApp() {
           onWhatsAppCancel={() => {
             whatsAppToken.current += 1
             window.miko.whatsappCancel()
+            endWaRecipientWait({ dropPending: true, note: 'Cancelled — pending WhatsApp message dropped.' })
             clearWhatsAppChoosers()
             const working = [...entriesRef.current].reverse().find((item) => item.kind === 'whatsapp')
             if (working) replaceEntry(working.id, { id: working.id, kind: 'note', text: 'WhatsApp search cancelled.' })
@@ -4456,11 +6787,32 @@ export function MotionApp() {
             if (entry?.kind !== 'choices' || entry.purpose !== 'whatsapp') return
             whatsAppToken.current += 1
             window.miko.whatsappCancel()
+            // Ambiguous results: keep any held draft; owner edits the name and searches again.
+            awaitingWaRecipientRef.current = true
+            messagingRef.current = 'whatsapp'
+            waChatRef.current = null
             setDraft(entry.payload || '')
             replaceEntry(entryId, {
               id: entryId,
+              kind: 'wa-recipient',
+              text: `No exact match yet. Who did you mean?`,
+              query: entry.payload || ''
+            })
+          }}
+          onWaRecipientRetry={(entryId, query) => {
+            const cleaned = query.trim()
+            if (!cleaned) return
+            awaitingWaRecipientRef.current = false
+            void runWhatsApp(cleaned, cleaned, undefined, entryId)
+          }}
+          onWaRecipientCancel={(entryId) => {
+            whatsAppToken.current += 1
+            window.miko.whatsappCancel()
+            endWaRecipientWait({ dropPending: true })
+            replaceEntry(entryId, {
+              id: entryId,
               kind: 'note',
-              text: 'Edit the name below and Send, or say a shorter WhatsApp search.'
+              text: 'Cancelled — pending WhatsApp message dropped.'
             })
           }}
           onWaFile={(entryId, action) => {
@@ -4492,7 +6844,13 @@ export function MotionApp() {
               }
               if (action.type === 'reveal') {
                 const ok = await window.miko.revealFile(entry.path)
-                pushEntry({ id: 0, kind: 'note', text: ok ? 'Showing it in Finder.' : 'That file isn’t on disk.' })
+                pushEntry({
+                  id: 0,
+                  kind: 'note',
+                  text: ok
+                    ? `Showing it in ${hostPlatform === 'win32' ? 'File Explorer' : 'Finder'}.`
+                    : 'That file isn’t on disk.'
+                })
                 return
               }
               if (action.type === 'copy-file') {
@@ -4522,10 +6880,100 @@ export function MotionApp() {
               }
             })()
           }}
+          onTypeDest={(entryId, action) => {
+            void (async () => {
+              const entry = entriesRef.current.find((item) => item.id === entryId)
+              if (entry?.kind !== 'type-dest') return
+              if (action === 'cancel') {
+                window.miko.typeDestCancel()
+                replaceEntry(entryId, { id: entryId, kind: 'note', text: 'Typing cancelled. Nothing was sent.' })
+                return
+              }
+              if (action === 'copy') {
+                const ok = await window.miko.copyText(entry.draft || workingContextRef.current.typeDraft?.text || '')
+                pushEntry({ id: 0, kind: 'note', text: ok ? 'Copied.' : 'Couldn’t copy.' })
+                return
+              }
+              const text = entry.draft || workingContextRef.current.typeDraft?.text || ''
+              if (!text) {
+                pushEntry({ id: 0, kind: 'note', text: 'Nothing to paste.' })
+                return
+              }
+              if (action === 'paste-now' || action === 'replace' || action === 'append') {
+                let dest = workingContextRef.current.typeDestination
+                const savedChatGpt =
+                  dest?.kind === 'chatgpt-composer' || (dest?.bundleId ? /openai\.(chat|codex)/i.test(dest.bundleId) : false)
+                if (action === 'paste-now' && !savedChatGpt) {
+                  // For ChatGPT destinations, keep the saved target — clicking Paste now focuses MIKO.
+                  const focused = await window.miko.typeDestCapture()
+                  if (focused && !focused.secure) dest = focused
+                }
+                if (!dest || dest.secure) {
+                  pushEntry({
+                    id: 0,
+                    kind: 'note',
+                    text: dest?.secure
+                      ? 'That’s a password field. MIKO won’t type there.'
+                      : 'Click an editable field first, then Paste now.'
+                  })
+                  return
+                }
+                replaceEntry(entryId, { ...entry, status: 'inserting', detail: 'Inserting…', destinationLabel: dest.appName })
+                const result = await window.miko.typeDestInsert({
+                  text,
+                  dest,
+                  mode: action === 'append' ? 'append' : action === 'replace' ? 'replace' : 'ask',
+                  allowUnexposedChatGpt:
+                    dest.kind === 'chatgpt-composer' ||
+                    savedChatGpt ||
+                    /openai\.(chat|codex)/i.test(dest.bundleId || '')
+                })
+                if (result.status === 'has-text') {
+                  replaceEntry(entryId, {
+                    ...entry,
+                    status: 'choose-insert',
+                    detail: result.reason,
+                    draft: text,
+                    destinationLabel: result.destination?.appName || dest.appName
+                  })
+                  return
+                }
+                if (result.status === 'inserted' && result.verified) {
+                  replaceEntry(entryId, {
+                    ...entry,
+                    status: 'inserted',
+                    detail: 'Inserted — not sent.',
+                    draft: text,
+                    destinationLabel: result.destination?.appName || dest.appName
+                  })
+                  return
+                }
+                if (result.status === 'pasted-unverified') {
+                  replaceEntry(entryId, { ...entry, status: 'unverified', detail: result.reason, draft: text })
+                  return
+                }
+                replaceEntry(entryId, {
+                  ...entry,
+                  status: 'failed',
+                  detail: result.reason,
+                  error: result.reason,
+                  draft: text
+                })
+              }
+            })()
+          }}
           onWaReply={(entryId, action) => {
             void (async () => {
               const entry = entriesRef.current.find((item) => item.id === entryId)
               if (entry?.kind !== 'wa-reply') return
+              if (action.type === 'report') {
+                openFeedback({
+                  lastCommand: entry.instruction || lastCommandRef.current,
+                  actionType: 'whatsapp-reply',
+                  errorCode: entry.error ? 'wa-reply-failed' : 'wa-reply'
+                })
+                return
+              }
               if (action.type === 'cancel') {
                 if (entry.requestId) window.miko.bridgeCancel(entry.requestId)
                 waReplyToken.current += 1

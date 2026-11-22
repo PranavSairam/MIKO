@@ -1,0 +1,21 @@
+# systemd unit for the feedback inbox on the same VPS as the update feed.
+# Copy feedback-server to e.g. /opt/miko-feedback, run init-config.mjs once,
+# set host to 127.0.0.1 in config.json (Caddy terminates TLS).
+#
+#   sudo cp miko-feedback.service.example /etc/systemd/system/miko-feedback.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now miko-feedback
+
+[Unit]
+Description=MIKO private beta feedback server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/miko-feedback
+ExecStart=/usr/bin/node server.mjs
+Restart=on-failure
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

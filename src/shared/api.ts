@@ -32,11 +32,82 @@ export const IPC = {
   selectionShortcutGet: 'miko:selection-shortcut-get',
   selectionShortcutSet: 'miko:selection-shortcut-set',
   chatgptInsert: 'miko:chatgpt-insert',
+  typeDestCapture: 'miko:type-dest-capture',
+  typeDestCaptureHere: 'miko:type-dest-capture-here',
+  typeDestOpenChatGpt: 'miko:type-dest-open-chatgpt',
+  typeDestNewChat: 'miko:type-dest-new-chat',
+  typeDestInsert: 'miko:type-dest-insert',
+  typeDestOmnibox: 'miko:type-dest-omnibox',
+  typeDestOpenNotes: 'miko:type-dest-open-notes',
+  typeDestCancel: 'miko:type-dest-cancel',
+  gptModeGet: 'miko:gpt-mode-get',
+  gptModeEnable: 'miko:gpt-mode-enable',
+  gptModePause: 'miko:gpt-mode-pause',
+  gptModeResume: 'miko:gpt-mode-resume',
+  gptModeExit: 'miko:gpt-mode-exit',
+  gptModeNewChat: 'miko:gpt-mode-new-chat',
+  gptModeSend: 'miko:gpt-mode-send',
+  gptModeCancel: 'miko:gpt-mode-cancel',
+  gptModeFocus: 'miko:gpt-mode-focus',
+  gptModeLiveView: 'miko:gpt-mode-live-view',
+  gptModeLiveSnapshot: 'miko:gpt-mode-live-snapshot',
+  gptModeListSources: 'miko:gpt-mode-list-sources',
+  gptModeSetSource: 'miko:gpt-mode-set-source',
+  gptModeLiveSizePreset: 'miko:gpt-mode-live-size-preset',
+  gptModeLiveCollapse: 'miko:gpt-mode-live-collapse',
+  gptModeOpenPicker: 'miko:gpt-mode-open-picker',
+  gptModeState: 'miko:gpt-mode-state',
+  lensWindowBounds: 'miko:lens-window-bounds',
+  lensPointer: 'miko:lens-pointer',
+  lensType: 'miko:lens-type',
+  lensFinderSelection: 'miko:lens-finder-selection',
+  lensPickFiles: 'miko:lens-pick-files',
+  lensProvenFiles: 'miko:lens-proven-files',
+  lensCopyFile: 'miko:lens-copy-file',
+  lensRevealFile: 'miko:lens-reveal-file',
+  lensStartDrag: 'miko:lens-start-drag',
+  lensAttachChatGpt: 'miko:lens-attach-chatgpt',
+  lensRegisterFile: 'miko:lens-register-file',
+  lensCancelInput: 'miko:lens-cancel-input',
+  lensOpenOriginal: 'miko:lens-open-original',
+  spotifyMedia: 'miko:spotify-media',
+  /** Optional ChatGPT Web workspace (real chatgpt.com in an isolated WebContentsView). */
+  chatgptWebOpen: 'miko:chatgpt-web-open',
+  chatgptWebClose: 'miko:chatgpt-web-close',
+  chatgptWebCollapse: 'miko:chatgpt-web-collapse',
+  chatgptWebExpand: 'miko:chatgpt-web-expand',
+  chatgptWebStatus: 'miko:chatgpt-web-status',
+  chatgptWebBack: 'miko:chatgpt-web-back',
+  chatgptWebForward: 'miko:chatgpt-web-forward',
+  chatgptWebReload: 'miko:chatgpt-web-reload',
+  chatgptWebChromeHeight: 'miko:chatgpt-web-chrome-height',
+  chatgptWebInsertTranscript: 'miko:chatgpt-web-insert-transcript',
+  chatgptWebPasteClipboard: 'miko:chatgpt-web-paste-clipboard',
+  chatgptWebSubmitDraft: 'miko:chatgpt-web-submit-draft',
+  chatgptWebCancelSubmit: 'miko:chatgpt-web-cancel-submit',
+  chatgptWebDownload: 'miko:chatgpt-web-download',
+  chatgptWebDownloadEvent: 'miko:chatgpt-web-download-event',
+  chatgptWebPin: 'miko:chatgpt-web-pin',
+  chatgptWebStateEvent: 'miko:chatgpt-web-state',
+  chatgptWebDragActive: 'miko:chatgpt-web-drag-active',
+  chatgptWebExpandFromDrag: 'miko:chatgpt-web-expand-from-drag',
+  chatgptWebDictateArm: 'miko:chatgpt-web-dictate-arm',
+  /** Main → pet UI hints (tuck panel when Interactive GPT opens, etc.). */
+  uiHint: 'miko:ui-hint',
   bridgeSend: 'miko:bridge-send',
   bridgeCancel: 'miko:bridge-cancel',
   bridgeUpdate: 'miko:bridge-update',
   bridgeStatus: 'miko:bridge-status',
+  bridgeSetEnabled: 'miko:bridge-set-enabled',
   bridgeNew: 'miko:bridge-new',
+  setupGet: 'miko:setup-get',
+  setupUpdate: 'miko:setup-update',
+  voicePermissionGet: 'miko:voice-permission-get',
+  voicePermissionRequest: 'miko:voice-permission-request',
+  voiceSettingsOpen: 'miko:voice-settings-open',
+  voiceMicTest: 'miko:voice-mic-test',
+  summonShortcutGet: 'miko:summon-shortcut-get',
+  summonShortcutSet: 'miko:summon-shortcut-set',
   prefsGet: 'miko:prefs-get',
   prefsSet: 'miko:prefs-set',
   mailStatus: 'miko:mail-status',
@@ -77,8 +148,14 @@ export const IPC = {
   switcherQuit: 'miko:switcher-quit',
   switcherTabs: 'miko:switcher-tabs',
   switcherFocusTab: 'miko:switcher-focus-tab',
+  switcherCloseTab: 'miko:switcher-close-tab',
+  switcherFeedApp: 'miko:switcher-feed-app',
+  switcherFeedTab: 'miko:switcher-feed-tab',
+  switcherDropTarget: 'miko:switcher-drop-target',
   switcherClose: 'miko:switcher-close',
   switcherOpened: 'miko:switcher-opened',
+  /** Switcher renderer: ignore empty glass so clicks reach MIKO underneath (macOS). */
+  switcherIgnoreMouse: 'miko:switcher-ignore-mouse',
   whatsappOpen: 'miko:whatsapp-open',
   whatsappCancel: 'miko:whatsapp-cancel',
   whatsappAliases: 'miko:whatsapp-aliases',
@@ -103,7 +180,26 @@ export const IPC = {
   examplesList: 'miko:examples-list',
   examplesAdd: 'miko:examples-add',
   examplesRemove: 'miko:examples-remove',
-  lastExternalApp: 'miko:last-external-app'
+  lastExternalApp: 'miko:last-external-app',
+  appInfo: 'miko:app-info',
+  feedbackConfigGet: 'miko:feedback-config-get',
+  feedbackConfigSet: 'miko:feedback-config-set',
+  feedbackPreview: 'miko:feedback-preview',
+  feedbackSubmit: 'miko:feedback-submit',
+  feedbackList: 'miko:feedback-list',
+  feedbackRetry: 'miko:feedback-retry',
+  feedbackDelete: 'miko:feedback-delete',
+  feedbackExport: 'miko:feedback-export',
+  feedbackExportDraft: 'miko:feedback-export-draft',
+  updateStatus: 'miko:update-status',
+  updateGet: 'miko:update-get',
+  updateCheck: 'miko:update-check',
+  updateRestart: 'miko:update-restart',
+  updateLater: 'miko:update-later',
+  updateOpenDownload: 'miko:update-open-download',
+  updateFeedSet: 'miko:update-feed-set',
+  updateManualReleaseSet: 'miko:update-manual-release-set',
+  updateStartup: 'miko:update-startup'
 } as const
 
 export type OpenUrlResult = {
@@ -269,6 +365,8 @@ export interface BridgeStatusInfo {
   signedIn: boolean
   thread: string
   busy: boolean
+  provider?: 'chatgpt-bundled' | 'path' | 'none'
+  reason?: string
 }
 
 export interface BridgeUpdate {
@@ -416,6 +514,127 @@ export interface MikoApi {
   openChatGpt: () => Promise<OpenResult>
   /** Put a prompt into ChatGPT's message box only when Accessibility can identify it (see PROJECT_LOG). */
   chatgptInsert: (prompt: string, mode?: 'append' | 'replace') => Promise<InsertResult>
+  /** Capture focused editable field (excludes MIKO) for typing destinations. */
+  typeDestCapture: () => Promise<import('./destination').TypeDestination | null>
+  /** Capture “type here” from last external app / focused field. */
+  typeDestCaptureHere: () => Promise<import('./destination').TypeDestination | null>
+  typeDestOpenChatGpt: () => Promise<{ ok: boolean; reason: string; dest: import('./destination').TypeDestination | null }>
+  typeDestNewChat: () => Promise<{ ok: boolean; verified: boolean; reason: string; dest: import('./destination').TypeDestination | null }>
+  typeDestInsert: (request: {
+    text: string
+    dest: import('./destination').TypeDestination
+    mode?: 'replace' | 'append' | 'ask'
+    allowUnexposedChatGpt?: boolean
+  }) => Promise<import('./destination').TypeInsertResult>
+  typeDestOmnibox: (text: string) => Promise<import('./destination').TypeInsertResult>
+  typeDestOpenNotes: () => Promise<{ ok: boolean; reason: string; dest: import('./destination').TypeDestination | null }>
+  typeDestCancel: () => void
+  /** Opt-in GPT Mode (messages → ChatGPT app). Separate from MIKO assistant. */
+  gptModeGet: () => Promise<import('./gpt-mode').GptModeState>
+  gptModeEnable: () => Promise<import('./gpt-mode').GptModeState>
+  gptModePause: () => Promise<import('./gpt-mode').GptModeState>
+  gptModeResume: () => Promise<import('./gpt-mode').GptModeState>
+  gptModeExit: () => Promise<import('./gpt-mode').GptModeState>
+  gptModeNewChat: () => Promise<{ ok: boolean; verified: boolean; reason: string }>
+  gptModeSend: (request: {
+    requestId: string
+    text: string
+    mode?: 'replace' | 'append' | 'ask'
+  }) => Promise<import('./gpt-mode').GptSendResult>
+  gptModeCancel: () => void
+  gptModeFocus: () => Promise<{ ok: boolean; reason: string }>
+  /** Open optional ChatGPT Web workspace (real chatgpt.com; separate session). */
+  chatgptWebOpen: () => Promise<{ ok: boolean; reason: string }>
+  chatgptWebStatus: () => Promise<{
+    open: boolean
+    collapsed: boolean
+    pinned: boolean
+    visible: boolean
+    url: string
+    title: string
+    canGoBack: boolean
+    canGoForward: boolean
+    downloadNote: string
+    dropNote: string
+    dictateArmed: boolean
+    partition: string
+    label: string
+  }>
+  onUiHint: (listener: (hint: {
+    tuckPanel?: boolean
+    dictateToGpt?: boolean
+    openSetup?: boolean
+    runTutorial?: boolean
+  }) => void) => () => void
+  chatgptWebCollapse: () => Promise<boolean>
+  chatgptWebExpand: () => Promise<boolean>
+  chatgptWebClose: () => Promise<boolean>
+  chatgptWebInsertTranscript: (text: string) => Promise<{ ok: boolean; reason: string }>
+  /** Explicit one-shot: clipboard text → Interactive GPT composer (unsent; draft preserved). */
+  chatgptWebPasteClipboard: () => Promise<{ ok: boolean; reason: string; text?: string }>
+  /** Submit current Interactive GPT composer once (bound draft only; never retries). */
+  chatgptWebSubmitDraft: (opts?: {
+    expectedText?: string
+    generation?: number
+  }) => Promise<{
+    ok: boolean
+    status:
+      | 'submitted-observed'
+      | 'delivery-unverified'
+      | 'empty'
+      | 'changed'
+      | 'unavailable'
+      | 'cancelled'
+      | 'failed'
+    reason: string
+    composerText: string
+  }>
+  chatgptWebCancelSubmit: () => Promise<number>
+  /** Arm/disarm one-shot Dictate-to-GPT (next mic final → composer). */
+  chatgptWebDictateArm: (armed: boolean) => Promise<boolean>
+  gptModeSetLiveView: (enabled: boolean) => Promise<import('./gpt-mode').GptModeState>
+  gptModeLiveSnapshot: () => Promise<import('./gpt-mode').GptLiveSnapshot>
+  gptModeListSources: () => Promise<{
+    ok: boolean
+    reason: string
+    permission: string
+    sources: import('./gpt-mode').GptCaptureSource[]
+  }>
+  gptModeSetSource: (sourceId: string, name?: string, owner?: string) => Promise<import('./gpt-mode').GptModeState>
+  gptModeLiveSizePreset: (preset: import('./gpt-mode').GptLiveSizePreset) => Promise<boolean>
+  gptModeLiveCollapse: (collapsed: boolean) => Promise<boolean>
+  onGptModeLiveCollapse: (listener: (collapsed: boolean) => void) => () => void
+  gptModeOpenPicker: () => void
+  onGptModeOpenPicker: (listener: () => void) => () => void
+  onGptModeState: (listener: (state: import('./gpt-mode').GptModeState) => void) => () => void
+  /** Lens: verify bound window bounds (CGWindow). */
+  lensWindowBounds: (sourceId?: string) => Promise<import('./lens-control').LensWindowBounds | null>
+  /** Lens Control: click / double-click / scroll at mapped screen points. */
+  lensPointer: (request: import('./lens-control').LensPointerRequest) => Promise<import('./lens-control').LensPointerResult>
+  /** Lens Control: type into the bound source (brings it forward). */
+  lensType: (request: import('./lens-control').LensTypeRequest) => Promise<import('./lens-control').LensTypeResult>
+  /** Resolve Finder selection to real file URLs (never OCR). */
+  lensFinderSelection: (sourceId?: string) => Promise<import('./lens-control').LensFinderSelectionResult>
+  /** Native file picker for Lens shelf. */
+  lensPickFiles: () => Promise<import('./lens-control').LensFinderSelectionResult>
+  /** Session-proven attachment files for the Lens shelf. */
+  lensProvenFiles: () => Promise<import('./lens-control').LensResolvedFile[]>
+  lensCopyFile: (path: string) => Promise<{ ok: boolean; reason: string }>
+  lensRevealFile: (path: string) => Promise<boolean>
+  /** Begin a native OS file drag from the Lens shelf (dragstart only). */
+  lensStartDrag: (path: string) => void
+  /** Attach a real file to ChatGPT (unsent); verifies preview before Attached. */
+  lensAttachChatGpt: (path: string, sourceId?: string) => Promise<import('./lens-control').LensAttachResult>
+  /** Register a verified path onto the Lens shelf. */
+  lensRegisterFile: (path: string) => Promise<import('./lens-control').LensResolvedFile | null>
+  /** Drop in-flight Lens pointer/type work (Control cancel / source change). */
+  lensCancelInput: () => void
+  /** One intentional activate of the bound Lens source (Open original). */
+  lensOpenOriginal: (sourceId?: string) => Promise<{ ok: boolean; reason: string; pid: number }>
+  /** Spotify media controls that must not steal focus. */
+  spotifyMedia: (
+    action: import('./lens-control').SpotifyMediaAction
+  ) => Promise<import('./lens-control').SpotifyMediaStatus>
   /** Saved ChatGPT shortcuts, stored in MIKO's local settings. */
   listChats: () => Promise<SavedChat[]>
   addChat: (name: string, url: string) => Promise<ChatEditResult>
@@ -523,6 +742,7 @@ export interface MikoApi {
   onVoiceAuto: (listener: (enabled: boolean) => void) => () => void
   /** ChatGPT bridge proof of concept (opt-in; Codex CLI, headless). */
   bridgeStatus: () => Promise<BridgeStatusInfo | null>
+  bridgeSetEnabled: (enabled: boolean) => Promise<BridgeStatusInfo | null>
   bridgeSend: (requestId: string, prompt: string, opts?: { fresh?: boolean; keep?: boolean }) => Promise<{ ok: boolean; reason: string }>
   /** Selected-text assistant. */
   onSelection: (listener: (event: SelectionEvent) => void) => () => void
@@ -534,12 +754,75 @@ export interface MikoApi {
   onPasteState: (listener: (event: PasteStateEvent) => void) => () => void
   selectionShortcutGet: () => Promise<string>
   selectionShortcutSet: (accelerator: string) => Promise<{ ok: boolean; reason: string; shortcut: string }>
+  setupGet: () => Promise<import('./setup').SetupState>
+  setupUpdate: (update: import('./setup').SetupUpdate) => Promise<import('./setup').SetupState>
+  voicePermissionGet: () => Promise<import('./setup').VoicePermissionStatus>
+  voicePermissionRequest: () => Promise<import('./setup').VoicePermissionStatus>
+  voiceSettingsOpen: () => Promise<boolean>
+  voiceMicTest: () => Promise<import('./setup').MicTestStatus>
+  summonShortcutGet: () => Promise<import('./setup').SummonShortcutStatus>
+  summonShortcutSet: (accelerator: string) => Promise<import('./setup').SummonShortcutStatus>
   bridgeCancel: (requestId: string) => void
   /** Start a new assistant conversation (the next question opens a fresh thread). */
   bridgeNew: () => Promise<void>
   /** MIKO preferences (stored on this Mac, added to new assistant conversations). */
   prefsGet: () => Promise<string>
   prefsSet: (text: string) => Promise<boolean>
+  /** Version / build identity for Settings and feedback diagnostics. */
+  appInfo: () => Promise<{
+    name: string
+    version: string
+    buildId: string
+    channel: string
+    packaged: boolean
+    platform: string
+    arch: string
+  }>
+  feedbackConfigGet: () => Promise<{ endpoint: string; inviteCode: string; hasEndpoint: boolean }>
+  feedbackConfigSet: (partial: { endpoint?: string; inviteCode?: string }) => Promise<{
+    endpoint: string
+    inviteCode: string
+    hasEndpoint: boolean
+  }>
+  feedbackPreview: (draft: import('./feedback').FeedbackDraft, opts?: { actionType?: string | null; errorCode?: string | null }) => Promise<
+    | { ok: true; preview: string; payload: import('./feedback').FeedbackPayload }
+    | { ok: false; reason: string }
+  >
+  feedbackSubmit: (
+    draft: import('./feedback').FeedbackDraft,
+    opts?: { actionType?: string | null; errorCode?: string | null; clientKey?: string }
+  ) => Promise<{
+    ok: boolean
+    reason: string
+    delivered: boolean
+    item: import('./feedback').FeedbackQueueItem | null
+  }>
+  feedbackList: () => Promise<import('./feedback').FeedbackQueueItem[]>
+  feedbackRetry: (id: string) => Promise<{ ok: boolean; reason: string; item: import('./feedback').FeedbackQueueItem | null }>
+  feedbackDelete: (id: string) => Promise<import('./feedback').FeedbackQueueItem[]>
+  feedbackExport: (id: string) => Promise<{ ok: boolean; reason: string; path: string }>
+  feedbackExportDraft: (
+    draft: import('./feedback').FeedbackDraft,
+    opts?: { actionType?: string | null; errorCode?: string | null }
+  ) => Promise<{
+    ok: boolean
+    reason: string
+    path: string
+    item: import('./feedback').FeedbackQueueItem | null
+  }>
+  updateGet: () => Promise<import('./updater').UpdateStatus>
+  updateCheck: () => Promise<import('./updater').UpdateStatus>
+  updateRestart: (draftText?: string) => Promise<{ ok: boolean; reason: string }>
+  updateLater: () => Promise<import('./updater').UpdateStatus>
+  updateOpenDownload: (draftText?: string) => Promise<{ ok: boolean; reason: string }>
+  updateFeedSet: (url: string) => Promise<{ ok: boolean; reason: string }>
+  updateManualReleaseSet: (partial: {
+    downloadUrl?: string
+    latestJsonUrl?: string
+  }) => Promise<{ ok: boolean; reason: string; config: { downloadUrl: string; latestJsonUrl: string } }>
+  /** After an update relaunch: notice + recovered chat draft (not a queued send). */
+  updateStartup: () => Promise<{ notice: string; draft: string }>
+  onUpdateStatus: (listener: (status: import('./updater').UpdateStatus) => void) => () => void
   onBridge: (listener: (update: BridgeUpdate) => void) => () => void
   /** Gmail (read-only). Tokens never reach the renderer. */
   mailStatus: () => Promise<MailStatusInfo | null>
@@ -585,4 +868,4 @@ export interface PetFlightInfo {
   perch: { x: number; y: number } | null
 }
 
-export type PetCommand = { kind: 'switch'; pet: PetId } | { kind: 'choose' }
+export type PetCommand = { kind: 'switch'; pet: PetId } | { kind: 'choose' } | { kind: 'feed' }

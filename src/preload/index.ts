@@ -73,6 +73,7 @@ const api: MikoApi = {
     const wrapped = (_event: unknown, payload: unknown): void => {
       const p = payload as { kind?: unknown; pet?: unknown } | null
       if (p?.kind === 'choose') listener({ kind: 'choose' })
+      else if (p?.kind === 'feed') listener({ kind: 'feed' })
       else if (p?.kind === 'switch' && typeof p.pet === 'string') listener({ kind: 'switch', pet: p.pet as PetId })
     }
     ipcRenderer.on(IPC.petCommand, wrapped)
@@ -116,6 +117,228 @@ const api: MikoApi = {
     if (r && (r.state === 'inserted' || r.state === 'pasted' || r.state === 'has-text' || r.state === 'unavailable' || r.state === 'failed')) return r
     return { state: 'failed', reason: 'No response.' }
   },
+  typeDestCapture: async () => (await ipcRenderer.invoke(IPC.typeDestCapture)) as import('../shared/destination').TypeDestination | null,
+  typeDestCaptureHere: async () =>
+    (await ipcRenderer.invoke(IPC.typeDestCaptureHere)) as import('../shared/destination').TypeDestination | null,
+  typeDestOpenChatGpt: async () =>
+    (await ipcRenderer.invoke(IPC.typeDestOpenChatGpt)) as {
+      ok: boolean
+      reason: string
+      dest: import('../shared/destination').TypeDestination | null
+    },
+  typeDestNewChat: async () =>
+    (await ipcRenderer.invoke(IPC.typeDestNewChat)) as {
+      ok: boolean
+      verified: boolean
+      reason: string
+      dest: import('../shared/destination').TypeDestination | null
+    },
+  typeDestInsert: async (request) =>
+    (await ipcRenderer.invoke(IPC.typeDestInsert, {
+      text: String(request?.text ?? '').slice(0, 8000),
+      dest: request?.dest,
+      mode: request?.mode,
+      allowUnexposedChatGpt: request?.allowUnexposedChatGpt === true
+    })) as import('../shared/destination').TypeInsertResult,
+  typeDestOmnibox: async (text: string) =>
+    (await ipcRenderer.invoke(IPC.typeDestOmnibox, String(text).slice(0, 2000))) as import('../shared/destination').TypeInsertResult,
+  typeDestOpenNotes: async () =>
+    (await ipcRenderer.invoke(IPC.typeDestOpenNotes)) as {
+      ok: boolean
+      reason: string
+      dest: import('../shared/destination').TypeDestination | null
+    },
+  typeDestCancel: () => {
+    ipcRenderer.send(IPC.typeDestCancel)
+  },
+  gptModeGet: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeGet)) as import('../shared/gpt-mode').GptModeState,
+  gptModeEnable: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeEnable)) as import('../shared/gpt-mode').GptModeState,
+  gptModePause: async () =>
+    (await ipcRenderer.invoke(IPC.gptModePause)) as import('../shared/gpt-mode').GptModeState,
+  gptModeResume: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeResume)) as import('../shared/gpt-mode').GptModeState,
+  gptModeExit: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeExit)) as import('../shared/gpt-mode').GptModeState,
+  gptModeNewChat: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeNewChat)) as { ok: boolean; verified: boolean; reason: string },
+  gptModeSend: async (request) =>
+    (await ipcRenderer.invoke(IPC.gptModeSend, {
+      requestId: String(request?.requestId ?? '').slice(0, 80),
+      text: String(request?.text ?? '').slice(0, 8000),
+      mode: request?.mode === 'replace' || request?.mode === 'append' || request?.mode === 'ask' ? request.mode : 'ask'
+    })) as import('../shared/gpt-mode').GptSendResult,
+  gptModeCancel: () => {
+    ipcRenderer.send(IPC.gptModeCancel)
+  },
+  gptModeFocus: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeFocus)) as { ok: boolean; reason: string },
+  chatgptWebOpen: async () =>
+    (await ipcRenderer.invoke(IPC.chatgptWebOpen)) as { ok: boolean; reason: string },
+  chatgptWebStatus: async () =>
+    (await ipcRenderer.invoke(IPC.chatgptWebStatus)) as {
+      open: boolean
+      collapsed: boolean
+      pinned: boolean
+      visible: boolean
+      url: string
+      title: string
+      canGoBack: boolean
+      canGoForward: boolean
+      downloadNote: string
+      dropNote: string
+      dictateArmed: boolean
+      partition: string
+      label: string
+    },
+  chatgptWebCollapse: async () => (await ipcRenderer.invoke(IPC.chatgptWebCollapse)) as boolean,
+  chatgptWebExpand: async () => (await ipcRenderer.invoke(IPC.chatgptWebExpand)) as boolean,
+  chatgptWebClose: async () => (await ipcRenderer.invoke(IPC.chatgptWebClose)) as boolean,
+  chatgptWebInsertTranscript: async (text: string) =>
+    (await ipcRenderer.invoke(IPC.chatgptWebInsertTranscript, String(text).slice(0, 8000))) as {
+      ok: boolean
+      reason: string
+    },
+  chatgptWebPasteClipboard: async () =>
+    (await ipcRenderer.invoke(IPC.chatgptWebPasteClipboard)) as {
+      ok: boolean
+      reason: string
+      text?: string
+    },
+  chatgptWebSubmitDraft: async (opts?: { expectedText?: string; generation?: number }) =>
+    (await ipcRenderer.invoke(IPC.chatgptWebSubmitDraft, opts ?? {})) as {
+      ok: boolean
+      status:
+        | 'submitted-observed'
+        | 'delivery-unverified'
+        | 'empty'
+        | 'changed'
+        | 'unavailable'
+        | 'cancelled'
+        | 'failed'
+      reason: string
+      composerText: string
+    },
+  chatgptWebCancelSubmit: async () => (await ipcRenderer.invoke(IPC.chatgptWebCancelSubmit)) as number,
+  chatgptWebDictateArm: async (armed: boolean) =>
+    (await ipcRenderer.invoke(IPC.chatgptWebDictateArm, armed === true)) as boolean,
+  onUiHint: (listener: (hint: {
+    tuckPanel?: boolean
+    dictateToGpt?: boolean
+    openSetup?: boolean
+    runTutorial?: boolean
+  }) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      if (!payload || typeof payload !== 'object') return
+      const p = payload as {
+        tuckPanel?: boolean
+        dictateToGpt?: boolean
+        openSetup?: boolean
+        runTutorial?: boolean
+      }
+      listener({
+        tuckPanel: p.tuckPanel === true,
+        dictateToGpt: typeof p.dictateToGpt === 'boolean' ? p.dictateToGpt : undefined,
+        openSetup: p.openSetup === true,
+        runTutorial: p.runTutorial === true
+      })
+    }
+    ipcRenderer.on(IPC.uiHint, wrapped)
+    return () => ipcRenderer.removeListener(IPC.uiHint, wrapped)
+  },
+  gptModeSetLiveView: async (enabled: boolean) =>
+    (await ipcRenderer.invoke(IPC.gptModeLiveView, enabled === true)) as import('../shared/gpt-mode').GptModeState,
+  gptModeLiveSnapshot: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeLiveSnapshot)) as import('../shared/gpt-mode').GptLiveSnapshot,
+  gptModeListSources: async () =>
+    (await ipcRenderer.invoke(IPC.gptModeListSources)) as {
+      ok: boolean
+      reason: string
+      permission: string
+      sources: import('../shared/gpt-mode').GptCaptureSource[]
+    },
+  gptModeSetSource: async (sourceId: string, name?: string, owner?: string) =>
+    (await ipcRenderer.invoke(
+      IPC.gptModeSetSource,
+      String(sourceId).slice(0, 120),
+      String(name ?? '').slice(0, 120),
+      String(owner ?? '').slice(0, 80)
+    )) as import('../shared/gpt-mode').GptModeState,
+  gptModeLiveSizePreset: async (preset) =>
+    (await ipcRenderer.invoke(IPC.gptModeLiveSizePreset, preset)) as boolean,
+  gptModeLiveCollapse: async (collapsed: boolean) =>
+    (await ipcRenderer.invoke(IPC.gptModeLiveCollapse, collapsed === true)) as boolean,
+  onGptModeLiveCollapse: (listener) => {
+    const wrapped = (_: Electron.IpcRendererEvent, collapsed: boolean): void => {
+      listener(collapsed === true)
+    }
+    ipcRenderer.on(IPC.gptModeLiveCollapse, wrapped)
+    return () => ipcRenderer.removeListener(IPC.gptModeLiveCollapse, wrapped)
+  },
+  gptModeOpenPicker: () => {
+    ipcRenderer.send(IPC.gptModeOpenPicker)
+  },
+  onGptModeOpenPicker: (listener) => {
+    const wrapped = (): void => {
+      listener()
+    }
+    ipcRenderer.on(IPC.gptModeOpenPicker, wrapped)
+    return () => ipcRenderer.removeListener(IPC.gptModeOpenPicker, wrapped)
+  },
+  onGptModeState: (listener) => {
+    const wrapped = (_: Electron.IpcRendererEvent, state: import('../shared/gpt-mode').GptModeState): void => {
+      listener(state)
+    }
+    ipcRenderer.on(IPC.gptModeState, wrapped)
+    return () => ipcRenderer.removeListener(IPC.gptModeState, wrapped)
+  },
+  lensWindowBounds: async (sourceId) =>
+    (await ipcRenderer.invoke(
+      IPC.lensWindowBounds,
+      typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined
+    )) as import('../shared/lens-control').LensWindowBounds | null,
+  lensPointer: async (request) =>
+    (await ipcRenderer.invoke(IPC.lensPointer, request)) as import('../shared/lens-control').LensPointerResult,
+  lensType: async (request) =>
+    (await ipcRenderer.invoke(IPC.lensType, request)) as import('../shared/lens-control').LensTypeResult,
+  lensFinderSelection: async (sourceId) =>
+    (await ipcRenderer.invoke(
+      IPC.lensFinderSelection,
+      typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined
+    )) as import('../shared/lens-control').LensFinderSelectionResult,
+  lensPickFiles: async () =>
+    (await ipcRenderer.invoke(IPC.lensPickFiles)) as import('../shared/lens-control').LensFinderSelectionResult,
+  lensProvenFiles: async () =>
+    (await ipcRenderer.invoke(IPC.lensProvenFiles)) as import('../shared/lens-control').LensResolvedFile[],
+  lensCopyFile: async (path: string) =>
+    (await ipcRenderer.invoke(IPC.lensCopyFile, String(path).slice(0, 1024))) as { ok: boolean; reason: string },
+  lensRevealFile: async (path: string) =>
+    (await ipcRenderer.invoke(IPC.lensRevealFile, String(path).slice(0, 1024))) as boolean,
+  lensStartDrag: (path: string) => {
+    ipcRenderer.send(IPC.lensStartDrag, String(path).slice(0, 1024))
+  },
+  lensAttachChatGpt: async (path: string, sourceId?: string) =>
+    (await ipcRenderer.invoke(
+      IPC.lensAttachChatGpt,
+      String(path).slice(0, 1024),
+      typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined
+    )) as import('../shared/lens-control').LensAttachResult,
+  lensRegisterFile: async (path: string) =>
+    (await ipcRenderer.invoke(
+      IPC.lensRegisterFile,
+      String(path).slice(0, 1024)
+    )) as import('../shared/lens-control').LensResolvedFile | null,
+  lensCancelInput: () => {
+    ipcRenderer.send(IPC.lensCancelInput)
+  },
+  lensOpenOriginal: async (sourceId?: string) =>
+    (await ipcRenderer.invoke(
+      IPC.lensOpenOriginal,
+      typeof sourceId === 'string' ? sourceId.slice(0, 120) : undefined
+    )) as { ok: boolean; reason: string; pid: number },
+  spotifyMedia: async (action) =>
+    (await ipcRenderer.invoke(IPC.spotifyMedia, String(action))) as import('../shared/lens-control').SpotifyMediaStatus,
   listChats: async (): Promise<SavedChat[]> => parseChats(await ipcRenderer.invoke(IPC.chatsList)),
   addChat: async (name: string, url: string): Promise<ChatEditResult> =>
     parseEdit(await ipcRenderer.invoke(IPC.chatsAdd, { name: String(name), url: String(url) })),
@@ -322,6 +545,8 @@ const api: MikoApi = {
     return () => ipcRenderer.removeListener(IPC.voiceAuto, wrapped)
   },
   bridgeStatus: async () => (await ipcRenderer.invoke(IPC.bridgeStatus)) as BridgeStatusInfo | null,
+  bridgeSetEnabled: async (enabled: boolean) =>
+    (await ipcRenderer.invoke(IPC.bridgeSetEnabled, enabled === true)) as BridgeStatusInfo | null,
   bridgeSend: async (requestId: string, prompt: string, opts?: { fresh?: boolean; keep?: boolean }) => {
     const r = (await ipcRenderer.invoke(IPC.bridgeSend, String(requestId), String(prompt), {
       fresh: opts?.fresh === true,
@@ -365,6 +590,23 @@ const api: MikoApi = {
     const r = (await ipcRenderer.invoke(IPC.selectionShortcutSet, String(accelerator))) as { ok?: unknown; reason?: unknown; shortcut?: unknown } | null
     return { ok: r?.ok === true, reason: typeof r?.reason === 'string' ? r.reason : '', shortcut: typeof r?.shortcut === 'string' ? r.shortcut : '' }
   },
+  setupGet: async () =>
+    (await ipcRenderer.invoke(IPC.setupGet)) as Awaited<ReturnType<MikoApi['setupGet']>>,
+  setupUpdate: async (update) =>
+    (await ipcRenderer.invoke(IPC.setupUpdate, update)) as Awaited<ReturnType<MikoApi['setupUpdate']>>,
+  voicePermissionGet: async () =>
+    (await ipcRenderer.invoke(IPC.voicePermissionGet)) as Awaited<ReturnType<MikoApi['voicePermissionGet']>>,
+  voicePermissionRequest: async () =>
+    (await ipcRenderer.invoke(IPC.voicePermissionRequest)) as Awaited<ReturnType<MikoApi['voicePermissionRequest']>>,
+  voiceSettingsOpen: async () => (await ipcRenderer.invoke(IPC.voiceSettingsOpen)) === true,
+  voiceMicTest: async () =>
+    (await ipcRenderer.invoke(IPC.voiceMicTest)) as Awaited<ReturnType<MikoApi['voiceMicTest']>>,
+  summonShortcutGet: async () =>
+    (await ipcRenderer.invoke(IPC.summonShortcutGet)) as Awaited<ReturnType<MikoApi['summonShortcutGet']>>,
+  summonShortcutSet: async (accelerator: string) =>
+    (await ipcRenderer.invoke(IPC.summonShortcutSet, String(accelerator))) as Awaited<
+      ReturnType<MikoApi['summonShortcutSet']>
+    >,
   bridgeCancel: (requestId: string) => ipcRenderer.send(IPC.bridgeCancel, String(requestId)),
   bridgeNew: async () => {
     await ipcRenderer.invoke(IPC.bridgeNew)
@@ -374,6 +616,94 @@ const api: MikoApi = {
     return typeof v === 'string' ? v : ''
   },
   prefsSet: async (text: string) => (await ipcRenderer.invoke(IPC.prefsSet, String(text).slice(0, 2000))) === true,
+  appInfo: async () => {
+    const v = (await ipcRenderer.invoke(IPC.appInfo)) as {
+      name?: unknown
+      version?: unknown
+      buildId?: unknown
+      channel?: unknown
+      packaged?: unknown
+      platform?: unknown
+      arch?: unknown
+    } | null
+    return {
+      name: typeof v?.name === 'string' ? v.name : 'MIKO',
+      version: typeof v?.version === 'string' ? v.version : '0.1.0',
+      buildId: typeof v?.buildId === 'string' ? v.buildId : 'unknown',
+      channel: typeof v?.channel === 'string' ? v.channel : 'private-beta',
+      packaged: v?.packaged === true,
+      platform: typeof v?.platform === 'string' ? v.platform : '',
+      arch: typeof v?.arch === 'string' ? v.arch : ''
+    }
+  },
+  feedbackConfigGet: async () => {
+    const v = (await ipcRenderer.invoke(IPC.feedbackConfigGet)) as {
+      endpoint?: unknown
+      inviteCode?: unknown
+      hasEndpoint?: unknown
+    } | null
+    return {
+      endpoint: typeof v?.endpoint === 'string' ? v.endpoint : '',
+      inviteCode: typeof v?.inviteCode === 'string' ? v.inviteCode : '',
+      hasEndpoint: v?.hasEndpoint === true
+    }
+  },
+  feedbackConfigSet: async (partial) => {
+    const v = (await ipcRenderer.invoke(IPC.feedbackConfigSet, partial)) as {
+      endpoint?: unknown
+      inviteCode?: unknown
+      hasEndpoint?: unknown
+    } | null
+    return {
+      endpoint: typeof v?.endpoint === 'string' ? v.endpoint : '',
+      inviteCode: typeof v?.inviteCode === 'string' ? v.inviteCode : '',
+      hasEndpoint: v?.hasEndpoint === true
+    }
+  },
+  feedbackPreview: async (draft, opts) =>
+    (await ipcRenderer.invoke(IPC.feedbackPreview, draft, opts ?? null)) as Awaited<ReturnType<MikoApi['feedbackPreview']>>,
+  feedbackSubmit: async (draft, opts) =>
+    (await ipcRenderer.invoke(IPC.feedbackSubmit, draft, opts ?? null)) as Awaited<ReturnType<MikoApi['feedbackSubmit']>>,
+  feedbackList: async () => (await ipcRenderer.invoke(IPC.feedbackList)) as Awaited<ReturnType<MikoApi['feedbackList']>>,
+  feedbackRetry: async (id) =>
+    (await ipcRenderer.invoke(IPC.feedbackRetry, String(id))) as Awaited<ReturnType<MikoApi['feedbackRetry']>>,
+  feedbackDelete: async (id) =>
+    (await ipcRenderer.invoke(IPC.feedbackDelete, String(id))) as Awaited<ReturnType<MikoApi['feedbackList']>>,
+  feedbackExport: async (id) =>
+    (await ipcRenderer.invoke(IPC.feedbackExport, String(id))) as Awaited<ReturnType<MikoApi['feedbackExport']>>,
+  feedbackExportDraft: async (draft, opts) =>
+    (await ipcRenderer.invoke(IPC.feedbackExportDraft, draft, opts ?? null)) as Awaited<
+      ReturnType<MikoApi['feedbackExportDraft']>
+    >,
+  updateGet: async () => (await ipcRenderer.invoke(IPC.updateGet)) as Awaited<ReturnType<MikoApi['updateGet']>>,
+  updateCheck: async () => (await ipcRenderer.invoke(IPC.updateCheck)) as Awaited<ReturnType<MikoApi['updateCheck']>>,
+  updateRestart: async (draftText) =>
+    (await ipcRenderer.invoke(
+      IPC.updateRestart,
+      typeof draftText === 'string' ? draftText.slice(0, 8000) : ''
+    )) as Awaited<ReturnType<MikoApi['updateRestart']>>,
+  updateLater: async () => (await ipcRenderer.invoke(IPC.updateLater)) as Awaited<ReturnType<MikoApi['updateLater']>>,
+  updateOpenDownload: async (draftText) =>
+    (await ipcRenderer.invoke(
+      IPC.updateOpenDownload,
+      typeof draftText === 'string' ? draftText.slice(0, 8000) : ''
+    )) as Awaited<ReturnType<MikoApi['updateOpenDownload']>>,
+  updateFeedSet: async (url) =>
+    (await ipcRenderer.invoke(IPC.updateFeedSet, String(url))) as Awaited<ReturnType<MikoApi['updateFeedSet']>>,
+  updateManualReleaseSet: async (partial) =>
+    (await ipcRenderer.invoke(IPC.updateManualReleaseSet, partial)) as Awaited<
+      ReturnType<MikoApi['updateManualReleaseSet']>
+    >,
+  updateStartup: async () =>
+    (await ipcRenderer.invoke(IPC.updateStartup)) as Awaited<ReturnType<MikoApi['updateStartup']>>,
+  onUpdateStatus: (listener) => {
+    const wrapped = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
+      if (!payload || typeof payload !== 'object') return
+      listener(payload as Awaited<ReturnType<MikoApi['updateGet']>>)
+    }
+    ipcRenderer.on(IPC.updateStatus, wrapped)
+    return () => ipcRenderer.removeListener(IPC.updateStatus, wrapped)
+  },
   onBridge: (listener: (update: BridgeUpdate) => void) => {
     const wrapped = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
       const u = payload as Partial<BridgeUpdate> | null

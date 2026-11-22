@@ -2,6 +2,7 @@
 node_modules
 out
 dist
+release
 coverage
 .vite
 *.tsbuildinfo
@@ -17,6 +18,9 @@ coverage
 *.pem
 *.key
 *.p12
+*.p8
+AuthKey_*.p8
+beta/secrets/
 
 # Machine-specific settings and agent scratch
 .claude/settings.local.json

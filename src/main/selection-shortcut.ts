@@ -10,7 +10,6 @@ import { selectionShortcut, setSelectionShortcut } from './settings'
  * Captures first, while the other app still has focus, then shows MIKO.
  */
 export function startSelectionShortcut(show: () => void): () => void {
-  if (process.platform !== 'darwin') return () => undefined
   let active = ''
   let busy = false
   const onPress = async (): Promise<void> => {
@@ -25,6 +24,7 @@ export function startSelectionShortcut(show: () => void): () => void {
     }
   }
   const register = (accelerator: string): boolean => {
+    if (process.platform !== 'darwin') return false
     try {
       return globalShortcut.register(accelerator, () => void onPress())
     } catch {
@@ -32,11 +32,21 @@ export function startSelectionShortcut(show: () => void): () => void {
     }
   }
   const wanted = selectionShortcut()
-  if (register(wanted)) active = wanted
+  if (process.platform === 'darwin' && register(wanted)) active = wanted
 
-  ipcMain.handle(IPC.selectionShortcutGet, (event) => (isTrustedSender(event.sender.id) ? active : ''))
+  ipcMain.handle(IPC.selectionShortcutGet, (event) => {
+    if (!isTrustedSender(event.sender.id)) return ''
+    return process.platform === 'darwin' ? active : ''
+  })
   ipcMain.handle(IPC.selectionShortcutSet, (event, value: unknown) => {
     if (!isTrustedSender(event.sender.id) || typeof value !== 'string') return { ok: false, reason: 'Not allowed.', shortcut: active }
+    if (process.platform !== 'darwin') {
+      return {
+        ok: false,
+        reason: 'Selected-text shortcuts are available on macOS only.',
+        shortcut: ''
+      }
+    }
     const next = value.trim()
     if (!isSummonAccelerator(next)) return { ok: false, reason: 'Use modifiers plus a key, like Control+Option+S.', shortcut: active }
     if (next === PASTE_CONFIRM) return { ok: false, reason: `${PASTE_CONFIRM} is MIKO’s paste confirmation.`, shortcut: active }

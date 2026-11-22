@@ -1,0 +1,61 @@
+# MIKO for Windows — short user guide
+
+No Git, Node, Cursor, or source code required. Start from the installer file you were given.
+
+## Install
+
+1. Find **`MIKO-0.1.1-win-x64.exe`** (or the version on the file name).
+2. Double-click it. Choose the defaults if asked.
+3. Start **MIKO** from the Start menu or desktop shortcut.
+
+### SmartScreen (unsigned build)
+
+Windows may show **Windows protected your PC** because this build is not code-signed.
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+That is expected for this private beta. Do not turn off SmartScreen permanently.
+
+## First launch
+
+- MIKO may open a short **Setup & Help** walkthrough. You can skip any step — the pet and tray still work.
+- Show / hide with **Ctrl+Shift+R**, or the tray icon → **Show** / **Hide**.
+- Settings live in **`%APPDATA%\MIKO-Beta\`** (not inside the installer).
+
+## What works on Windows (core)
+
+- Pet on screen, drag, tray menu  
+- Panel commands that open apps / websites when Windows can find them  
+- Microphone via **Try microphone** / panel mic (System.Speech) — allow mic privacy if Windows asks  
+- **Interactive GPT** floating window (separate from the Codex assistant)  
+- Preferences, feedback export, manual update download link when configured  
+
+## What is macOS-only right now
+
+These features are unavailable or limited on Windows:
+
+- Caps Lock+A voice hold and the MIKO app switcher  
+- Selected-text assistant shortcut  
+- WhatsApp Accessibility automation (search / open chat / insert draft)  
+- Lens / live window control and browser-tab automation  
+- Typing into Notes / ChatGPT.app via Accessibility  
+
+If something is unavailable, MIKO should say so instead of pretending it worked.
+
+## Assistant vs Interactive GPT
+
+- **MIKO assistant (Codex)** needs the Codex CLI installed and signed in (`codex login`). Logging into chatgpt.com inside Interactive GPT does **not** sign Codex in.
+- **Interactive GPT** is optional and independent.
+
+## Updates
+
+Unsigned Windows builds do **not** auto-install updates. If a download link is provided: quit MIKO, run the new `.exe`, reopen. Settings in `%APPDATA%\MIKO-Beta\` are kept.
+
+## Uninstall
+
+Use Windows **Apps → Installed apps → MIKO → Uninstall**. App data under `%APPDATA%\MIKO-Beta\` may remain unless you delete that folder yourself.
+
+## Feedback
+
+Preferences → **Feedback** → export a report. If no network endpoint is set up, the report stays on your PC for you to send to the owner.

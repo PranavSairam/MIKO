@@ -1,5 +1,7 @@
 /** Running-app switcher: data shapes, ordering, filtering and the card arc. Pure, no Electron. */
 
+import { DEFAULT_PET, PETS, type PetId } from './pets.ts'
+
 export interface RunningApp {
   pid: number
   name: string
@@ -144,6 +146,48 @@ function parseArray(json: string): unknown[] {
   }
 }
 
+/** Pointer must move this far before a card drag starts (clicks stay clicks). */
+export const FEED_DRAG_THRESHOLD_PX = 10
+
+export interface SwitcherDropTarget {
+  petId: PetId
+  /** Drop-zone center in switcher-local DIP. */
+  cx: number
+  cy: number
+  radius: number
+}
+
+/** Local drop target for the active pet; clamped inside the fan so it stays on-screen. */
+export function switcherDropTarget(width: number, height: number, petId: PetId = DEFAULT_PET): SwitcherDropTarget {
+  const spec = PETS[petId] ?? PETS[DEFAULT_PET]
+  const radius = Math.max(48, Math.min(spec.feedDrop.radius, Math.min(width, height) * 0.22))
+  const cx = width / 2 + spec.feedDrop.offsetX
+  const cy = height + spec.feedDrop.offsetY
+  return {
+    petId: spec.id,
+    cx: Math.max(radius + 8, Math.min(width - radius - 8, cx)),
+    cy: Math.max(radius + 8, Math.min(height - 8, cy)),
+    radius
+  }
+}
+
+export function pointInDropTarget(x: number, y: number, target: SwitcherDropTarget): boolean {
+  return Math.hypot(x - target.cx, y - target.cy) <= target.radius
+}
+
+export function feedReleaseLabel(kind: 'app' | 'tab', name: string): string {
+  const label = name.trim() || (kind === 'tab' ? 'tab' : 'app')
+  return kind === 'tab' ? `Release to close ${label}` : `Release to quit ${label}`
+}
+
+export type SwitcherFeedStatus = 'closed' | 'waiting' | 'failed' | 'busy' | 'gone'
+
+export interface SwitcherFeedResult {
+  status: SwitcherFeedStatus
+  name: string
+  reason: string
+}
+
 /** Preload for the running-apps switcher window. Main validates every pid and index again. */
 export interface MikoSwitcherApi {
   list: () => Promise<SwitcherApp[]>
@@ -151,6 +195,12 @@ export interface MikoSwitcherApi {
   quit: (pid: number) => Promise<boolean>
   tabs: (browser: BrowserId) => Promise<{ ok: boolean; tabs: BrowserTab[]; reason: string }>
   focusTab: (browser: BrowserId, window: number, tab: number) => Promise<boolean>
+  closeTab: (browser: BrowserId, window: number, tab: number) => Promise<boolean>
+  feedApp: (pid: number) => Promise<SwitcherFeedResult>
+  feedTab: (browser: BrowserId, window: number, tab: number, title: string) => Promise<SwitcherFeedResult>
+  dropTarget: () => Promise<SwitcherDropTarget>
   close: () => void
+  /** Empty glass click-through; false only while the pointer is over a card/control. */
+  setIgnoreMouse: (ignore: boolean) => void
   onOpen: (listener: () => void) => () => void
 }

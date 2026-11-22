@@ -55,6 +55,14 @@ export interface PetSpec {
   flavors: PetFlavor[]
   /** Bird: flies to a tree in the screen corner and perches there. */
   flies: boolean
+  /**
+   * Tab+Q “feed to close” drop zone in switcher-local DIP, relative to the fan’s
+   * bottom-center (0,0). Negative Y is upward into the fan (toward the pet head).
+   * Missing mouth bones → body-centered fallback via these offsets.
+   */
+  feedDrop: { offsetX: number; offsetY: number; radius: number }
+  /** Preferred reaction clip names when an app/tab is fed (first that exists wins). */
+  feedClips: string[]
   /** Names used in typed or spoken commands. */
   aliases: string[]
 }
@@ -72,6 +80,8 @@ export const PETS: Record<PetId, PetSpec> = {
     look: { neck: 'neck', head: 'head', neckShare: 0.4 },
     flavors: [],
     flies: false,
+    feedDrop: { offsetX: 0, offsetY: -52, radius: 78 },
+    feedClips: [],
     aliases: ['doberman', 'dog', 'doggo', 'puppy', 'pup', 'miko']
   },
   cat: {
@@ -89,6 +99,8 @@ export const PETS: Record<PetId, PetSpec> = {
       { clip: 'Stretch', during: 'idle', loops: 1, weight: 2 }
     ],
     flies: false,
+    feedDrop: { offsetX: 0, offsetY: -48, radius: 74 },
+    feedClips: ['LickPaw'],
     aliases: ['cat', 'kitty', 'kitten', 'tabby', 'ginger cat']
   },
   bird: {
@@ -108,6 +120,8 @@ export const PETS: Record<PetId, PetSpec> = {
       { clip: 'Chirp', during: 'idle', loops: 1, weight: 1 }
     ],
     flies: true,
+    feedDrop: { offsetX: 0, offsetY: -44, radius: 70 },
+    feedClips: ['Peck', 'Chirp'],
     aliases: ['bird', 'birdie', 'blue bird', 'bluebird', 'birb']
   },
   koala: {
@@ -125,6 +139,8 @@ export const PETS: Record<PetId, PetSpec> = {
       { clip: 'Sleep', during: 'sitIdle', loops: 3, weight: 2 }
     ],
     flies: false,
+    feedDrop: { offsetX: 0, offsetY: -50, radius: 76 },
+    feedClips: ['Wave'],
     aliases: ['koala', 'koala bear']
   }
 }
