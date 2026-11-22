@@ -4,7 +4,7 @@
  * Never reads passwords, cookies, history, or auth tokens.
  * Never modifies Chrome’s files.
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve, sep } from 'node:path'
@@ -18,6 +18,28 @@ import {
 } from '../shared/chrome-profiles'
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Start chrome.exe without waiting for it to exit. When Chrome isn’t running yet, chrome.exe
+ * becomes the browser process and never exits, so execFile would time out and kill it.
+ * Resolves once the process really started; rejects if it couldn’t be spawned.
+ */
+function startDetached(exe: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let child
+    try {
+      child = spawn(exe, args, { detached: true, stdio: 'ignore', shell: false, windowsHide: false })
+    } catch (error) {
+      reject(error)
+      return
+    }
+    child.once('error', reject)
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
+}
 const MAX_AVATAR_BYTES = 400_000
 
 export type ChromeProfilesListResult =
@@ -180,7 +202,7 @@ export function listChromeProfiles(savedDefaultDirectoryId?: string | null): Chr
     return {
       status: 'missing',
       profiles: [],
-      reason: 'I couldn’t find Google Chrome on this Mac.',
+      reason: platform === 'win32' ? 'I couldn’t find Google Chrome on this PC.' : 'I couldn’t find Google Chrome on this Mac.',
       platform
     }
   }
@@ -214,9 +236,7 @@ export function listChromeProfiles(savedDefaultDirectoryId?: string | null): Chr
     chromePath: exe,
     platform,
     note:
-      platform === 'win32'
-        ? 'Windows Chrome profile launch is implemented but not live-tested on this machine.'
-        : ''
+      ''
   }
 }
 
@@ -301,9 +321,10 @@ export async function launchChromeProfile(opts: {
       if (url) args.push(url)
       await execFileAsync('/usr/bin/open', args, { timeout: 15_000, shell: false })
     } else {
+      // Chrome’s singleton forwards to a running instance and opens a window for this profile.
       const args = [profileArg]
       if (url) args.push(url)
-      await execFileAsync(exe, args, { timeout: 15_000, shell: false })
+      await startDetached(exe, args)
     }
     const where = url ? ` and opened ${new URL(url).hostname}` : ''
     return {
@@ -347,7 +368,7 @@ export async function launchChromeFallback(kind: 'profile-picker' | 'normal', ur
       if (!exe) throw new Error('missing')
       const args = kind === 'profile-picker' ? ['--profile-picker'] : []
       if (safe) args.push(safe)
-      await execFileAsync(exe, args, { timeout: 15_000, shell: false })
+      await startDetached(exe, args)
     }
     return {
       ok: true,

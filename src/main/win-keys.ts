@@ -16,7 +16,7 @@ let proc: ChildProcessWithoutNullStreams | null = null
 let nextId = 1
 const pending = new Map<number, { resolve: (value: { windows?: WinWindow[]; ok?: boolean }) => void; timer: NodeJS.Timeout }>()
 
-function powershellPath(): string {
+export function powershellPath(): string {
   const path = join(process.env['SystemRoot'] || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   return existsSync(path) ? path : 'powershell.exe'
 }

@@ -4,6 +4,7 @@ import { cleanQuery, parseMailCommand, type MailIntent } from './mail.ts'
 import { LITTLE_DIP, MOVE_DIP } from './guide.ts'
 import { parseBrowserOnly, resolveSite, splitBrowserPreference } from './sites.ts'
 import { splitChromeProfilePhrase } from './chrome-profiles.ts'
+import { parseInsteadQuery, parseWebSearch, webSearchName, webSearchUrl } from './web-search.ts'
 import { detectNegations } from './actions.ts'
 import { cleanContactQuery, parseWaRecipientCorrection } from './whatsapp.ts'
 import {
@@ -55,6 +56,10 @@ export interface RouterContext {
   typeDestKind?: string | null
   /** Last non-MIKO app before the panel took focus — for “go back” / “take me back”. */
   lastExternalApp?: { name: string; bundleId?: string } | null
+  /** Last web search MIKO opened (“search instead for …”). */
+  lastSearch?: { query: string; browser: string | null } | null
+  /** Most recent explicit destination: a web search or WhatsApp. */
+  recentDestination?: 'web' | 'whatsapp' | null
 }
 
 export type CommandResult =
@@ -95,7 +100,15 @@ export type CommandResult =
   | { type: 'whatsapp-reply'; intent: WhatsAppReplyIntent }
   | { type: 'whatsapp-summarize'; intent: WhatsAppSummarizeIntent }
   | { type: 'whatsapp-attachment'; intent: WhatsAppAttachmentIntent }
-  | { type: 'open-url'; url: string; name: string; browser?: string | null; chromeProfileQuery?: string | null }
+  | {
+      type: 'open-url'
+      url: string
+      name: string
+      browser?: string | null
+      chromeProfileQuery?: string | null
+      /** Set for a general web search (the URL is the encoded search URL). */
+      search?: string
+    }
   | {
       type: 'chrome-profiles'
       /** Always show the fan even when a default is saved. */
@@ -243,6 +256,32 @@ export function routeCommand(
       }
     }
     return { type: 'unknown', text: 'Open what in that browser? Say “open YouTube in Chrome”, for example.' }
+  }
+
+  // General web search (“search Chrome for …”, “Google …”). WhatsApp destinations never match.
+  const webSearch = parseWebSearch(lead, { lastSearch: context.lastSearch, recentDestination: context.recentDestination })
+  if (webSearch) {
+    return {
+      type: 'open-url',
+      url: webSearchUrl(webSearch.query),
+      name: webSearchName(webSearch.query),
+      browser: webSearch.browser,
+      chromeProfileQuery: webSearch.browser === 'chrome' ? webSearch.profileQuery : undefined,
+      search: webSearch.query
+    }
+  }
+
+  // “Search instead for X” follows the destination in use: WhatsApp contact or web search (above).
+  const insteadQuery = parseInsteadQuery(lead)
+  if (insteadQuery) {
+    if (context.recentDestination === 'whatsapp' || (!context.lastSearch && (context.messaging === 'whatsapp' || context.waChat))) {
+      const contact = cleanContactQuery(insteadQuery)
+      if (contact) return { type: 'whatsapp', query: contact }
+    }
+    return {
+      type: 'unknown',
+      text: `Search for “${insteadQuery}” where? Say “search Chrome for ${insteadQuery}” or “search for ${insteadQuery} in WhatsApp”.`
+    }
   }
 
   const site = matchOpenSite(lead)

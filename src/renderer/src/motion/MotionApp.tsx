@@ -127,6 +127,7 @@ import {
   type PendingClarification
 } from '../../../shared/task-purpose'
 import { availableKinds, capability } from '../../../shared/capabilities'
+import { searchQueryFromUrl, webSearchName } from '../../../shared/web-search'
 import {
   assistantNotSignedInMessage,
   assistantUnavailableMessage,
@@ -245,6 +246,10 @@ export function MotionApp() {
   /** Active clarification mirrored into WorkingContext.choice / task.purpose. */
   const pendingClarificationRef = useRef<PendingClarification | null>(null)
   const lastWebsiteRef = useRef<{ url: string; name: string; browser: string | null; openedAt: number } | null>(null)
+  /** Last web search that really launched (for “search instead for …”). */
+  const lastSearchRef = useRef<{ query: string; browser: string | null } | null>(null)
+  /** Most recent explicit destination: a web search or WhatsApp (decides bare “search for …”). */
+  const recentDestinationRef = useRef<'web' | 'whatsapp' | null>(null)
   const workingContextRef = useRef<WorkingContext>(emptyContext())
   const activeTaskRef = useRef<TaskRecord | null>(null)
   /** Parked task while a read-only summarize/question runs — resume must find this. */
@@ -1790,6 +1795,8 @@ export function MotionApp() {
     typeDestActive: boolean
     typeDestKind: string | null
     lastExternalApp: { name: string; bundleId?: string } | null
+    lastSearch: { query: string; browser: string | null } | null
+    recentDestination: 'web' | 'whatsapp' | null
   } {
     const snap = freshSnapshot()
     const typeDest = workingContextRef.current.typeDestination
@@ -1807,7 +1814,9 @@ export function MotionApp() {
       awaitingWaRecipient: awaitingWaRecipientRef.current,
       typeDestActive: Boolean(typeDest && !typeDest.secure),
       typeDestKind: typeDest?.kind ?? null,
-      lastExternalApp: ext ? { name: ext.name, bundleId: ext.bundleId } : null
+      lastExternalApp: ext ? { name: ext.name, bundleId: ext.bundleId } : null,
+      lastSearch: lastSearchRef.current,
+      recentDestination: recentDestinationRef.current
     }
   }
 
@@ -2218,6 +2227,7 @@ export function MotionApp() {
   function setWhatsAppTarget(header: string | null): void {
     if (header) {
       messagingRef.current = 'whatsapp'
+      recentDestinationRef.current = 'whatsapp'
       waChatRef.current = header
       workingContextRef.current = {
         ...workingContextRef.current,
@@ -2281,6 +2291,14 @@ export function MotionApp() {
   function dismissChromeChooser(): void {
     chromeChooserToken.current += 1
     setChromeChooser(null)
+    // Older “Chrome’s profile picker / Open normally” offers can’t launch after cancel or a newer request.
+    setEntries((items) =>
+      items.map((item) =>
+        item.kind === 'choices' && item.purpose === 'chrome-fallback'
+          ? { id: item.id, kind: 'note', text: 'That Chrome request is no longer active.' }
+          : item
+      )
+    )
   }
 
   function cancelWorkflow(note = 'Okay. Cancelled.'): void {
@@ -2363,16 +2381,26 @@ export function MotionApp() {
     saveDefault: boolean
   ): Promise<void> {
     if (token !== chromeChooserToken.current) return
+    const searchQuery = searchQueryFromUrl(url)
+    const statusId = pushEntry({ id: 0, kind: 'note', text: 'Opening Chrome…' })
     const result = await window.miko.chromeProfilesLaunch({ directoryId, url, displayName })
-    if (token !== chromeChooserToken.current) return
+    if (token !== chromeChooserToken.current) {
+      // Cancelled or superseded while Chrome was starting. The launch call itself can’t be recalled.
+      replaceEntry(statusId, { id: statusId, kind: 'note', text: 'That Chrome request was cancelled.' })
+      return
+    }
     dismissChromeChooser()
     if (!result.ok) {
+      replaceEntry(statusId, { id: statusId, kind: 'note', text: result.reason || 'I couldn’t open Chrome.' })
       if (/couldn.t find/i.test(result.reason)) {
-        pushEntry({ id: 0, kind: 'note', text: result.reason })
-        await beginChromeProfiles({ forceChooser: true, profileQuery: null, url, name: url ? new URL(url).hostname : null })
+        await beginChromeProfiles({
+          forceChooser: true,
+          profileQuery: null,
+          url,
+          name: searchQuery ? webSearchName(searchQuery) : url ? new URL(url).hostname : null
+        })
         return
       }
-      pushEntry({ id: 0, kind: 'note', text: result.reason || 'I couldn’t open Chrome.' })
       return
     }
     if (saveDefault) {
@@ -2399,8 +2427,19 @@ export function MotionApp() {
         updatedAt: Date.now()
       }
     }
+    if (searchQuery) {
+      lastSearchRef.current = { query: searchQuery, browser: 'chrome' }
+      recentDestinationRef.current = 'web'
+      // Launch succeeded; the results page itself is not read or verified.
+      replaceEntry(statusId, {
+        id: statusId,
+        kind: 'note',
+        text: `Opened search in Chrome for “${searchQuery}” (profile “${result.displayName}”).`
+      })
+      return
+    }
     const note = [result.reason, result.verificationNote].filter(Boolean).join(' ')
-    pushEntry({ id: 0, kind: 'note', text: note })
+    replaceEntry(statusId, { id: statusId, kind: 'note', text: note })
   }
 
   async function beginChromeProfiles(opts: {
@@ -2409,6 +2448,8 @@ export function MotionApp() {
     url?: string | null
     name?: string | null
   }): Promise<void> {
+    // A new Chrome request supersedes any older profile choice.
+    dismissChromeChooser()
     const listed = await loadChromeProfilesMarked()
     if (listed.status !== 'ok') {
       pushEntry({
@@ -2510,7 +2551,9 @@ export function MotionApp() {
       id: 0,
       kind: 'note',
       text: pending
-        ? `Pick a Chrome profile for ${pending.name}. The link stays until you choose or cancel.`
+        ? searchQueryFromUrl(pending.url)
+          ? `Pick a Chrome profile for the search “${searchQueryFromUrl(pending.url)}”. It waits until you choose or cancel.`
+          : `Pick a Chrome profile for ${pending.name}. The link stays until you choose or cancel.`
         : 'Pick a Chrome profile above MIKO.'
     })
   }
@@ -2680,13 +2723,15 @@ export function MotionApp() {
   function whatsAppLine(query: string, result: WhatsAppOpenResult): string {
     if (result.status === 'opened') {
       const where = result.header || query
-      return `Opened “${where}” in WhatsApp. The chat header matches.${result.composerReady ? ' The message box is ready.' : ' I couldn’t move to the message box.'}`
+      // Windows never moves focus to the message box (the draft there stays untouched).
+      const box = hostPlatform === 'win32' ? '' : result.composerReady ? ' The message box is ready.' : ' I couldn’t move to the message box.'
+      return `Opened “${where}” in WhatsApp. The chat header matches.${box}`
     }
     if (result.status === 'assisted') return result.reason || `I put “${query}” in WhatsApp’s search. Pick the chat there.`
     if (result.status === 'none') return result.reason || `No WhatsApp chat matched “${query}”.`
     if (result.status === 'unverified') return 'I selected a row in WhatsApp but couldn’t confirm the chat header. Check it there before you type.'
     if (result.status === 'lost-focus') return 'WhatsApp isn’t in front any more, so I stopped.'
-    if (result.status === 'unsupported') return 'WhatsApp contact search isn’t available on Windows yet.'
+    if (result.status === 'unsupported') return result.reason || 'WhatsApp contact search isn’t available on this computer.'
     if (result.status === 'cancelled') return 'WhatsApp search cancelled.'
     return result.reason || 'I couldn’t search WhatsApp.'
   }
@@ -2801,6 +2846,7 @@ export function MotionApp() {
     }
     const work = (async () => {
       await tuckInteractiveGptForWhatsApp()
+      recentDestinationRef.current = 'whatsapp'
       const token = ++whatsAppToken.current
       awaitingWaRecipientRef.current = false
       clearWhatsAppChoosers(entryId ?? 0)
@@ -2838,13 +2884,13 @@ export function MotionApp() {
         pushEntry({
           id: 0,
           kind: 'whatsapp',
-          text: pickId ? `Opening that WhatsApp chat…` : `Looking for “${query}” in WhatsApp…`
+          text: pickId ? `Opening that WhatsApp chat…` : `Searching WhatsApp for “${query}”…`
         })
       if (entryId) {
         replaceEntry(entryId, {
           id: entryId,
           kind: 'whatsapp',
-          text: pickId ? `Opening that WhatsApp chat…` : `Looking for “${query}” in WhatsApp…`
+          text: pickId ? `Opening that WhatsApp chat…` : `Searching WhatsApp for “${query}”…`
         })
       }
       const result = await window.miko.whatsappOpen(query, pickId, taskId)
@@ -5421,10 +5467,16 @@ export function MotionApp() {
           updatedAt: Date.now()
         }
         const where = result.browser ? ` in ${result.browser}` : ''
+        if (decision.search) {
+          lastSearchRef.current = { query: decision.search, browser: decision.browser || null }
+          recentDestinationRef.current = 'web'
+        }
         pushEntry({
           id: 0,
           kind: 'note',
-          text: result.reason || `Opened ${result.name || decision.name}${where}.`
+          text: decision.search
+            ? `Opened search${where || ' in your browser'} for “${decision.search}”.`
+            : result.reason || `Opened ${result.name || decision.name}${where}.`
         })
       } else {
         pushEntry({ id: 0, kind: 'note', text: result.reason || `I couldn’t open ${decision.name}.` })
@@ -5580,6 +5632,7 @@ export function MotionApp() {
     // Remaining CommandResult: launch (confirm already returned above).
     if (decision.appId === 'whatsapp') {
       messagingRef.current = 'whatsapp'
+      recentDestinationRef.current = 'whatsapp'
       await tuckInteractiveGptForWhatsApp()
     }
     const noteId = pushEntry({ id: 0, kind: 'note', text: `Switching to ${decision.name}…` })

@@ -266,3 +266,14 @@ export function forgetAlias(list: WhatsAppAlias[], aliasRaw: string): { ok: true
   if (next.length === list.length) return { ok: false, reason: `I don’t have a WhatsApp name for “${alias}”.` }
   return { ok: true, list: next }
 }
+
+/** Last JSON line of a helper's stdout (Windows PowerShell may prefix a BOM or use CRLF). */
+export function parseHelperOutput(out: string): Record<string, unknown> {
+  const lines = out
+    .replace(/\ufeff/g, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const parsed: unknown = JSON.parse(lines.pop() ?? '{}')
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+}

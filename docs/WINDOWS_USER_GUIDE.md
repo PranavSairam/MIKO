@@ -31,6 +31,8 @@ That is expected for this private beta. Do not turn off SmartScreen permanently.
 - **Hold Shift + A** to talk, let go to stop (a quick tap still types "A")  
 - **Tab + Q** opens the app switcher (click an app to switch to it)  
 - **Interactive GPT** floating window (separate from the Codex assistant)  
+- **WhatsApp contact search:** "Search for Dad in WhatsApp", "Open WhatsApp and find Mukundan". After "Open WhatsApp", just "Open Dad" or "Go to Gayu Sis". Several matches → MIKO shows them and you pick; no match → say the corrected name, or "Cancel". MIKO only opens the chat. It never types in the message box or sends anything.  
+- **Web search in Chrome:** "Search Chrome for budget headphones", "Google transfer learning", "Search for weather in Chennai in Chrome", then "Search instead for wireless headphones". "Open YouTube in Chrome" / "Open ChatGPT in Chrome" open those sites. MIKO asks which Chrome profile when you haven't saved a default; "… in Chrome with Work" picks one for that search only.  
 - Preferences, feedback export, manual update download link when configured  
 
 ## What is macOS-only right now
@@ -39,7 +41,7 @@ These features are unavailable or limited on Windows:
 
 - Caps Lock+A voice hold (Windows uses Shift + A) and browser tab lists in the switcher  
 - Selected-text assistant shortcut  
-- WhatsApp Accessibility automation (search / open chat / insert draft)  
+- WhatsApp reading, summaries, reply drafts and attachments (contact search and opening a chat do work)  
 - Lens / live window control and browser-tab automation  
 - Typing into Notes / ChatGPT.app via Accessibility  
 

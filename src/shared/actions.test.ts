@@ -35,9 +35,12 @@ describe('actions and capabilities', () => {
     assert.ok(availableKinds('darwin').includes('close_browser_tab'))
     assert.ok(!availableKinds('win32').includes('close_browser_tab'))
     // macOS-only automation must not claim success on Windows.
+    // WhatsApp contact search/open has a Windows UI Automation adapter (whatsapp-win.ps1).
+    for (const kind of ['search_whatsapp_contacts', 'open_whatsapp_chat'] as const) {
+      assert.ok(availableKinds('darwin').includes(kind), kind)
+      assert.ok(availableKinds('win32').includes(kind), kind)
+    }
     for (const kind of [
-      'search_whatsapp_contacts',
-      'open_whatsapp_chat',
       'read_whatsapp_messages',
       'list_browser_tabs',
       'read_selected_text',

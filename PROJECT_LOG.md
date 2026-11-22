@@ -8,7 +8,7 @@ This is the running record of the project. Read it first when you pick the proje
 
 **What it is:** MIKO is a desktop companion built with Electron, React, TypeScript, and three.js. A 3D Doberman sits on top of your other windows. You talk to it in a chat panel, by typing or by push-to-talk. It can walk, sit, follow the active window, open and close apps, search WhatsApp contacts on macOS, draft and insert WhatsApp replies (macOS), read Gmail, and answer through the MIKO assistant (Codex, using your ChatGPT sign-in in a separate thread) or hand a prompt to the ChatGPT app.
 
-**Platforms:** Developed on macOS. The code targets Windows too, but the Windows smoke test in README.md has not been run. WhatsApp contact search returns a clear unsupported state on Windows. **Private beta (zero-budget):** unsigned Mac DMG/ZIP; manual Download latest link; feedback Preview + Export report (tester shares file). Auto-install disabled while unsigned. Signed electron-updater + feedback-server preserved for later. Guides: `beta/TESTER.md`, `beta/DISTRIBUTION.md`. Git history is on `main`.
+**Platforms:** Developed on macOS. The code targets Windows too, but the Windows smoke test in README.md has not been run. WhatsApp contact search on Windows uses UI Automation (`resources/whatsapp-win.ps1`, 2026-11-22, not live-tested yet); reading/drafting stays macOS-only. **Private beta (zero-budget):** unsigned Mac DMG/ZIP; manual Download latest link; feedback Preview + Export report (tester shares file). Auto-install disabled while unsigned. Signed electron-updater + feedback-server preserved for later. Guides: `beta/TESTER.md`, `beta/DISTRIBUTION.md`. Git history is on `main`.
 
 **Run it:**
 
@@ -55,7 +55,7 @@ Needs Node 22.12 or newer.
 
 ### Known loose ends
 
-- The Windows smoke test is still pending. WhatsApp contact search and reply drafting/insertion are unimplemented there on purpose.
+- The Windows smoke test is still pending. WhatsApp contact search exists on Windows (UI Automation, untested live); message reading, reply drafting/insertion and attachments are unimplemented there on purpose.
 - Helper permission grants are tied to the exact ad-hoc build. A real Swift change means removing the helper in System Settings and adding it again.
 
 ---
@@ -90,6 +90,41 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 ---
 
 ## Session log
+
+### 2026-11-22: Windows WhatsApp contact search + Chrome web search (made on the Mac)
+- **Owner ask:** WhatsApp contact search (typed/voice, chooser, no-match retry, Cancel, contextual "Open Dad", never touch the composer) and Chrome web search (encoded URL, profile choice, "search instead", no GPT side effects) on Windows; keep the Mac working; local only, no commit.
+- **Important:** built on the MacBook. The spec asked to inspect the installed Windows WhatsApp first; that wasn't possible here. The helper therefore finds elements by accessibility role and label (not a fixed tree), and `npm run inspect:whatsapp-win` dumps what the installed version exposes (conversation text redacted) for the first live check. The spec's first step, verifying the earlier Windows app-launch fixes, also needs the PC: **UNTESTED**.
+- **Chrome search (shared, all platforms):**
+  - New `src/shared/web-search.ts`: `parseWebSearch` separates browser, profile and query ("Search Chrome for …", "Google …", "Search for … in Chrome", "look up … on Google", "… in Chrome with Work"). `webSearchUrl` builds the URL with `URLSearchParams`, so the query is always encoded; `searchQueryFromUrl` reads it back.
+  - Router: searches become `open-url` with `search` set, so they reuse the existing Chrome profile flow (saved default, explicit profile overrides it, chooser when none, pending query kept until you pick). "Google Maps" / "Google Mail" stay sites. Any phrase naming WhatsApp is never a web search.
+  - "Search instead for X" follows the most recent destination: the last web search (same browser), or WhatsApp. With neither, a short "where?" question. A bare "search for X" right after a web search searches again; otherwise it's unchanged (mail-or-app).
+  - Renderer: "Opening Chrome…" status, then "Opened search in Chrome for "…" (profile "…")" only after the launch call succeeded. Results are not read or claimed. Cancel or a newer request bumps the chooser token: a launch finishing late shows "cancelled" and isn't recorded, and old "profile picker / open normally" offers turn inactive.
+  - **Windows bug fixed:** `chrome.exe` was run with `execFile` + 15 s timeout. When Chrome wasn't already running, chrome.exe never exits, so MIKO would kill it and report failure. Now started detached (resolve on spawn). "Couldn't find Chrome on this Mac" now says "this PC" on Windows.
+- **WhatsApp contact search on Windows:**
+  - New `resources/whatsapp-win.ps1`: C# 5 UI Automation code compiled once to `%TEMP%` (broken cache recompiled). Same stdin/stdout JSON as the Mac `ax-helper whatsapp`, so `planWhatsApp`, the chooser, aliases, the no-match retry and the one stale-retry are shared.
+  - Finds the WhatsApp window (WhatsApp process, or the Store frame host), brings it to front (AttachThreadInput, Alt-tap fallback), finds the edit labelled "search" (skipping anything labelled "Type a message"). Types the query once, checking before each character that the search box still has focus.
+  - A non-empty search is cleared only while it has focus, else the run stops. Reads result rows (message-search hits skipped).
+  - Opens a row only if exactly one matches name + preview (Invoke / Select / child Invoke / click verified with FromPoint). Success only after the header shows that name.
+  - The opening step reuses the typed search (no retype). Never: SetValue, Enter, SendKeys, composer focus, WhatsApp Web, guessed coordinates. If search or results aren't exposed, the message says exactly that.
+  - `src/main/whatsapp.ts`: win32 branch spawns the script (30 s limit for the first compile), parses BOM/CRLF output (`parseHelperOutput`), logs status/timing/diag (no message text) to the diagnostics log. Cancel still bumps the generation and kills the helper, so late results are dropped. The Mac spawn is unchanged.
+  - Capabilities: `search_whatsapp_contacts` / `open_whatsapp_chat` are now `all`. Reading, summaries, insert and attachments stay `darwin`.
+  - Panel says "Searching WhatsApp for "…"…". On Windows the opened line doesn't mention the message box (MIKO never moves focus there).
+- **Docs:** `docs/WINDOWS_USER_GUIDE.md`, `docs/WINDOWS_SETUP.md` (how it works, inspect command, manual check).
+- **Automated (Mac):**
+  - typecheck **PASS**; `npm test` **405 PASS** (was 381); build **PASS**; `pack:win-check` **PASS**; Mac startup smoke (scratch profile) **PASS**.
+  - New `web-search.test.ts`: routing typed = voice, encoding/injection, profile override, "instead", context destinations, Cancel, WhatsApp vs web, "Open Dad" vs "Open Calculator".
+  - New `whatsapp-win.test.ts`: BOM/CRLF parsing, chooser never silently picks a substring, and static guards: ASCII-only script, C# 5 syntax, focus check per character, single SetFocus, no SetValue/Enter/SendKeys, single typed search, exact-one press, header before success, no WhatsApp Web, verified clicks only, honest limitation text, Mac spawn unchanged, cancel generation, Chrome late-launch token, detached chrome.exe.
+  - `actions.test.ts` updated for the capability change.
+  - **Not done:** the C# and PowerShell were not compiled or run (no compiler or PowerShell on this Mac).
+- **Live on Windows: all UNTESTED.**
+  - Earlier app-launch fixes (Calculator / WhatsApp open).
+  - Typed and voice Chrome search; profile chooser, pick and Cancel; "search instead".
+  - WhatsApp launch, one search, pick, verified header.
+  - Ambiguous and no-match searches; Cancel mid-search.
+  - Existing WhatsApp draft unchanged.
+  - Interactive GPT open while these run; pet/panel responsive.
+  - **Unsupported on purpose:** WhatsApp reading/summarize/reply insert/attachments on Windows. Header "already open" peek is Mac-only, so Windows always searches.
+- **Unknown until live:** WhatsApp for Windows (WebView2 build) must expose its search box and result rows through UI Automation. Names/labels are English-only matches ("search", "Type a message"); another UI language reports the limitation instead of guessing.
 
 ### 2026-11-22: Windows Tab + Q switcher and Shift + A hold-to-talk (Mac unchanged)
 - **Owner ask:** "a tab q tab switcher and a shift a for talk in windows and dont change for mac". Built on the Mac, so not run on Windows yet.

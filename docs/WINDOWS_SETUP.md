@@ -96,7 +96,7 @@ These remain macOS-only unless a real Windows hook is implemented later:
 
 - Caps Lock+A hold-to-talk (Windows uses **Shift+A** instead — see below)  
 - Selected-text shortcut / Accessibility replace  
-- WhatsApp native AX automation  
+- WhatsApp message reading / summaries / draft insertion / attachments (contact search and open-chat use UI Automation, see below)  
 - Lens window control / browser-tab automation  
 - Notes / ChatGPT.app AX typing destinations  
 
@@ -115,10 +115,19 @@ Button-driven `System.Speech` mic, transparent click-through, tray behavior, Sto
   - The switcher lists visible app windows (Store apps included), switches with a click/Enter, and "quit" sends a normal close (apps still ask to save). Browser tab lists are Mac-only.
   - Keys typed into an **administrator** window can't be replayed by a normal-user MIKO (Windows UIPI), and focus switching follows Windows' foreground rules.
 
+- **WhatsApp contact search (`resources/whatsapp-win.ps1`):** UI Automation on the installed WhatsApp app (no WhatsApp Web, no guessed coordinates). Same JSON contract as the Mac helper, so the chooser, alias and retry logic is shared.
+  - Finds the edit labelled "search" (never the one labelled "Type a message"), focuses it, and types the name once, checking before every character that the search box still has focus.
+  - Reads the result rows (message-search hits are skipped), opens a row only when exactly one matches, and reports success only after the chat header shows that name.
+  - If this WhatsApp version doesn't expose its search box or results, MIKO says so ("doesn't show its search box to Windows accessibility") instead of guessing.
+  - The C# part compiles on first use into `%TEMP%\miko-whatsapp-<hash>.dll` (a few seconds once). Results and timings go to `miko-diagnostics.log` (state and counts only, no message text).
+  - To see what your WhatsApp version exposes: `npm run inspect:whatsapp-win > wa-tree.txt` (conversation text is redacted; nothing is sent anywhere).
+- **Chrome search:** web searches open `https://www.google.com/search?q=…` (encoded) in the chosen Chrome profile. On Windows `chrome.exe` is now started detached; before, MIKO waited for it to exit, which timed out (and killed Chrome) when Chrome wasn't already running.
+
 ### Quick manual check (PowerShell)
 
 ```powershell
 Get-StartApps | Where-Object Name -match 'Calculator|WhatsApp'
 Add-Type -AssemblyName System.Speech; [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | ForEach-Object { $_.Culture.Name }
 powershell -NoProfile -ExecutionPolicy Bypass -File .\resources\listen-win.ps1 -Mode test
+'{"search":"Dad"}' | powershell -NoProfile -ExecutionPolicy Bypass -File .\resources\whatsapp-win.ps1
 ```

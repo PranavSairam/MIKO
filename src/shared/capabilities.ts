@@ -83,8 +83,8 @@ export const CAPABILITIES: Capability[] = [
   {
     kind: 'search_whatsapp_contacts',
     purpose: 'Search WhatsApp for a contact or chat',
-    platform: 'darwin',
-    requires: ['Accessibility'],
+    platform: 'all',
+    requires: ['Accessibility (macOS) / UI Automation (Windows)'],
     mutating: false,
     preconditions: ['WhatsApp installed'],
     verify: 'Search results or none',
@@ -93,7 +93,7 @@ export const CAPABILITIES: Capability[] = [
   {
     kind: 'open_whatsapp_chat',
     purpose: 'Open a WhatsApp chat and verify the header',
-    platform: 'darwin',
+    platform: 'all',
     requires: ['Accessibility'],
     mutating: true,
     preconditions: ['Contact identified'],

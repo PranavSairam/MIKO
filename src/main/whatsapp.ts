@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { launchApplication } from './apps'
 import { axHelperPath } from './ax'
+import { logDiag } from './diagnostics'
+import { sourcePath } from './helper-app'
+import { powershellPath } from './win-keys'
 import {
   setWhatsAppAliases,
   setWhatsAppContextNoticeSeen,
@@ -10,6 +13,7 @@ import {
 import {
   cleanContactQuery,
   forgetAlias,
+  parseHelperOutput,
   planWhatsApp,
   rememberAlias,
   resolveAlias,
@@ -20,8 +24,9 @@ import {
 import type { WhatsAppInsertResult, WhatsAppPeekResult, WhatsAppVisibleMessage } from '../shared/whatsapp-reply'
 
 /**
- * Open a WhatsApp chat on macOS by searching the app's Accessibility tree.
- * Windows has no contact adapter yet. The message composer is never written.
+ * Open a WhatsApp chat by searching the app's accessibility tree: ax-mac.swift on macOS,
+ * resources/whatsapp-win.ps1 (UI Automation) on Windows. Both speak the same JSON contract.
+ * Contact search never writes the message composer. Reply capture/insert stay macOS-only.
  */
 
 const empty = (status: WhatsAppOpenResult['status'], query: string, reason: string, matches: WhatsAppMatch[] = []): WhatsAppOpenResult => ({
@@ -117,24 +122,59 @@ function fromHelper(payload: HelperPayload, query: string): HelperView {
   }
 }
 
+/** The contact-search helper for this platform, or null when it isn't available. */
+function spawnSearchHelper(): ChildProcess | null {
+  if (process.platform === 'win32') {
+    const script = sourcePath('whatsapp-win.ps1')
+    if (!script) return null
+    return spawn(
+      powershellPath(),
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Mode', 'open'],
+      { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }
+    )
+  }
+  const path = axHelperPath()
+  if (!path) return null
+  return spawn(path, ['whatsapp'], { shell: false, stdio: ['pipe', 'pipe', 'ignore'] })
+}
+
 function runHelper(
   search: string,
   pick: { name: string; snippet: string } | null,
   gen: number,
   reuseSearch = false
 ): Promise<ReturnType<typeof fromHelper>> {
-  const path = axHelperPath()
-  if (!path) return Promise.resolve(fromHelper({ status: 'failed', reason: 'MIKO’s Accessibility helper isn’t available.' }, search))
+  let proc: ChildProcess | null
+  try {
+    proc = spawnSearchHelper()
+  } catch {
+    proc = null
+  }
+  if (!proc) {
+    const reason = process.platform === 'win32' ? 'MIKO’s Windows WhatsApp helper isn’t available.' : 'MIKO’s Accessibility helper isn’t available.'
+    return Promise.resolve(fromHelper({ status: 'failed', reason }, search))
+  }
+  const helper: ChildProcess = proc
+  const started = Date.now()
+  // Windows compiles its UI Automation helper on first use, so allow longer there.
+  const limitMs = process.platform === 'win32' ? 30000 : 20000
   return new Promise((resolve) => {
-    const proc = spawn(path, ['whatsapp'], { shell: false, stdio: ['pipe', 'pipe', 'ignore'] })
-    child = proc
+    child = helper
     let out = ''
     let settled = false
     const finish = (payload: HelperPayload): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (child === proc) child = null
+      if (child === helper) child = null
+      if (process.platform === 'win32') {
+        // State and counts only: never message text.
+        logDiag('whatsapp', pick ? 'open result' : 'search', {
+          status: typeof payload.status === 'string' ? payload.status : 'failed',
+          ms: Date.now() - started,
+          diag: typeof payload.diag === 'string' ? payload.diag.slice(0, 300) : ''
+        })
+      }
       if (gen !== generation) {
         resolve(fromHelper({ status: 'cancelled', reason: 'WhatsApp search cancelled.' }, search))
         return
@@ -142,20 +182,20 @@ function runHelper(
       resolve(fromHelper(payload, search))
     }
     const timer = setTimeout(() => {
-      proc.kill('SIGTERM')
+      helper.kill('SIGTERM')
       finish({ status: 'failed', reason: 'WhatsApp search took too long, so I stopped.' })
-    }, 20000)
-    proc.stdout?.on('data', (chunk: Buffer) => {
+    }, limitMs)
+    helper.stdout?.on('data', (chunk: Buffer) => {
       out += chunk.toString('utf8')
     })
-    proc.once('error', () => finish({ status: 'failed', reason: 'MIKO’s Accessibility helper isn’t available.' }))
-    proc.once('close', () => {
+    helper.once('error', () => finish({ status: 'failed', reason: 'MIKO’s Accessibility helper isn’t available.' }))
+    helper.once('close', () => {
       if (gen !== generation) {
         finish({ status: 'cancelled', reason: 'WhatsApp search cancelled.' })
         return
       }
       try {
-        finish(JSON.parse(out.trim().split('\n').pop() ?? '{}') as HelperPayload)
+        finish(parseHelperOutput(out) as HelperPayload)
       } catch {
         finish({ status: 'failed', reason: 'WhatsApp didn’t answer.' })
       }
@@ -163,7 +203,7 @@ function runHelper(
     const body = pick
       ? { search, name: pick.name, snippet: pick.snippet, reuseSearch: reuseSearch || undefined }
       : { search }
-    proc.stdin?.end(JSON.stringify(body))
+    helper.stdin?.end(JSON.stringify(body))
   })
 }
 
@@ -191,8 +231,8 @@ export async function openWhatsAppContact(request: WhatsAppOpenRequest | string)
       : request.taskId
   const query = cleanContactQuery(raw)
   if (!query) return empty('failed', '', 'That name isn’t one I can search for.')
-  if (process.platform !== 'darwin') {
-    return empty('unsupported', query, 'WhatsApp contact search isn’t available on Windows yet.')
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
+    return empty('unsupported', query, 'WhatsApp contact search isn’t available on this computer.')
   }
 
   const coalesceKey = `${taskId}::${query}::${pickId ?? ''}`
