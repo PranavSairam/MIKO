@@ -39,6 +39,8 @@ export interface TrayActions {
   choosePet?: (id: string) => void
   openPetChooser?: () => void
   openSetup?: () => void
+  /** Shows MIKO and starts the mic (works without any keyboard shortcut). */
+  listen?: () => void
 }
 
 let tray: Tray | null = null
@@ -119,6 +121,7 @@ function buildMenu(): Menu {
     { label: 'Show', enabled: !visible, click: () => actions.show() },
     { label: 'Hide', enabled: visible, click: () => actions.hide() },
     { label: detail || 'Summon shortcut', enabled: false },
+    ...(actions.listen ? [{ label: 'Talk to MIKO (mic)', click: () => actions.listen?.() } as const] : []),
     {
       label: 'Follow active app',
       type: 'checkbox',

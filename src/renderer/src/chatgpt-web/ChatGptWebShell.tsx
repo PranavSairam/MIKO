@@ -14,6 +14,8 @@ type Status = {
   dictateArmed?: boolean
   partition: string
   label: string
+  loadError?: string
+  blockedHost?: string
 }
 
 type Api = {
@@ -24,6 +26,10 @@ type Api = {
   back: () => Promise<boolean>
   forward: () => Promise<boolean>
   reload: () => Promise<boolean>
+  retry: () => Promise<boolean>
+  openInBrowser: () => Promise<boolean>
+  openBlocked: () => Promise<boolean>
+  dismissBlocked: () => Promise<boolean>
   setPinned: (pinned: boolean) => Promise<boolean>
   setChromeHeight: (height: number) => Promise<boolean>
   setDragActive: (active: boolean) => Promise<boolean>
@@ -101,7 +107,7 @@ export function ChatGptWebShell(): ReactElement {
     const ro = new ResizeObserver(() => measure())
     ro.observe(el)
     return () => ro.disconnect()
-  }, [status?.collapsed, menuOpen, dragOver, status?.dropNote, status?.dictateArmed, pillHint])
+  }, [status?.collapsed, menuOpen, dragOver, status?.dropNote, status?.dictateArmed, pillHint, status?.loadError, status?.blockedHost])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -364,6 +370,28 @@ export function ChatGptWebShell(): ReactElement {
             Close
           </button>
         </div>
+        {status?.loadError ? (
+          <div className="cw-drop-note cw-nodrag" role="alert">
+            ChatGPT didn’t load inside MIKO: {status.loadError}.{' '}
+            <button type="button" className="cw-btn" onClick={() => void api?.retry()}>
+              Retry
+            </button>{' '}
+            <button type="button" className="cw-btn" title="Opens chatgpt.com in your default browser, outside MIKO" onClick={() => void api?.openInBrowser()}>
+              Open in browser
+            </button>
+          </div>
+        ) : null}
+        {status?.blockedHost ? (
+          <div className="cw-drop-note cw-nodrag" role="status">
+            That link goes to {status.blockedHost}, outside MIKO’s ChatGPT window.{' '}
+            <button type="button" className="cw-btn" title="Opens the link in your default browser" onClick={() => void api?.openBlocked()}>
+              Open in browser
+            </button>{' '}
+            <button type="button" className="cw-btn" onClick={() => void api?.dismissBlocked()}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
         {dropNote ? <p className="cw-drop-note cw-nodrag">{dropNote}</p> : null}
         {!dropNote && chromeHint ? <p className="cw-drop-note cw-nodrag">{chromeHint}</p> : null}
       </header>

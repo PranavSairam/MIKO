@@ -48,6 +48,9 @@ export function findChatGptApp(): string | null {
 
 /** Launch or bring forward the ChatGPT app; otherwise open chatgpt.com in the default browser. */
 export async function openChatGpt(): Promise<OpenResult> {
+  // Windows/Linux: no native ChatGPT app path here. Never silently open the default browser;
+  // the IPC layer sends "open ChatGPT" to MIKO's Interactive GPT workspace instead.
+  if (process.platform !== 'darwin') return { ok: false, target: 'none', appName: '' }
   const appPath = findChatGptApp()
   if (appPath && (await run('/usr/bin/open', ['-a', appPath]))) {
     return { ok: true, target: 'app', appName: basename(appPath, '.app') }

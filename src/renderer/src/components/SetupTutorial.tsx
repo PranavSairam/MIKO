@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   displayAccelerator,
+  SUMMON_ALTERNATIVES,
   type MicTestStatus,
   type SetupState,
   type SetupStepId,
@@ -8,7 +9,6 @@ import {
   type VoicePermissionStatus
 } from '../../../shared/setup'
 import type { BridgeStatusInfo } from '../../../shared/api'
-import { DEFAULT_SUMMON_SHORTCUT } from '../../../shared/shortcut'
 
 export interface SetupTutorialProps {
   platform: string
@@ -26,6 +26,9 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
   const [shortcut, setShortcut] = useState<SummonShortcutStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [devices, setDevices] = useState<string[] | null>(null)
+  /** Shortcut presses seen when the shortcut step opened; a higher count means the test passed. */
+  const [pressBase, setPressBase] = useState<number | null>(null)
 
   async function refresh(): Promise<void> {
     if (typeof window.miko === 'undefined') return
@@ -44,6 +47,24 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
   useEffect(() => {
     void refresh()
   }, [])
+
+  const onShortcutStep = state?.currentStep === 'shortcuts' || state?.currentStep === 'show-hide'
+  useEffect(() => {
+    if (!onShortcutStep || typeof window.miko === 'undefined') return
+    let stop = false
+    const poll = async (): Promise<void> => {
+      const status = await window.miko.summonShortcutGet()
+      if (stop) return
+      setShortcut(status)
+      setPressBase((base) => (base === null ? status.presses ?? 0 : base))
+    }
+    void poll()
+    const id = window.setInterval(() => void poll(), 800)
+    return () => {
+      stop = true
+      window.clearInterval(id)
+    }
+  }, [onShortcutStep])
 
   async function apply(update: Parameters<typeof window.miko.setupUpdate>[0]): Promise<SetupState | null> {
     if (typeof window.miko === 'undefined') return null
@@ -65,7 +86,8 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
   async function tryMic(): Promise<void> {
     if (typeof window.miko === 'undefined') return
     setBusy(true)
-    setNote('Testing microphone…')
+    setMic(null)
+    setNote(win ? 'Starting the microphone… then say a short phrase, like “hello MIKO”.' : 'Testing microphone…')
     try {
       const result = await window.miko.voiceMicTest()
       setMic(result)
@@ -77,16 +99,24 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
     }
   }
 
-  async function retryShortcut(): Promise<void> {
+  async function chooseShortcut(accelerator: string): Promise<void> {
     if (typeof window.miko === 'undefined') return
     setBusy(true)
     try {
-      const status = await window.miko.summonShortcutSet(DEFAULT_SUMMON_SHORTCUT)
+      const status = await window.miko.summonShortcutSet(accelerator)
       setShortcut(status)
+      setPressBase(status.presses ?? 0)
       setNote(status.detail)
     } finally {
       setBusy(false)
     }
+  }
+
+  async function listMics(): Promise<void> {
+    if (typeof window.miko?.voiceInputDevices !== 'function') return
+    const found = await window.miko.voiceInputDevices()
+    setDevices(found.devices)
+    if (found.detail) setNote(found.detail)
   }
 
   if (!state) {
@@ -98,14 +128,17 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
   }
 
   const step = state.currentStep === 'done' ? 'welcome' : state.currentStep
-  const summonLabel = displayAccelerator(shortcut?.active || shortcut?.configured || DEFAULT_SUMMON_SHORTCUT, win ? 'win32' : 'darwin')
+  const platformKey = win ? 'win32' : 'darwin'
+  const activeLabel = shortcut?.active ? displayAccelerator(shortcut.active, platformKey) : ''
+  const shortcutWorked = pressBase !== null && (shortcut?.presses ?? 0) > pressBase
+  const micPassed = mic?.outcome === 'transcript-confirmed'
 
   return (
     <div className="setup">
       <p className="prefs-section">Setup &amp; Help</p>
       <p className="panel-detail">
         Optional walkthrough. You can skip any step — MIKO still works from the tray
-        {win ? ' and Ctrl+Shift+R' : ' and Command+Shift+R'}.
+        {activeLabel ? ` and ${activeLabel}` : ''}. Running setup again keeps your settings and ChatGPT login.
       </p>
 
       {step === 'welcome' ? (
@@ -136,23 +169,61 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
           title="Microphone"
           body={
             win
-              ? 'Voice uses Windows System.Speech on this PC. Audio is not saved. Browser getUserMedia is not used.'
+              ? 'Voice uses Windows speech recognition on this PC (System.Speech). Audio is not saved. MIKO records from the Windows default input device.'
               : 'Voice uses on-device speech recognition on this Mac. Audio is not saved. Browser getUserMedia is not used.'
           }
         >
-          <p className="panel-detail">{voice?.detail || 'Permission status comes from the native helper.'}</p>
-          {mic ? <p className="panel-detail">Last test: {mic.outcome}{mic.transcript ? ` — “${mic.transcript}”` : ''}</p> : null}
-          <div className="panel-inline">
+          {!win ? <p className="panel-detail">{voice?.detail || 'Permission status comes from the native helper.'}</p> : null}
+          {mic ? (
+            <p className="panel-detail" role="status">
+              {micPassed ? `\u2713 Microphone works \u2014 heard \u201c${mic.transcript}\u201d.` : `\u2717 Not working yet: ${mic.detail}`}
+            </p>
+          ) : null}
+          <div className="panel-inline wrap">
             <button type="button" className="text-button" disabled={busy} onClick={() => void tryMic()}>
-              Try microphone
+              {mic && !micPassed ? 'Retry microphone test' : 'Try microphone'}
             </button>
-            <button type="button" className="text-button secondary" onClick={() => void window.miko.voiceSettingsOpen()}>
-              Open privacy settings
+            <button
+              type="button"
+              className="text-button secondary"
+              onClick={() => void window.miko.voiceSettingsOpen(mic?.help ?? 'microphone-privacy')}
+            >
+              {mic?.help === 'speech-language'
+                ? 'Speech settings'
+                : mic?.help === 'sound-input'
+                  ? 'Sound settings'
+                  : 'Microphone privacy settings'}
             </button>
+            {win ? (
+              <button type="button" className="text-button secondary" onClick={() => void listMics()}>
+                Choose microphone
+              </button>
+            ) : null}
             <button type="button" className="text-button" onClick={() => void go('assistant')}>
-              Next
+              {micPassed ? 'Next' : 'Skip'}
             </button>
           </div>
+          {win && devices ? (
+            <div className="panel-detail">
+              {devices.length ? (
+                <>
+                  Microphones Windows reports: {devices.join(', ')}. MIKO uses the Windows default input — change it in{' '}
+                  <button type="button" className="text-button secondary" onClick={() => void window.miko.voiceSettingsOpen('sound-input')}>
+                    Sound settings
+                  </button>
+                  , then Retry.
+                </>
+              ) : (
+                <>
+                  Windows reports no microphone. Plug one in, or check{' '}
+                  <button type="button" className="text-button secondary" onClick={() => void window.miko.voiceSettingsOpen('sound-input')}>
+                    Sound settings
+                  </button>
+                  .
+                </>
+              )}
+            </div>
+          ) : null}
         </Step>
       ) : null}
 
@@ -195,32 +266,41 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
         </Step>
       ) : null}
 
-      {step === 'shortcuts' ? (
+      {step === 'shortcuts' || step === 'show-hide' ? (
         <Step
-          title="Summon shortcut"
-          body={`Show or hide MIKO with ${summonLabel}. If registration fails, use the tray Show / Hide. Caps Lock+A voice hold remains macOS-only.`}
+          title="Show &amp; hide shortcut"
+          body={
+            activeLabel
+              ? `Test it: press ${activeLabel}. MIKO hides; press it again and MIKO comes back. The tray Show / Hide${win ? ' and Talk to MIKO' : ''} always work too.`
+              : 'No keyboard shortcut is registered right now. Pick one below, or use the tray Show / Hide.'
+          }
         >
-          <p className="panel-detail">
-            {shortcut?.ok
-              ? `Active: ${summonLabel}`
-              : shortcut?.detail || 'Shortcut unavailable — tray still works.'}
+          <p className="panel-detail" role="status">
+            {shortcutWorked
+              ? `\u2713 ${activeLabel} works.`
+              : activeLabel
+                ? `Registered: ${activeLabel}. Waiting for you to press it\u2026`
+                : shortcut?.detail || 'Shortcut unavailable \u2014 the tray still works.'}
           </p>
+          {shortcut && !shortcut.ok && shortcut.detail ? <p className="panel-detail">{shortcut.detail}</p> : null}
+          <div className="panel-inline wrap">
+            {SUMMON_ALTERNATIVES.map((accelerator) => (
+              <button
+                key={accelerator}
+                type="button"
+                className={shortcut?.active === accelerator ? 'text-button' : 'text-button secondary'}
+                disabled={busy || shortcut?.active === accelerator}
+                onClick={() => void chooseShortcut(accelerator)}
+              >
+                {displayAccelerator(accelerator, platformKey)}
+              </button>
+            ))}
+          </div>
           <div className="panel-inline">
-            <button type="button" className="text-button secondary" disabled={busy} onClick={() => void retryShortcut()}>
-              Retry default shortcut
-            </button>
-            <button type="button" className="text-button" onClick={() => void go('show-hide')}>
-              Start interactive tutorial
+            <button type="button" className="text-button" onClick={() => void go('drag')}>
+              {shortcutWorked ? 'Next' : 'Skip'}
             </button>
           </div>
-        </Step>
-      ) : null}
-
-      {step === 'show-hide' ? (
-        <Step title="Show &amp; hide" body={`Press ${summonLabel} or use the tray. Try hiding, then showing MIKO again.`}>
-          <button type="button" className="text-button" onClick={() => void go('drag')}>
-            Done — next
-          </button>
         </Step>
       ) : null}
 
@@ -233,7 +313,10 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
       ) : null}
 
       {step === 'command' ? (
-        <Step title="Panel command" body="Click the pet or open the panel, type a short request (for example “open Notes”), and send it.">
+        <Step
+          title="Panel command"
+          body={`Click the pet or open the panel, type a short request (for example \u201c${win ? 'open Calculator' : 'open Notes'}\u201d), and send it.`}
+        >
           <button type="button" className="text-button" onClick={() => void go('voice')}>
             Done — next
           </button>
@@ -245,7 +328,7 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt }:
           title="Optional voice"
           body={
             win
-              ? 'Use the mic button in the panel for button-driven System.Speech. Caps Lock+A is not available on Windows yet.'
+              ? 'Click the mic button in the panel (or the tray\u2019s Talk to MIKO) and say a command, for example \u201copen Calculator\u201d.'
               : 'Hold Caps Lock+A to talk, or use the mic button. Recognition stays on this Mac.'
           }
         >

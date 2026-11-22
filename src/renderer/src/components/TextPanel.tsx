@@ -22,8 +22,12 @@ export interface PanelChoice {
   exact?: boolean
 }
 
+export type VoiceHelp = 'microphone-privacy' | 'sound-input' | 'speech-language'
+
 export type PanelEntry =
   | { id: number; kind: 'note'; text: string }
+  /** Mic couldn't start or heard nothing usable: plain reason, Retry, and the settings page that fixes it. */
+  | { id: number; kind: 'voice-problem'; text: string; help?: VoiceHelp }
   | {
       id: number
       kind: 'handoff'
@@ -243,6 +247,8 @@ interface TextPanelProps {
   listening?: boolean
   listenDetail?: string
   onListen?: () => void
+  /** Opens the Windows/macOS settings page that fixes a voice problem. */
+  onVoiceHelp?: (help: VoiceHelp) => void
   onListenStop?: () => void
   onListenCancel?: () => void
   canSpeak?: boolean
@@ -387,6 +393,7 @@ export function TextPanel({
   listening = false,
   listenDetail = '',
   onListen,
+  onVoiceHelp,
   onListenStop,
   onListenCancel,
   canSpeak = false,
@@ -644,6 +651,27 @@ export function TextPanel({
                       </button>
                     </div>
                   ) : null}
+                </>
+              ) : null}
+              {entry.kind === 'voice-problem' ? (
+                <>
+                  <p>{entry.text}</p>
+                  <div className="panel-inline">
+                    {onListen ? (
+                      <button type="button" className="text-button" disabled={listening} onClick={() => onListen()}>
+                        Retry
+                      </button>
+                    ) : null}
+                    {entry.help && onVoiceHelp ? (
+                      <button type="button" className="text-button secondary" onClick={() => onVoiceHelp(entry.help as VoiceHelp)}>
+                        {entry.help === 'microphone-privacy'
+                          ? 'Microphone privacy settings'
+                          : entry.help === 'sound-input'
+                            ? 'Choose microphone'
+                            : 'Speech settings'}
+                      </button>
+                    ) : null}
+                  </div>
                 </>
               ) : null}
               {entry.kind === 'handoff' ? (

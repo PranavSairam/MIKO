@@ -28,9 +28,13 @@ export function parseInteractiveGptLocalAction(raw: string): InteractiveGptLocal
     return null
   }
 
-  if (/^(?:hide|collapse)\s+(?:interactive\s+gpt|chatgpt\s+web)$/i.test(t)) return 'hide'
-  if (/^show\s+(?:interactive\s+gpt|chatgpt\s+web)$/i.test(t)) return 'show'
-  if (/^open\s+(?:interactive\s+gpt|chatgpt\s+web)$/i.test(t)) return 'open'
+  // Dictation spells it out: “interactive G P T”, “interactive g.p.t.”, “interactive chat GPT”.
+  const w = normalizeGptWords(t)
+  const target = '(?:the\\s+)?(?:interactive\\s+(?:gpt|chatgpt)|chatgpt\\s+web)(?:\\s+(?:window|workspace))?'
+  if (new RegExp(`^(?:hide|collapse)\\s+${target}$`, 'i').test(w)) return 'hide'
+  if (new RegExp(`^show\\s+${target}$`, 'i').test(w)) return 'show'
+  if (new RegExp(`^(?:open|launch|start|bring\\s+up)\\s+${target}$`, 'i').test(w)) return 'open'
+  if (new RegExp(`^${target}$`, 'i').test(w)) return 'open'
   if (
     /^(?:dictate|start\s+dictating)(?:\s+to|\s+into)?\s+(?:interactive\s+gpt|chatgpt\s+web|chat\s*-?\s*gpt|gpt)$/i.test(t) ||
     /^dictate\s+to\s+gpt$/i.test(t)
@@ -46,6 +50,16 @@ export function parseInteractiveGptLocalAction(raw: string): InteractiveGptLocal
     return 'stop-dictate'
   }
   return null
+}
+
+/** Joins spelled-out “G P T” / “g.p.t.” and “chat gpt” so voice and typing match the same phrases. */
+export function normalizeGptWords(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\bg\s*\.?\s*p\s*\.?\s*t\b\.?/g, 'gpt')
+    .replace(/\bchat\s*-?\s*gpt\b/g, 'chatgpt')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 export function isInteractiveGptLocalControl(raw: string): boolean {

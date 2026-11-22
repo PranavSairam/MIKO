@@ -1,6 +1,7 @@
 import { globalShortcut } from 'electron'
 import { displayAccelerator, type SummonShortcutStatus } from '../shared/setup'
 import { isSummonAccelerator, DEFAULT_SUMMON_SHORTCUT } from '../shared/shortcut'
+import { logDiag } from './diagnostics'
 import { setSummonShortcut, summonShortcut } from './settings'
 
 export interface SummonShortcut {
@@ -18,12 +19,26 @@ export function registerSummonShortcut(_userData: string, onToggle: () => void):
   let configured = summonShortcut()
   let active: string | null = null
   let detail = ''
+  let presses = 0
+  const fire = (): void => {
+    presses += 1
+    onToggle()
+  }
   const tryRegister = (accelerator: string): boolean => {
+    let ok = false
+    let error = ''
     try {
-      return globalShortcut.register(accelerator, onToggle)
-    } catch {
-      return false
+      ok = globalShortcut.register(accelerator, fire)
+    } catch (e) {
+      error = String(e)
     }
+    // register() returns false when another app already owns the combination.
+    logDiag('shortcut', ok ? 'registered' : 'registration failed', {
+      accelerator,
+      ...(ok ? {} : { owned: globalShortcut.isRegistered(accelerator) ? 'by MIKO' : 'by another app or blocked' }),
+      ...(error ? { error } : {})
+    })
+    return ok
   }
 
   if (tryRegister(configured)) active = configured
@@ -32,7 +47,7 @@ export function registerSummonShortcut(_userData: string, onToggle: () => void):
   }
 
   if (!active) {
-    detail = `${label(configured)} is already in use. Use the tray Show and Hide.`
+    detail = `${label(configured)} is taken by another app. Pick another shortcut in Setup & Help, or use the tray Show / Hide.`
   } else if (active !== configured) {
     detail = `${label(configured)} is unavailable. Using ${label(active)}.`
   } else {
@@ -43,7 +58,8 @@ export function registerSummonShortcut(_userData: string, onToggle: () => void):
     configured,
     active,
     ok: Boolean(active),
-    detail
+    detail,
+    presses
   })
 
   const controller: SummonShortcut = {
@@ -64,7 +80,7 @@ export function registerSummonShortcut(_userData: string, onToggle: () => void):
         return status()
       }
       if (!tryRegister(next)) {
-        detail = `${label(next)} is already in use. MIKO is still using ${active ? label(active) : 'the tray'}.`
+        detail = `${label(next)} is taken by another app. MIKO is still using ${active ? label(active) : 'the tray'}.`
         return status()
       }
       if (active) globalShortcut.unregister(active)

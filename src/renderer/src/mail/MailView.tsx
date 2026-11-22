@@ -529,7 +529,9 @@ function ReplyComposer({ reply, actions, openLabel }: { reply: ReplyState; actio
       className={hasDraft ? 'm-input' : 'm-input m-grow'}
       rows={3}
       value={reply.instruction}
-      placeholder="A rough line is enough, e.g. “yes, Thursday 3 pm works, I’ll bring the documents”. Hold Caps Lock + A to dictate."
+      placeholder={`A rough line is enough, e.g. “yes, Thursday 3 pm works, I’ll bring the documents”.${
+        /mac/i.test(navigator.platform || '') ? ' Hold Caps Lock + A to dictate.' : ''
+      }`}
       onChange={(e) => actions.setReply({ instruction: e.target.value })}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && reply.instruction.trim()) void actions.draftReply()

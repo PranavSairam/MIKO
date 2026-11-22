@@ -4,6 +4,17 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 import { app, shell } from 'electron'
 import { parseActionId, type CatalogApp } from '../shared/commands'
+import {
+  appsFolderArg,
+  findStartApp,
+  isNoiseStartApp,
+  parseStartApps,
+  tasklistHas,
+  WIN_FAMILIAR,
+  WIN_PROCESS_NAMES,
+  type StartApp
+} from '../shared/win-apps'
+import { logDiag } from './diagnostics'
 
 export interface LaunchResult {
   ok: boolean
@@ -18,6 +29,12 @@ interface Target {
   macBundle?: string
   winExe?: string
   winLnk?: string
+  /** Windows AppUserModelID (Start menu identity) used to launch this app. */
+  winAppId?: string
+  /** Familiar id (calculator, whatsapp…) for the Windows "is it running?" check. */
+  winFamiliar?: string
+  /** Placeholder for a familiar app that was not found. */
+  missing?: boolean
 }
 
 export interface QuitTarget {
@@ -30,10 +47,28 @@ export interface QuitTarget {
 
 const CACHE_MS = 5000
 const SCAN_LIMIT = 120
+/** Windows Start app list (PowerShell Get-StartApps) is slower to read; refresh every few minutes. */
+const START_APPS_MS = 5 * 60_000
 const CHATGPT_URL = 'https://chatgpt.com'
 
 let cache: { at: number; apps: CatalogApp[]; targets: Map<string, Target> } | null = null
 let confirmed: Set<string> | null = null
+
+export interface AppDiscoveryStatus {
+  ok: boolean
+  /** Where the app list came from on this computer. */
+  source: 'start-apps' | 'shortcuts' | 'mac-folders' | 'none'
+  count: number
+  detail: string
+}
+
+let startApps: { at: number; apps: StartApp[]; error: string } | null = null
+let startAppsLoading: Promise<void> | null = null
+let discovery: AppDiscoveryStatus = { ok: true, source: 'none', count: 0, detail: '' }
+
+export function appDiscoveryStatus(): AppDiscoveryStatus {
+  return discovery
+}
 
 export async function listApplications(): Promise<CatalogApp[]> {
   const found = await load()
@@ -46,12 +81,31 @@ export async function launchApplication(id: string, confirm: boolean): Promise<L
   const found = await load()
   const target = found.targets.get(action)
   if (!target) return { ok: false, reason: 'That action is not available.' }
+  if (target.missing) {
+    return {
+      ok: false,
+      reason: discovery.ok
+        ? `${target.name} isn’t installed on this computer.`
+        : `I couldn’t check which apps are installed (${discovery.detail}).`
+    }
+  }
   if (!target.familiar && !confirm && !loadConfirmed().has(action)) {
     return { ok: false, reason: `Confirm before launching ${target.name}.` }
   }
   if (!target.familiar && confirm) remember(action)
   const opened = await target.run()
-  if (!opened) return { ok: false, reason: `${target.name} did not open.` }
+  if (!opened) {
+    logDiag('apps', 'launch failed', { id: action, name: target.name, appId: Boolean(target.winAppId), exe: Boolean(target.winExe) })
+    return { ok: false, reason: `I found ${target.name}, but it didn’t start. Try again, or open it from the Start menu.` }
+  }
+  if (process.platform === 'win32') {
+    const running = await verifyWindowsRunning(target)
+    logDiag('apps', 'launch requested', { id: action, name: target.name, via: target.winAppId ? 'appsfolder' : target.winExe ? 'exe' : target.winLnk ? 'lnk' : 'path', running })
+    if (running === false) {
+      return { ok: false, reason: `I asked Windows to open ${target.name}, but I can’t see it running yet.` }
+    }
+    return { ok: true, reason: running ? `${target.name} is open.` : '' }
+  }
   // Folder/URL opens have no process to verify. App launches: check frontmost when possible.
   if (!target.macApp && !target.macBundle && !target.winExe && !target.winLnk) {
     return { ok: true, reason: '' }
@@ -67,6 +121,23 @@ export async function launchApplication(id: string, confirm: boolean): Promise<L
     ok: true,
     reason: verified === true ? `${target.name} is frontmost.` : ''
   }
+}
+
+/**
+ * Windows: true = the app's process is running, false = not seen after a few seconds,
+ * null = no known process name to check (launch request itself succeeded).
+ */
+async function verifyWindowsRunning(target: Target): Promise<boolean | null> {
+  const names = target.winFamiliar ? WIN_PROCESS_NAMES[target.winFamiliar] : undefined
+  if (!names?.length) return null
+  const tasklist = join(system32(), 'tasklist.exe')
+  for (const wait of [1500, 2500, 3000]) {
+    await new Promise((r) => setTimeout(r, wait))
+    const out = await readAsync(tasklist, ['/FO', 'CSV', '/NH'], 4000, 2_000_000)
+    if (out === null) return null
+    if (tasklistHas(out, names)) return true
+  }
+  return false
 }
 
 /** true = confirmed frontmost, false = wrong app, null = couldn’t check (still treat launch as ok). */
@@ -129,6 +200,7 @@ export function openChatGpt(): Promise<boolean> {
 async function load(): Promise<{ apps: CatalogApp[]; targets: Map<string, Target> }> {
   const now = Date.now()
   if (cache && now - cache.at < CACHE_MS) return cache
+  if (process.platform === 'win32') await loadStartApps()
   const targets = new Map<string, Target>()
   const apps: CatalogApp[] = []
   for (const familiar of familiarTargets()) {
@@ -153,7 +225,112 @@ async function load(): Promise<{ apps: CatalogApp[]; targets: Map<string, Target
     })
   }
   cache = { at: now, apps, targets }
+  updateDiscovery(apps)
   return cache
+}
+
+function updateDiscovery(apps: CatalogApp[]): void {
+  if (process.platform === 'win32') {
+    const fromStart = Boolean(startApps && startApps.apps.length > 0)
+    const installed = apps.filter((item) => item.installed).length
+    discovery = {
+      ok: fromStart || installed > 3,
+      source: fromStart ? 'start-apps' : installed > 0 ? 'shortcuts' : 'none',
+      count: installed,
+      detail: fromStart ? '' : startApps?.error || 'the Windows app list could not be read'
+    }
+    return
+  }
+  discovery = { ok: true, source: 'mac-folders', count: apps.filter((item) => item.installed).length, detail: '' }
+}
+
+/** Reads Start menu apps (desktop + Store) once every few minutes. Never throws. */
+async function loadStartApps(): Promise<void> {
+  if (startApps && Date.now() - startApps.at < START_APPS_MS) return
+  if (startAppsLoading) return startAppsLoading
+  startAppsLoading = (async () => {
+    const powershell = join(system32(), 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const command =
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
+      'Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress'
+    const started = Date.now()
+    const out = await readAsync(
+      existsSync(powershell) ? powershell : 'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
+      15_000,
+      4_000_000
+    )
+    const apps = out === null ? [] : parseStartApps(out)
+    const error = out === null ? 'PowerShell Get-StartApps did not run' : apps.length === 0 ? 'Get-StartApps returned no apps' : ''
+    // Keep a previous good list over a failed refresh.
+    if (apps.length === 0 && startApps && startApps.apps.length > 0) {
+      startApps = { ...startApps, at: Date.now() }
+    } else {
+      startApps = { at: Date.now(), apps, error }
+    }
+    logDiag('apps', 'start apps read', { count: apps.length, ms: Date.now() - started, error })
+  })().finally(() => {
+    startAppsLoading = null
+  })
+  return startAppsLoading
+}
+
+/** Async process read with a timeout (Windows discovery must not block the main process). */
+function readAsync(command: string, args: string[], timeoutMs: number, cap: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    let out = ''
+    let settled = false
+    const finish = (value: string | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(command, args, { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch {
+      resolve(null)
+      return
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        // ignore
+      }
+      finish(null)
+    }, timeoutMs)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (out.length < cap) out += chunk.toString('utf8')
+    })
+    let err = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (err.length < 800) err += chunk.toString('utf8')
+    })
+    child.once('error', () => finish(null))
+    child.once('close', (code) => {
+      if (code !== 0 && err) logDiag('process', `${command.split(/[\\/]/).pop()} exited ${code}`, { stderr: err.slice(0, 300) })
+      finish(code === 0 ? out : null)
+    })
+  })
+}
+
+function winStart(id: string): StartApp | null {
+  const spec = WIN_FAMILIAR[id]
+  if (!spec || !startApps) return null
+  return findStartApp(startApps.apps, spec)
+}
+
+function appIdTarget(name: string, start: StartApp, familiarId?: string): Target {
+  const explorer = join(process.env['SystemRoot'] || 'C:\\Windows', 'explorer.exe')
+  return {
+    name,
+    familiar: true,
+    winAppId: start.appId,
+    winFamiliar: familiarId,
+    run: () => runCommand(existsSync(explorer) ? explorer : 'explorer.exe', [appsFolderArg(start.appId)], false)
+  }
 }
 
 function familiarTargets(): { id: string; name: string; installed: boolean; aliases: string[]; target: Target }[] {
@@ -185,6 +362,7 @@ function familiarTargets(): { id: string; name: string; installed: boolean; alia
       target: target ?? {
         name: spec.name,
         familiar: true,
+        missing: true,
         run: () => Promise.resolve(false)
       }
     }
@@ -194,7 +372,7 @@ function familiarTargets(): { id: string; name: string; installed: boolean; alia
 function unfamiliarTargets(known: Map<string, Target>): { id: string; target: Target }[] {
   const used = new Set<string>(known.keys())
   const found: { id: string; target: Target }[] = []
-  const entries = process.platform === 'win32' ? scanWindows() : scanMac()
+  const entries = process.platform === 'win32' ? windowsEntries(known) : scanMac()
   for (const entry of entries) {
     if (found.length >= SCAN_LIMIT) break
     let id = entry.id
@@ -212,6 +390,7 @@ function unfamiliarTargets(known: Map<string, Target>): { id: string; target: Ta
         familiar: false,
         macApp: 'appPath' in entry ? entry.appPath : undefined,
         winLnk: 'lnkPath' in entry ? entry.lnkPath : undefined,
+        winAppId: 'appId' in entry ? entry.appId : undefined,
         run: () => entry.open()
       }
     })
@@ -221,6 +400,8 @@ function unfamiliarTargets(known: Map<string, Target>): { id: string; target: Ta
 
 function locateChrome(): Target | null {
   if (process.platform === 'win32') {
+    const start = winStart('chrome')
+    if (start) return appIdTarget('Chrome', start, 'chrome')
     const exe = firstExisting([
       join(programFiles(), 'Google', 'Chrome', 'Application', 'chrome.exe'),
       join(programFilesX86(), 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -251,8 +432,11 @@ function locateBrowser(): Target | null {
 
 function locateCalculator(): Target | null {
   if (process.platform === 'win32') {
+    // Windows 10/11 Calculator is a Store app; calc.exe is a stub that starts it.
+    const start = winStart('calculator')
+    if (start) return appIdTarget('Calculator', start, 'calculator')
     const exe = join(system32(), 'calc.exe')
-    return existsSync(exe) ? exeTarget('Calculator', exe, []) : null
+    return existsSync(exe) ? { ...exeTarget('Calculator', exe, []), winFamiliar: 'calculator' } : null
   }
   const path = macApp('Calculator.app')
   return path ? macAppTarget('Calculator', path) : null
@@ -260,6 +444,8 @@ function locateCalculator(): Target | null {
 
 function locateEditor(): Target | null {
   if (process.platform === 'win32') {
+    const start = winStart('editor')
+    if (start) return appIdTarget('Notepad', start, 'editor')
     const exe = join(system32(), 'notepad.exe')
     return existsSync(exe) ? exeTarget('Notepad', exe, []) : null
   }
@@ -300,11 +486,14 @@ function locatePowerPoint(): Target | null {
 
 function locateWhatsApp(): Target | null {
   if (process.platform === 'win32') {
+    // Current WhatsApp for Windows is a Microsoft Store app (5319275A.WhatsAppDesktop).
+    const start = winStart('whatsapp')
+    if (start) return appIdTarget('WhatsApp', start, 'whatsapp')
     const exe = firstExisting([
       join(localAppData(), 'WhatsApp', 'WhatsApp.exe'),
       join(localAppData(), 'Programs', 'WhatsApp', 'WhatsApp.exe')
     ])
-    return exe ? exeTarget('WhatsApp', exe, []) : null
+    return exe ? { ...exeTarget('WhatsApp', exe, []), winFamiliar: 'whatsapp' } : null
   }
   const path = macApp('WhatsApp.app')
   return path ? macAppTarget('WhatsApp', path) : null
@@ -320,6 +509,9 @@ function locateNotes(): Target | null {
 
 function locateOffice(name: string, macName: string, exeName: string): Target | null {
   if (process.platform === 'win32') {
+    const familiarId = name.toLowerCase()
+    const start = winStart(familiarId)
+    if (start) return appIdTarget(name, start, familiarId)
     const exe = firstExisting([
       join(programFiles(), 'Microsoft Office', 'root', 'Office16', exeName),
       join(programFilesX86(), 'Microsoft Office', 'root', 'Office16', exeName),
@@ -405,6 +597,27 @@ function scanMac(): { id: string; name: string; appPath: string; open: () => Pro
       const id = `app-${slug(name)}`
       found.push({ id, name, appPath: path, open: () => runCommand('/usr/bin/open', ['-a', path], true) })
     }
+  }
+  return found
+}
+
+/** Start apps (desktop + Store) when readable; Start menu shortcuts otherwise. */
+function windowsEntries(known: Map<string, Target>): { id: string; name: string; appId?: string; lnkPath?: string; open: () => Promise<boolean> }[] {
+  const list = startApps?.apps ?? []
+  if (list.length === 0) return scanWindows()
+  const used = new Set<string>()
+  for (const target of known.values()) if (target.winAppId) used.add(target.winAppId.toLowerCase())
+  const explorer = join(process.env['SystemRoot'] || 'C:\\Windows', 'explorer.exe')
+  const found: { id: string; name: string; appId: string; open: () => Promise<boolean> }[] = []
+  for (const item of list) {
+    if (found.length >= SCAN_LIMIT) break
+    if (used.has(item.appId.toLowerCase()) || isNoiseStartApp(item.name)) continue
+    found.push({
+      id: `app-${slug(item.name)}`,
+      name: item.name,
+      appId: item.appId,
+      open: () => runCommand(existsSync(explorer) ? explorer : 'explorer.exe', [appsFolderArg(item.appId)], false)
+    })
   }
   return found
 }

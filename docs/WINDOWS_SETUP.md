@@ -80,6 +80,7 @@ After install / first run, MIKO stores beta data under:
 Useful files:
 
 - `miko-settings.json` — preferences / setup state  
+- `miko-diagnostics.log` — what MIKO tried and why it failed: shortcut registration, app list (Get-StartApps) and launches, speech helper start/errors, Interactive GPT loads. Hosts and short reasons only — no transcripts, messages or full URLs. **Read this first when something doesn't work.**  
 - `updater.log` — update attempts  
 - feedback export JSON — when no feedback endpoint is configured, reports stay local/exportable  
 
@@ -101,3 +102,18 @@ These remain macOS-only unless a real Windows hook is implemented later:
 - Notes / ChatGPT.app AX typing destinations  
 
 Button-driven `System.Speech` mic, transparent click-through, tray behavior, Store-installed app discovery, and Interactive GPT floating behavior need **live Windows verification** on the owner PC.
+
+## How the Windows paths work (2026-11-22 fixes)
+
+- **Apps:** MIKO reads `Get-StartApps` (desktop + Microsoft Store apps, with their AppUserModelIDs) and launches with `explorer.exe shell:AppsFolder\<AppID>`. Calculator and WhatsApp (Store) are found this way. If the list can't be read, MIKO says so instead of "isn't installed".
+- **Voice:** `resources/listen-win.ps1` picks an installed recognizer (UI language, then en-US / any English). MIKO shows "Listening" only after the helper reports it started. Failures name the fix: Microphone privacy ("Let desktop apps access your microphone"), Sound → Input (default device — System.Speech always uses it), or Speech language (no recognizer installed). Panel failures have **Retry**. Tray → **Talk to MIKO (mic)** works without any shortcut.
+- **Shortcut:** default Ctrl+Shift+R. If another app owns it, Setup & Help → shortcut step offers Ctrl+Alt+M, Ctrl+Shift+M or Alt+Shift+M and a live press test. Tray Show / Hide always works.
+- **ChatGPT:** "open ChatGPT" and the Interactive GPT button open MIKO's embedded workspace. Load errors show **Retry** and a labelled **Open in browser**; links that leave chatgpt.com are held with an explicit **Open in browser** button — nothing opens Chrome silently.
+
+### Quick manual check (PowerShell)
+
+```powershell
+Get-StartApps | Where-Object Name -match 'Calculator|WhatsApp'
+Add-Type -AssemblyName System.Speech; [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | ForEach-Object { $_.Culture.Name }
+powershell -NoProfile -ExecutionPolicy Bypass -File .\resources\listen-win.ps1 -Mode test
+```

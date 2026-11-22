@@ -20,6 +20,7 @@ export const IPC = {
   setPointerHeld: 'miko:set-pointer-held',
   unpinHome: 'miko:unpin-home',
   listApps: 'miko:list-apps',
+  appsStatus: 'miko:apps-status',
   launchApp: 'miko:launch-app',
   openChatGpt: 'miko:open-chatgpt',
   chatsList: 'miko:chats-list',
@@ -80,6 +81,10 @@ export const IPC = {
   chatgptWebBack: 'miko:chatgpt-web-back',
   chatgptWebForward: 'miko:chatgpt-web-forward',
   chatgptWebReload: 'miko:chatgpt-web-reload',
+  chatgptWebRetry: 'miko:chatgpt-web-retry',
+  chatgptWebOpenBrowser: 'miko:chatgpt-web-open-browser',
+  chatgptWebOpenBlocked: 'miko:chatgpt-web-open-blocked',
+  chatgptWebDismissBlocked: 'miko:chatgpt-web-dismiss-blocked',
   chatgptWebChromeHeight: 'miko:chatgpt-web-chrome-height',
   chatgptWebInsertTranscript: 'miko:chatgpt-web-insert-transcript',
   chatgptWebPasteClipboard: 'miko:chatgpt-web-paste-clipboard',
@@ -105,6 +110,7 @@ export const IPC = {
   voicePermissionGet: 'miko:voice-permission-get',
   voicePermissionRequest: 'miko:voice-permission-request',
   voiceSettingsOpen: 'miko:voice-settings-open',
+  voiceInputDevices: 'miko:voice-input-devices',
   voiceMicTest: 'miko:voice-mic-test',
   summonShortcutGet: 'miko:summon-shortcut-get',
   summonShortcutSet: 'miko:summon-shortcut-set',
@@ -242,7 +248,8 @@ export interface PasteStateEvent {
 
 export interface OpenResult {
   ok: boolean
-  target: 'app' | 'browser' | 'none'
+  /** 'workspace' = MIKO's own Interactive GPT window (Windows has no native ChatGPT app automation). */
+  target: 'app' | 'browser' | 'workspace' | 'none'
   appName: string
 }
 
@@ -300,6 +307,13 @@ export interface TravelDelta {
   reduced: boolean
 }
 
+export interface AppDiscoveryInfo {
+  ok: boolean
+  source: 'start-apps' | 'shortcuts' | 'mac-folders' | 'none'
+  count: number
+  detail: string
+}
+
 export interface AppListing {
   id: string
   name: string
@@ -335,9 +349,20 @@ export interface CloseUpdate {
   status: 'closed' | 'still-open'
 }
 
+/** Listening starts only when the recognizer really started; otherwise a reason and a settings page. */
+export interface ListenStartResult {
+  ok: boolean
+  reason: string
+  help?: 'microphone-privacy' | 'sound-input' | 'speech-language'
+}
+
 export interface SpeechEvent {
   phase: 'transcript' | 'denied' | 'silence' | 'unavailable' | 'cancelled' | 'failed'
   text?: string
+  /** Plain, actionable reason when recognition failed (Windows helper). */
+  detail?: string
+  /** Settings page that fixes the failure; the panel offers it next to Retry. */
+  help?: 'microphone-privacy' | 'sound-input' | 'speech-language'
   /** Listening session number; one result per session. */
   session?: number
 }
@@ -508,6 +533,8 @@ export interface MikoApi {
   unpinHome: () => void
   /** Installed applications the command router can name. Paths stay in the main process. */
   listApps: () => Promise<AppListing[]>
+  /** Whether this computer's app list could be read (Windows: Get-StartApps). */
+  appsStatus: () => Promise<AppDiscoveryInfo>
   /** Launch a validated action id. Unfamiliar apps launch only after confirm. */
   launchApp: (request: LaunchRequest) => Promise<LaunchResult>
   /** Launch or focus the ChatGPT app; falls back to chatgpt.com in the default browser. */
@@ -565,6 +592,7 @@ export interface MikoApi {
     dictateToGpt?: boolean
     openSetup?: boolean
     runTutorial?: boolean
+    listen?: boolean
   }) => void) => () => void
   chatgptWebCollapse: () => Promise<boolean>
   chatgptWebExpand: () => Promise<boolean>
@@ -724,7 +752,7 @@ export interface MikoApi {
   quitApp: () => void
   onCloseUpdate: (listener: (event: CloseUpdate) => void) => () => void
   /** Start a bounded on-device listening session. */
-  listenStart: () => Promise<LaunchResult>
+  listenStart: () => Promise<ListenStartResult>
   listenStop: () => void
   listenCancel: () => void
   onSpeech: (listener: (event: SpeechEvent) => void) => () => void
@@ -758,7 +786,10 @@ export interface MikoApi {
   setupUpdate: (update: import('./setup').SetupUpdate) => Promise<import('./setup').SetupState>
   voicePermissionGet: () => Promise<import('./setup').VoicePermissionStatus>
   voicePermissionRequest: () => Promise<import('./setup').VoicePermissionStatus>
-  voiceSettingsOpen: () => Promise<boolean>
+  /** Opens microphone privacy settings, or a specific page for a speech failure. */
+  voiceSettingsOpen: (help?: 'microphone-privacy' | 'sound-input' | 'speech-language') => Promise<boolean>
+  /** Windows: input devices Windows reports (System.Speech always uses the default input). */
+  voiceInputDevices: () => Promise<{ devices: string[]; detail: string }>
   voiceMicTest: () => Promise<import('./setup').MicTestStatus>
   summonShortcutGet: () => Promise<import('./setup').SummonShortcutStatus>
   summonShortcutSet: (accelerator: string) => Promise<import('./setup').SummonShortcutStatus>

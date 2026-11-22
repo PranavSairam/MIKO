@@ -4,6 +4,7 @@
  */
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   BrowserWindow,
   WebContentsView,
@@ -16,6 +17,7 @@ import {
 } from 'electron'
 import { PET_WINDOW, clamp, clampBounds, type Rect } from '../shared/layout'
 import { hardenWindow } from './security-window'
+import { hostOf, logDiag } from './diagnostics'
 import { petOriginPoint, postToPet, raisePetWindow, restorePetPointerState } from './pet-window'
 import { IPC } from '../shared/api'
 import {
@@ -90,6 +92,13 @@ let dismissedHidden = false
 let chromeDragActive = false
 let chromeDragClearTimer: NodeJS.Timeout | null = null
 let lastDropNote = ''
+/** Guest page failed to load (shown in the chrome with Retry / Open in browser). */
+let loadError = ''
+/**
+ * A link or redirect that would leave chatgpt.com and its sign-in hosts. Never opened
+ * silently: the chrome shows it with an explicitly labelled “Open in browser”.
+ */
+let blockedLink: { url: string; host: string } | null = null
 let dropNoteClearTimer: NodeJS.Timeout | null = null
 /** Explicit one-shot Dictate-to-GPT arm (next MIKO mic final → composer, then clear). */
 let dictateArmed = false
@@ -148,11 +157,20 @@ export function isChatGptWebCollapsed(): boolean {
   return collapsed
 }
 
+/** file:// URLs built from paths must use pathToFileURL: `file://${'C:\\…'}` is not a valid URL on Windows. */
+function chromeFileUrl(): string {
+  return pathToFileURL(join(__dirname, '../renderer/chatgpt-web.html')).href
+}
+
+function rendererDirUrl(): string {
+  return pathToFileURL(join(__dirname, '../renderer/')).href
+}
+
 function chromeUrl(): string {
-  if (app.isPackaged) return `file://${join(__dirname, '../renderer/chatgpt-web.html')}`
+  if (app.isPackaged) return chromeFileUrl()
   const port = process.env['ELECTRON_RENDERER_URL']
   if (port) return `${port}/chatgpt-web.html`
-  return `file://${join(__dirname, '../renderer/chatgpt-web.html')}`
+  return chromeFileUrl()
 }
 
 function guestSession() {
@@ -439,6 +457,58 @@ export function setChatGptWebChromeDragActive(active: boolean): void {
   }
 }
 
+function offerOutsideLink(url: string, via: 'new-window' | 'navigate' | 'redirect'): void {
+  blockedLink = { url: url.slice(0, 2000), host: hostOf(url) }
+  logDiag('gpt', 'link outside the workspace held for the user', { via, host: blockedLink.host })
+  postChromeState()
+}
+
+/** The chrome's explicit “Open in browser” for a held outside link. */
+export async function openChatGptWebBlockedLink(): Promise<boolean> {
+  const link = blockedLink
+  blockedLink = null
+  postChromeState()
+  if (!link) return false
+  logDiag('gpt', 'user opened outside link in browser', { host: link.host })
+  try {
+    await shell.openExternal(link.url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function dismissChatGptWebBlockedLink(): boolean {
+  blockedLink = null
+  postChromeState()
+  return true
+}
+
+/** Retry after a load error: reload the page, or start at chatgpt.com when there is none. */
+export function retryChatGptWebLoad(): boolean {
+  if (!guest || guest.webContents.isDestroyed()) return false
+  loadError = ''
+  postChromeState()
+  const url = guest.webContents.getURL()
+  logDiag('gpt', 'retry load', { host: hostOf(url || CHATGPT_WEB_HOME) })
+  if (url && urlAllowed(url)) guest.webContents.reload()
+  else void guest.webContents.loadURL(CHATGPT_WEB_HOME).catch(() => undefined)
+  return true
+}
+
+/** Explicit, labelled fallback: the current ChatGPT page in the default browser. */
+export async function openChatGptWebInBrowser(): Promise<boolean> {
+  const current = guest && !guest.webContents.isDestroyed() ? guest.webContents.getURL() : ''
+  const url = current && urlAllowed(current) ? current : CHATGPT_WEB_HOME
+  logDiag('gpt', 'user chose Open in browser', { host: hostOf(url) })
+  try {
+    await shell.openExternal(url)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function wireGuest(wc: Electron.WebContents): void {
   wc.on('will-attach-webview', (event) => {
     event.preventDefault()
@@ -446,7 +516,7 @@ function wireGuest(wc: Electron.WebContents): void {
 
   wc.setWindowOpenHandler(({ url }) => {
     if (!urlAllowed(url)) {
-      void shell.openExternal(url).catch(() => undefined)
+      offerOutsideLink(url, 'new-window')
       return { action: 'deny' }
     }
     const opts: BrowserWindowConstructorOptions = {
@@ -471,8 +541,8 @@ function wireGuest(wc: Electron.WebContents): void {
   wc.on('will-navigate', (event, url) => {
     if (!urlAllowed(url)) {
       event.preventDefault()
-      // Do not openExternal for file:// drops — that would look like “opening” the attachment.
-      if (/^https?:/i.test(url)) void shell.openExternal(url).catch(() => undefined)
+      // Do not offer file:// drops — that would look like “opening” the attachment.
+      if (/^https?:/i.test(url)) offerOutsideLink(url, 'navigate')
       return
     }
   })
@@ -480,10 +550,30 @@ function wireGuest(wc: Electron.WebContents): void {
   wc.on('will-redirect', (event, url) => {
     if (!urlAllowed(url)) {
       event.preventDefault()
+      if (/^https?:/i.test(url)) offerOutsideLink(url, 'redirect')
     }
   })
 
+  wc.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 = aborted (a navigation replaced another, or we blocked it) — not a failure.
+    if (!isMainFrame || errorCode === -3) return
+    loadError = `${errorDescription || 'Load failed'} (${errorCode})`
+    logDiag('gpt', 'guest load failed', { code: errorCode, error: errorDescription, host: hostOf(validatedURL) })
+    postChromeState()
+  })
+
+  wc.on('render-process-gone', (_event, details) => {
+    loadError = `The ChatGPT page stopped (${details.reason})`
+    logDiag('gpt', 'guest renderer gone', { reason: details.reason, exitCode: details.exitCode })
+    postChromeState()
+  })
+
   wc.on('did-finish-load', () => {
+    if (loadError) {
+      loadError = ''
+      postChromeState()
+    }
+    logDiag('gpt', 'guest loaded', { host: hostOf(wc.getURL()) })
     persistGuestUrl()
     installGuestDragHelper(wc)
   })
@@ -582,7 +672,7 @@ function ensureWindow(): BrowserWindow {
     try {
       const allowed =
         url === chromeUrl() ||
-        url.startsWith(`file://${join(__dirname, '../renderer/')}`) ||
+        url.startsWith(rendererDirUrl()) ||
         (!app.isPackaged && Boolean(process.env['ELECTRON_RENDERER_URL']) && url.startsWith(process.env['ELECTRON_RENDERER_URL'] || ''))
       if (!allowed) event.preventDefault()
     } catch {
@@ -666,6 +756,8 @@ function ensureWindow(): BrowserWindow {
     guest = null
     collapsed = false
     dismissedHidden = false
+    loadError = ''
+    blockedLink = null
   })
 
   created.once('ready-to-show', () => {
@@ -677,9 +769,13 @@ function ensureWindow(): BrowserWindow {
 
   const resumeUrl = chatgptWebLastUrlSetting()
   const startUrl = resumeUrl && urlAllowed(resumeUrl) ? resumeUrl : CHATGPT_WEB_HOME
-  void created.loadURL(chromeUrl())
+  logDiag('gpt', 'workspace window created', { start: hostOf(startUrl) })
+  void created.loadURL(chromeUrl()).catch((error: unknown) => {
+    logDiag('gpt', 'chrome page failed to load', { error: String(error) })
+  })
   // Preserve guest session: only load start URL for a fresh guest.
-  void view.webContents.loadURL(startUrl)
+  // Failures surface through did-fail-load (error + Retry in the chrome), never a browser fallback.
+  void view.webContents.loadURL(startUrl).catch(() => undefined)
   return created
 }
 
@@ -1203,6 +1299,8 @@ export function chatgptWebStatus(): {
   dictateArmed: boolean
   partition: string
   label: string
+  loadError: string
+  blockedHost: string
 } {
   const visible = Boolean(win && !win.isDestroyed() && win.isVisible())
   return {
@@ -1218,7 +1316,9 @@ export function chatgptWebStatus(): {
     dropNote: lastDropNote,
     dictateArmed,
     partition: PARTITION,
-    label: 'MIKO · ChatGPT'
+    label: 'MIKO · ChatGPT',
+    loadError,
+    blockedHost: blockedLink?.host ?? ''
   }
 }
 

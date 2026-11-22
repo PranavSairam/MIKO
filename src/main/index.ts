@@ -22,6 +22,8 @@ import { startSelectionShortcut } from './selection-shortcut'
 import { disarmPaste } from './selection'
 import { startUpdater, stopUpdater } from './updater'
 import { migrateSettingsIfNeeded } from './session-flush'
+import { listApplications } from './apps'
+import { logDiag } from './diagnostics'
 
 app.setName('MIKO')
 if (process.platform === 'win32') {
@@ -105,6 +107,11 @@ if (!gotLock) {
     }
 
     migrateSettingsIfNeeded()
+    logDiag('startup', 'MIKO started', { version: app.getVersion(), packaged: app.isPackaged, arch: process.arch })
+    if (process.platform === 'win32') {
+      // Read the Windows Start app list now so the first "open Calculator" doesn't wait on PowerShell.
+      void listApplications().catch(() => undefined)
+    }
     const shortcut = registerSummonShortcut(app.getPath('userData'), () => presence.toggle())
     unregisterShortcut = shortcut.unregister
     registerIpc(presence, shortcut)
@@ -124,6 +131,10 @@ if (!gotLock) {
       openSetup: () => {
         presence.show()
         postToPet(IPC.uiHint, { openSetup: true })
+      },
+      listen: () => {
+        presence.show()
+        postToPet(IPC.uiHint, { listen: true })
       },
       show: () => presence.show(),
       hide: () => presence.hide(),

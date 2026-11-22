@@ -21,7 +21,11 @@ const IPC = {
   stateEvent: 'miko:chatgpt-web-state',
   dragActive: 'miko:chatgpt-web-drag-active',
   expandFromDrag: 'miko:chatgpt-web-expand-from-drag',
-  dictateArm: 'miko:chatgpt-web-dictate-arm'
+  dictateArm: 'miko:chatgpt-web-dictate-arm',
+  retry: 'miko:chatgpt-web-retry',
+  openBrowser: 'miko:chatgpt-web-open-browser',
+  openBlocked: 'miko:chatgpt-web-open-blocked',
+  dismissBlocked: 'miko:chatgpt-web-dismiss-blocked'
 } as const
 
 contextBridge.exposeInMainWorld('mikoChatGptWeb', {
@@ -32,6 +36,10 @@ contextBridge.exposeInMainWorld('mikoChatGptWeb', {
   back: () => ipcRenderer.invoke(IPC.back),
   forward: () => ipcRenderer.invoke(IPC.forward),
   reload: () => ipcRenderer.invoke(IPC.reload),
+  retry: () => ipcRenderer.invoke(IPC.retry),
+  openInBrowser: () => ipcRenderer.invoke(IPC.openBrowser),
+  openBlocked: () => ipcRenderer.invoke(IPC.openBlocked),
+  dismissBlocked: () => ipcRenderer.invoke(IPC.dismissBlocked),
   setPinned: (pinned: boolean) => ipcRenderer.invoke(IPC.pin, pinned === true),
   setChromeHeight: (height: number) => ipcRenderer.invoke(IPC.chromeHeight, height),
   setDragActive: (active: boolean) => ipcRenderer.invoke(IPC.dragActive, active === true),

@@ -859,7 +859,7 @@ function matchClose(spoken: string, catalog: CatalogApp[]): CommandResult | null
   const resolved = resolveApp(raw, catalog)
   if (resolved.kind === 'none') return { type: 'missing', name: resolved.label, text: `I can\u2019t find ${resolved.label}.` }
   if (resolved.kind === 'many') return choices(resolved.apps, 'close')
-  if (!resolved.app.installed) return { type: 'missing', name: resolved.app.name, text: `I can\u2019t find ${resolved.app.name}.` }
+  if (!resolved.app.installed) return { type: 'missing', name: resolved.app.name, text: notInstalledText(resolved.app.name) }
   if (forced) return { type: 'force-close', appId: resolved.app.id, name: resolved.app.name }
   return { type: 'close', appId: resolved.app.id, name: resolved.app.name }
 }
@@ -948,12 +948,18 @@ function resolveApp(
     const installed = exact.filter((app) => app.installed)
     if (installed.length === 1) return { kind: 'one', app: installed[0] }
     if (installed.length > 1) return { kind: 'many', apps: installed }
-    return { kind: 'none', label: exact[0].name }
+    // Known app, none installed → caller reports "isn't installed" (not a lookup miss).
+    return { kind: 'one', app: exact[0] }
   }
   const loose = catalog.filter((app) => app.installed && nameHit(app, query))
   if (loose.length === 1) return { kind: 'one', app: loose[0] }
   if (loose.length > 1) return { kind: 'many', apps: loose }
   return { kind: 'none', label: titleCase(query) }
+}
+
+/** A known app (Calculator, WhatsApp…) that this computer doesn't have — not a lookup failure. */
+export function notInstalledText(name: string): string {
+  return `${name} isn\u2019t installed on this computer.`
 }
 
 function aliases(app: CatalogApp): string[] {
@@ -970,7 +976,7 @@ function nameHit(app: CatalogApp, query: string): boolean {
 }
 
 function oneMatch(app: CatalogApp): CommandResult {
-  if (!app.installed) return { type: 'missing', name: app.name, text: `I can\u2019t find ${app.name}.` }
+  if (!app.installed) return { type: 'missing', name: app.name, text: notInstalledText(app.name) }
   if (!app.familiar) return { type: 'confirm', appId: app.id, name: app.name }
   return { type: 'launch', appId: app.id, name: app.name }
 }

@@ -1,7 +1,8 @@
 import { app, BrowserWindow, clipboard, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type AppListing, type HitRect, type LaunchResult, type PanelLayout } from '../shared/api'
 import { parseActionId } from '../shared/commands'
-import { launchApplication, listApplications } from './apps'
+import { logDiag } from './diagnostics'
+import { appDiscoveryStatus, launchApplication, listApplications } from './apps'
 import { insertIntoChatGpt, openChatGpt, openChatUrl } from './chatgpt'
 import {
   cancelTypeDest,
@@ -61,6 +62,10 @@ import {
   chatgptWebInsertTranscript,
   chatgptWebPasteClipboard,
   chatgptWebReload,
+  dismissChatGptWebBlockedLink,
+  openChatGptWebBlockedLink,
+  openChatGptWebInBrowser,
+  retryChatGptWebLoad,
   chatgptWebStatus,
   chatgptWebSubmitCurrentDraft,
   chatgptWebSubmitGeneration,
@@ -82,6 +87,7 @@ import { comeToFront, enableFollow } from './follow'
 import { requestClose, watchClose } from './quit'
 import {
   cancelListening,
+  listInputDevices,
   openVoicePrivacySettings,
   runMicTest,
   startListening,
@@ -281,6 +287,10 @@ export function registerIpc(presence: {
     if (!trusted(event)) return Promise.resolve([])
     return listApplications()
   })
+  ipcMain.handle(IPC.appsStatus, (event) => {
+    if (!trusted(event)) return { ok: false, source: 'none', count: 0, detail: 'Not allowed.' }
+    return appDiscoveryStatus()
+  })
 
   ipcMain.handle(IPC.launchApp, (event, payload: unknown): Promise<LaunchResult> => {
     if (!trusted(event)) return Promise.resolve({ ok: false, reason: 'That action is not available.' })
@@ -291,6 +301,16 @@ export function registerIpc(presence: {
 
   ipcMain.handle(IPC.openChatGpt, (event) => {
     if (!trusted(event)) return { ok: false, target: 'none', appName: '' }
+    if (process.platform !== 'darwin') {
+      // Windows: "open ChatGPT" uses MIKO's embedded workspace — never a silent switch to Chrome.
+      logDiag('gpt', 'open ChatGPT routed to the Interactive GPT workspace')
+      setPanelOpen(false)
+      postToPet(IPC.uiHint, { tuckPanel: true })
+      closeGptLiveWindow()
+      openChatGptWebWindow({ focus: true })
+      raisePetWindow()
+      return { ok: true, target: 'workspace', appName: 'Interactive GPT' }
+    }
     return openChatGpt()
   })
 
@@ -614,6 +634,16 @@ export function registerIpc(presence: {
   )
   ipcMain.handle(IPC.chatgptWebReload, (event) =>
     trustedChatGptWeb(event) ? chatgptWebReload() : false
+  )
+  ipcMain.handle(IPC.chatgptWebRetry, (event) => (trustedChatGptWeb(event) ? retryChatGptWebLoad() : false))
+  ipcMain.handle(IPC.chatgptWebOpenBrowser, (event) =>
+    trustedChatGptWeb(event) ? openChatGptWebInBrowser() : false
+  )
+  ipcMain.handle(IPC.chatgptWebOpenBlocked, (event) =>
+    trustedChatGptWeb(event) ? openChatGptWebBlockedLink() : false
+  )
+  ipcMain.handle(IPC.chatgptWebDismissBlocked, (event) =>
+    trustedChatGptWeb(event) ? dismissChatGptWebBlockedLink() : false
   )
   ipcMain.handle(IPC.chatgptWebChromeHeight, (event, height: unknown) => {
     if (!trustedChatGptWeb(event) || typeof height !== 'number') return false
@@ -1114,7 +1144,16 @@ export function registerIpc(presence: {
     }
     return voicePermissionStatus(true)
   })
-  ipcMain.handle(IPC.voiceSettingsOpen, (event) => (trusted(event) ? openVoicePrivacySettings() : false))
+  ipcMain.handle(IPC.voiceSettingsOpen, (event, help: unknown) =>
+    trusted(event)
+      ? openVoicePrivacySettings(
+          help === 'microphone-privacy' || help === 'sound-input' || help === 'speech-language' ? help : undefined
+        )
+      : false
+  )
+  ipcMain.handle(IPC.voiceInputDevices, (event) =>
+    trusted(event) ? listInputDevices() : { devices: [], detail: 'Not allowed.' }
+  )
   ipcMain.handle(IPC.voiceMicTest, (event) =>
     trusted(event)
       ? runMicTest()

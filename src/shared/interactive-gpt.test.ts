@@ -26,3 +26,18 @@ describe('Interactive GPT local controls', () => {
     assert.equal(parseInteractiveGptLocalAction('Dictate into GPT: open WhatsApp'), null)
   })
 })
+
+describe('Interactive GPT phrases as Windows dictation writes them', () => {
+  it('opens the workspace for spelled-out and bare forms (never the browser path)', () => {
+    for (const phrase of ['Open interactive G P T.', 'interactive g.p.t.', 'open the interactive chat GPT', 'Interactive GPT', 'launch interactive gpt window']) {
+      assert.equal(parseInteractiveGptLocalAction(phrase), 'open', phrase)
+    }
+    assert.equal(parseInteractiveGptLocalAction('hide interactive g p t'), 'hide')
+  })
+
+  it('leaves plain ChatGPT opens and prompts to the router', () => {
+    assert.equal(parseInteractiveGptLocalAction('open chatgpt'), null)
+    assert.equal(parseInteractiveGptLocalAction('Ask interactive GPT why the sky is blue'), null)
+    assert.equal(parseInteractiveGptLocalAction('open calculator'), null)
+  })
+})

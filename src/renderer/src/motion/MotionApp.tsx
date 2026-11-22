@@ -1188,6 +1188,26 @@ export function MotionApp() {
     })
   }, [])
 
+  /** Mic click, tray "Talk to MIKO", or Retry: one start path for every surface. */
+  const startMicRef = useRef<() => void>(() => undefined)
+  startMicRef.current = () => {
+    // "Listening" only after main confirms recognition started (Windows waits for the helper).
+    setListenDetail('Starting the microphone\u2026')
+    void window.miko.listenStart().then((result) => {
+      if (!result.ok) {
+        setListening(false)
+        setListenDetail('')
+        // Empty reason = the user cancelled while it was starting.
+        if (result.reason) {
+          pushEntry({ id: 0, kind: 'voice-problem', text: result.reason, ...(result.help ? { help: result.help } : {}) })
+        }
+        return
+      }
+      setListenDetail(result.reason)
+      setListening(true)
+    })
+  }
+
   // Interactive GPT open → tuck the regular chat panel (workspace is the reading surface).
   useEffect(() => {
     if (typeof window.miko?.onUiHint !== 'function') return
@@ -1196,6 +1216,12 @@ export function MotionApp() {
       if (typeof hint.dictateToGpt === 'boolean') {
         // Chrome / main arm the session; pet only syncs the ref (notes come from the arming UI/command).
         dictateToGptRef.current = hint.dictateToGpt
+      }
+      if (hint.listen) {
+        void (async () => {
+          if (!panelRef.current) await applyPanel(true, 'chat')
+          startMicRef.current()
+        })()
       }
       if (hint.openSetup || hint.runTutorial) {
         void (async () => {
@@ -1518,14 +1544,15 @@ export function MotionApp() {
       }
       if (event.phase === 'cancelled') return
       const text =
-        event.phase === 'denied'
+        event.detail ||
+        (event.phase === 'denied'
           ? 'Microphone access was denied.'
           : event.phase === 'silence'
             ? 'I didn\u2019t hear anything.'
             : event.phase === 'unavailable'
               ? 'Speech recognition isn\u2019t available.'
-              : 'Speech recognition stopped.'
-      pushEntry({ id: 0, kind: 'note', text })
+              : 'Speech recognition stopped.')
+      pushEntry({ id: 0, kind: 'voice-problem', text, ...(event.help ? { help: event.help } : {}) })
     })
     const stopClose = window.miko.onCloseUpdate((event) => {
       setEntries((items) =>
@@ -5337,7 +5364,9 @@ export function MotionApp() {
           ? 'I couldn\u2019t open ChatGPT.'
           : result.target === 'app'
             ? 'Opened the ChatGPT app.'
-            : `The ChatGPT app isn\u2019t installed, so I opened chatgpt.com in ${result.appName || 'your browser'}.`
+            : result.target === 'workspace'
+              ? 'Opened ChatGPT inside MIKO (Interactive GPT). Say \u201copen ChatGPT in Chrome\u201d if you want the browser instead.'
+              : `The ChatGPT app isn\u2019t installed, so I opened chatgpt.com in ${result.appName || 'your browser'}.`
       })
       return
     }
@@ -5498,6 +5527,18 @@ export function MotionApp() {
         options: decision.options.map((chat) => ({ id: chat.name, name: chat.name, familiar: true }))
       })
       return
+    }
+    if (decision.type === 'missing' && typeof window.miko.appsStatus === 'function') {
+      // "Not installed" is only true when the app list was actually readable on this computer.
+      const status = await window.miko.appsStatus().catch(() => null)
+      if (status && !status.ok) {
+        pushEntry({
+          id: 0,
+          kind: 'note',
+          text: `I couldn’t check which apps are installed on this computer (${status.detail || 'app list unavailable'}), so I can’t open ${decision.name} yet. Try again in a moment.`
+        })
+        return
+      }
     }
     if (decision.type === 'unknown' || decision.type === 'missing') {
       pushEntry({ id: 0, kind: 'note', text: decision.text })
@@ -7143,16 +7184,9 @@ export function MotionApp() {
           }}
           listening={listening}
           listenDetail={listenDetail}
-          onListen={() => {
-            void window.miko.listenStart().then((result) => {
-              if (!result.ok) {
-                pushEntry({ id: 0, kind: 'note', text: result.reason })
-                setListening(false)
-                return
-              }
-              setListenDetail(result.reason)
-              setListening(true)
-            })
+          onListen={() => startMicRef.current()}
+          onVoiceHelp={(help) => {
+            void window.miko.voiceSettingsOpen(help)
           }}
           onListenStop={() => window.miko.listenStop()}
           onListenCancel={() => {

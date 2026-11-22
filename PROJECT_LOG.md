@@ -91,6 +91,66 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 
 ## Session log
 
+### 2026-11-22: Windows fixes (code-level, made on the Mac) — apps, voice, shortcuts, Interactive GPT, setup
+- **Owner ask:** Fix MIKO on the Windows PC: voice dead, shortcuts dead, "Open Calculator/WhatsApp" → "I can't find …", Interactive GPT opens Chrome. Keep the Mac working. Local changes only, no commit.
+- **Important:** this session ran on the MacBook, not the Windows PC (owner chose "fix code from Mac"). Causes below come from reading the code. **None were reproduced on Windows**, so every live Windows check is UNTESTED. Not done until those pass on the PC.
+
+#### Causes found
+- **"I can't find Calculator/WhatsApp" (all apps).** `src/main/apps.ts` sends 11 familiar apps plus up to 120 Start-menu shortcuts. Preload `parseListings` returned `[]` for any array over 120, or if any single item was invalid. A normal Windows Start menu passes 120, so the renderer got an empty catalog and every app read as missing. The Mac stays under the cap.
+- **WhatsApp (and Store apps).** WhatsApp for Windows is a Microsoft Store package. Only `%LOCALAPPDATA%\WhatsApp\WhatsApp.exe` paths were checked, and Store apps have no stable exe.
+- **Voice.** `resources/listen-win.ps1` set `$script:text` / `$script:done` inside `Register-ObjectEvent -Action` blocks. Those run in their own module scope, so the loop never saw a result: 8 s wait, then always "silence". `StreamReader.Peek()` on the stdin pipe can block. MIKO also showed "Listening" before the helper started, and errors were generic ("unavailable"). There was no recognizer choice, so a PC whose UI language has no recognizer failed outright.
+- **Interactive GPT → Chrome.** On Windows `openChatGpt()` (no ChatGPT.app) silently called `shell.openExternal(chatgpt.com)`, i.e. Chrome. Dictated "interactive G P T" / "interactive chat GPT" didn't match the strict local phrase and fell through to that path. Inside the workspace, any link or redirect off the allowlist was also opened in the browser silently. The workspace chrome URL was built as `` `file://${path}` `` (invalid with `C:\` paths).
+- **Shortcuts.** The registration code looks right, and the cause on the PC is unknown. Registration results weren't logged, so there was no evidence. Setup hard-coded "Ctrl+Shift+R" even when registration had failed, and the Mail dictation hint advertised Caps Lock + A on Windows.
+
+#### Fixes
+- **Diagnostics:** new `src/main/diagnostics.ts` writes `userData/miko-diagnostics.log` (rotates at 256 KB). It covers startup, shortcut registration (ok / taken), Start app read (count, ms, error), launches (via appsfolder/exe, running check), speech start/ready/errors (recognizer, codes, stderr), and GPT loads / failures / held links (host only). No transcripts or message text.
+- **Apps:** new `src/shared/win-apps.ts`.
+  - Discovery and launch: `Get-StartApps` JSON parse, launch with `explorer.exe shell:AppsFolder\<AppID>`. Familiar apps (Calculator, WhatsApp, Word/Excel/PowerPoint, Notepad, Chrome) are matched by name or package identity, with the old exe paths as fallback. Uninstall/help entries are filtered out.
+  - Launch check: a tasklist check confirms the app started ("can't see it running yet" vs "found but didn't start").
+  - Preload parsing moved to `src/shared/app-listing.ts`: cap 400, skips bad items.
+  - Missing vs failed: the router says "X isn't installed on this computer" for known-but-absent apps. The renderer asks `appsStatus` and says "couldn't check which apps are installed" when the list couldn't be read.
+  - The Windows app list is warmed at startup.
+- **Voice:**
+  - `listen-win.ps1` rewritten: modes listen/test/devices, recognizer choice (UI culture → en-US → en-* → first), `{"ready":true}` only after `RecognizeAsync`. It reads events with Get-Event and stdin with `ReadLineAsync`, tracks audio level (no sound → "no-audio"), and cleans up and disposes on cancel, stdin close or finish.
+  - `src/shared/win-speech.ts` maps errors to actionable text plus a settings page (Microphone privacy / Sound input / Speech language).
+  - `speech.ts`: Windows start waits for ready (8 s) and returns the reason and help on failure. Cancel sends `cancel`, then kills after 700 ms. One transcript per session.
+  - Panel: a new `voice-problem` entry with **Retry** and the right settings button. Tray **Talk to MIKO (mic)** shares the same start path.
+  - Setup mic step: pass/fail with the transcript, Retry, settings, and **Choose microphone** (lists Windows input devices and opens Sound settings; System.Speech uses the default input).
+- **Shortcuts:**
+  - Registration attempts logged; the status reports presses.
+  - Setup "Show & hide shortcut" step: the real registered shortcut, a live press test (✓ when pressed), and alternatives (Ctrl+Shift+R, Ctrl+Alt+M, Ctrl+Shift+M, Alt+Shift+M).
+  - The header shows only the active shortcut. The Windows example is "open Calculator". The Mail Caps Lock hint is Mac-only.
+- **Interactive GPT:**
+  - Non-darwin "open ChatGPT" opens the embedded workspace (`target: 'workspace'`). `chatgpt.ts openChatGpt` never opens a browser off macOS, so GPT Mode can't fall into Chrome either.
+  - Spoken variants are normalized ("G P T", "g.p.t.", "chat GPT", bare "Interactive GPT").
+  - Off-allowlist links and redirects are held, with a labelled **Open in browser** / Dismiss in the chrome. Guest `did-fail-load` / `render-process-gone` show an error with **Retry** and a labelled **Open in browser**.
+  - The chrome URL uses `pathToFileURL`.
+  - **Mac behavior change:** clicking an outside link inside the workspace now asks first, instead of opening the browser at once.
+- **Setup again:** unchanged mechanism (tray Setup & Help…, Preferences Run tutorial again). It only resets the tutorial step, never settings or the GPT web session.
+- **Docs:** `docs/WINDOWS_SETUP.md` covers the diagnostics log, how each Windows path works, and quick PowerShell checks.
+
+#### Checks (Mac)
+- `npm run typecheck` pass.
+- `npm test` **373** pass. New: `win-apps.test.ts`, `win-speech.test.ts`, Interactive GPT dictation phrases.
+- `npm run build` pass. `npm run pack:win-check` pass.
+- Mac startup smoke in a scratch profile (`MIKO_NO_HELPERS=1`): no errors, diagnostics log written.
+- `listen-win.ps1` was **not executed or syntax-checked** (no PowerShell on this Mac). Static tests guard only against the old bugs.
+
+#### Live acceptance on the Windows PC
+| Check | Result |
+|---|---|
+| Tray Show/Hide and registered shortcut, repeatedly | UNTESTED |
+| Mic captures a harmless phrase, transcript shown | UNTESTED |
+| Voice "Open Calculator" launches Calculator once | UNTESTED |
+| Typed app launch | UNTESTED |
+| WhatsApp opens if installed / accurately reports unavailable | UNTESTED |
+| Interactive GPT opens inside MIKO, no Chrome | UNTESTED |
+| Pet/panel clickable after opening and closing GPT | UNTESTED |
+| Denied mic access and cancellation recover cleanly | UNTESTED |
+| Mac regressions (voice, apps, GPT) in the real app | UNTESTED (startup smoke only) |
+
+- **Next on the PC:** pull, `npm ci`, `npm run build && npm start`. Run the table above, and send `%APPDATA%\miko\miko-diagnostics.log` (dev) or `%APPDATA%\MIKO-Beta\miko-diagnostics.log` (installed) for anything that fails.
+
 ### 2026-11-22: Windows readiness, first-run setup, packaging handoff
 - **Owner ask:** Harden Windows startup/capabilities; first-launch setup/tutorial; NSIS packaging + docs; verify dirty worktree; commit/push to `origin/main` (no force, no release). Preserve Mac features and pending WA work.
 

@@ -55,7 +55,17 @@ export interface SummonShortcutStatus {
   active: string | null
   ok: boolean
   detail: string
+  /** Times the registered shortcut fired since MIKO started (setup's live test). */
+  presses?: number
 }
+
+/** Shortcuts offered when the default is taken by another app. All need modifiers. */
+export const SUMMON_ALTERNATIVES = [
+  'CommandOrControl+Shift+R',
+  'CommandOrControl+Alt+M',
+  'CommandOrControl+Shift+M',
+  'Alt+Shift+M'
+] as const
 
 /** Outcome of an explicit Try microphone action (native helper only). */
 export type MicTestOutcome = 'not-tested' | 'transcript-confirmed' | 'denied' | 'silence' | 'unavailable'
@@ -64,6 +74,8 @@ export interface MicTestStatus {
   outcome: MicTestOutcome
   transcript: string
   detail: string
+  /** Settings page that fixes a failed test (Windows). */
+  help?: 'microphone-privacy' | 'sound-input' | 'speech-language'
 }
 
 export function emptyMicTestStatus(partial?: Partial<MicTestStatus>): MicTestStatus {

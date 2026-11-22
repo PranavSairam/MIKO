@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
+  type AppDiscoveryInfo,
   type AppListing,
+  type ListenStartResult,
   type HitRect,
   type SelectionEvent,
   type PasteStateEvent,
@@ -51,6 +53,7 @@ import {
   type PasteFileWhatsAppResult
 } from '../shared/api'
 import { parseActionId } from '../shared/commands'
+import { parseListings } from '../shared/app-listing'
 
 const api: MikoApi = {
   moveBy: (delta: MoveDelta): void => {
@@ -98,6 +101,16 @@ const api: MikoApi = {
   },
   unpinHome: (): void => {
     ipcRenderer.send(IPC.unpinHome)
+  },
+  appsStatus: async (): Promise<AppDiscoveryInfo> => {
+    const raw = (await ipcRenderer.invoke(IPC.appsStatus)) as Partial<AppDiscoveryInfo> | null
+    const sources = ['start-apps', 'shortcuts', 'mac-folders', 'none'] as const
+    return {
+      ok: raw?.ok === true,
+      source: sources.find((item) => item === raw?.source) ?? 'none',
+      count: typeof raw?.count === 'number' ? raw.count : 0,
+      detail: typeof raw?.detail === 'string' ? raw.detail.slice(0, 200) : ''
+    }
   },
   listApps: async (): Promise<AppListing[]> => {
     const payload: unknown = await ipcRenderer.invoke(IPC.listApps)
@@ -228,6 +241,7 @@ const api: MikoApi = {
     dictateToGpt?: boolean
     openSetup?: boolean
     runTutorial?: boolean
+    listen?: boolean
   }) => void): (() => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
       if (!payload || typeof payload !== 'object') return
@@ -236,12 +250,14 @@ const api: MikoApi = {
         dictateToGpt?: boolean
         openSetup?: boolean
         runTutorial?: boolean
+        listen?: boolean
       }
       listener({
         tuckPanel: p.tuckPanel === true,
         dictateToGpt: typeof p.dictateToGpt === 'boolean' ? p.dictateToGpt : undefined,
         openSetup: p.openSetup === true,
-        runTutorial: p.runTutorial === true
+        runTutorial: p.runTutorial === true,
+        listen: p.listen === true
       })
     }
     ipcRenderer.on(IPC.uiHint, wrapped)
@@ -486,9 +502,11 @@ const api: MikoApi = {
     ipcRenderer.on(IPC.closeUpdate, wrapped)
     return () => ipcRenderer.removeListener(IPC.closeUpdate, wrapped)
   },
-  listenStart: async (): Promise<LaunchResult> => {
+  listenStart: async (): Promise<ListenStartResult> => {
     const payload: unknown = await ipcRenderer.invoke(IPC.listenStart)
-    return parseLaunchResult(payload)
+    const base = parseLaunchResult(payload)
+    const help = (payload as { help?: unknown } | null)?.help
+    return help === 'microphone-privacy' || help === 'sound-input' || help === 'speech-language' ? { ...base, help } : base
   },
   listenStop: (): void => {
     ipcRenderer.send(IPC.listenStop)
@@ -598,7 +616,16 @@ const api: MikoApi = {
     (await ipcRenderer.invoke(IPC.voicePermissionGet)) as Awaited<ReturnType<MikoApi['voicePermissionGet']>>,
   voicePermissionRequest: async () =>
     (await ipcRenderer.invoke(IPC.voicePermissionRequest)) as Awaited<ReturnType<MikoApi['voicePermissionRequest']>>,
-  voiceSettingsOpen: async () => (await ipcRenderer.invoke(IPC.voiceSettingsOpen)) === true,
+  voiceSettingsOpen: async (help?: 'microphone-privacy' | 'sound-input' | 'speech-language') =>
+    (await ipcRenderer.invoke(
+      IPC.voiceSettingsOpen,
+      help === 'microphone-privacy' || help === 'sound-input' || help === 'speech-language' ? help : undefined
+    )) === true,
+  voiceInputDevices: async () => {
+    const raw = (await ipcRenderer.invoke(IPC.voiceInputDevices)) as { devices?: unknown; detail?: unknown } | null
+    const devices = Array.isArray(raw?.devices) ? raw.devices.filter((item): item is string => typeof item === 'string').slice(0, 20) : []
+    return { devices, detail: typeof raw?.detail === 'string' ? raw.detail.slice(0, 300) : '' }
+  },
   voiceMicTest: async () =>
     (await ipcRenderer.invoke(IPC.voiceMicTest)) as Awaited<ReturnType<MikoApi['voiceMicTest']>>,
   summonShortcutGet: async () =>
@@ -829,7 +856,7 @@ function parseSelection(p: Partial<SelectionEvent> | null): SelectionEvent {
 
 function parseOpen(value: unknown): OpenResult {
   const v = (value ?? {}) as { ok?: unknown; target?: unknown; appName?: unknown }
-  const target = v.target === 'app' || v.target === 'browser' ? v.target : 'none'
+  const target = v.target === 'app' || v.target === 'browser' || v.target === 'workspace' ? v.target : 'none'
   return { ok: v.ok === true, target, appName: typeof v.appName === 'string' ? v.appName.slice(0, 80) : '' }
 }
 
@@ -945,21 +972,6 @@ function parseEdit(value: unknown): ChatEditResult {
   return { ok: v.ok === true, reason: typeof v.reason === 'string' ? v.reason : '', list: parseChats(v.list) }
 }
 
-function parseListings(value: unknown): AppListing[] {
-  if (!Array.isArray(value) || value.length > 120) return []
-  const apps: AppListing[] = []
-  for (const item of value) {
-    if (!item || typeof item !== 'object') return []
-    const { id, name, installed, familiar, aliases } = item as Partial<AppListing>
-    const action = parseActionId(id)
-    if (!action || typeof name !== 'string' || name.length === 0 || name.length > 80) return []
-    if (typeof installed !== 'boolean' || typeof familiar !== 'boolean' || !Array.isArray(aliases)) return []
-    if (aliases.length > 24 || aliases.some((alias) => typeof alias !== 'string' || alias.length > 80)) return []
-    apps.push({ id: action, name, installed, familiar, aliases: aliases as string[] })
-  }
-  return apps
-}
-
 function parseClose(value: unknown): CloseResult {
   const fallback: CloseResult = { status: 'failed', name: 'That app' }
   if (!value || typeof value !== 'object') return fallback
@@ -1004,7 +1016,11 @@ function parseSpeech(value: unknown): SpeechEvent | null {
     if (typeof text !== 'string' || text.trim().length === 0) return null
     return { phase, text: text.trim().slice(0, 400), session }
   }
-  return { phase, session }
+  const rawDetail = (value as { detail?: unknown }).detail
+  const rawHelp = (value as { help?: unknown }).help
+  const help =
+    rawHelp === 'microphone-privacy' || rawHelp === 'sound-input' || rawHelp === 'speech-language' ? rawHelp : undefined
+  return { phase, session, ...(typeof rawDetail === 'string' && rawDetail ? { detail: rawDetail.slice(0, 500) } : {}), ...(help ? { help } : {}) }
 }
 
 function parseFollow(value: unknown): FollowEvent | null {

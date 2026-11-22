@@ -1,4 +1,6 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { shell } from 'electron'
 import { IPC } from '../shared/api'
 import {
@@ -7,6 +9,8 @@ import {
   type PermissionState,
   type VoicePermissionStatus
 } from '../shared/setup'
+import { parseWinSpeechLine, speechHelpUrl, winSpeechProblem, type SpeechHelp, type WinSpeechLine } from '../shared/win-speech'
+import { logDiag } from './diagnostics'
 import { compileHelper, launchHelper, sourcePath, type HelperSpec } from './helper-app'
 import { postToPet, restorePetPointerState } from './pet-window'
 
@@ -16,7 +20,9 @@ import { postToPet, restorePetPointerState } from './pet-window'
  * macOS uses SFSpeechRecognizer with requiresOnDeviceRecognition, in the
  * "MIKO Listen" helper app (see helper-app.ts for why it is launched through
  * LaunchServices). Stop is SIGUSR1, cancel is SIGTERM.
- * Windows uses the local System.Speech dictation engine.
+ * Windows uses the local System.Speech dictation engine (resources/listen-win.ps1).
+ * On Windows MIKO says "Listening" only after the helper reports that recognition
+ * really started; failures carry a plain reason and the settings page that fixes them.
  * Read-aloud uses the renderer's local speechSynthesis voices.
  */
 
@@ -26,6 +32,8 @@ interface Session {
 }
 
 const LISTEN_MS = 12000
+/** Windows: the helper must report {"ready":true} within this time or the start fails. */
+const WIN_READY_MS = 8000
 /** Hold-to-talk (Caps Lock + A). The helper caps itself at 55 s. */
 const HOLD_MS = 60000
 
@@ -168,10 +176,10 @@ export async function voicePermissionStatus(request = false): Promise<VoicePermi
   })
 }
 
-export async function openVoicePrivacySettings(): Promise<boolean> {
+export async function openVoicePrivacySettings(help?: SpeechHelp): Promise<boolean> {
   const url =
     process.platform === 'win32'
-      ? 'ms-settings:privacy-microphone'
+      ? speechHelpUrl(help ?? 'microphone-privacy') || 'ms-settings:privacy-microphone'
       : process.platform === 'darwin'
         ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
         : ''
@@ -195,116 +203,7 @@ export async function runMicTest(): Promise<MicTestStatus> {
       detail: 'MIKO is already listening. Stop that first, then try again.'
     })
   }
-  if (process.platform === 'win32') {
-    const script = sourcePath('listen-win.ps1')
-    if (!script) {
-      return emptyMicTestStatus({
-        outcome: 'unavailable',
-        detail: 'The Windows System.Speech helper is missing.'
-      })
-    }
-    return new Promise((resolve) => {
-      const proc = spawn(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
-        { shell: false, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
-      )
-      let buffer = ''
-      let settled = false
-      const finish = (status: MicTestStatus): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        try {
-          proc.kill()
-        } catch {
-          // ignore
-        }
-        resolve(status)
-      }
-      const timer = setTimeout(
-        () =>
-          finish(
-            emptyMicTestStatus({
-              outcome: 'silence',
-              detail: 'No speech heard during the microphone test.'
-            })
-          ),
-        10_000
-      )
-      proc.stdout?.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8')
-        let at = buffer.indexOf('\n')
-        while (at >= 0) {
-          const line = buffer.slice(0, at).trim()
-          buffer = buffer.slice(at + 1)
-          at = buffer.indexOf('\n')
-          if (!line) continue
-          try {
-            const parsed = JSON.parse(line) as { text?: unknown; error?: unknown }
-            if (typeof parsed.text === 'string' && parsed.text.trim()) {
-              const transcript = parsed.text.trim().slice(0, 400)
-              finish(
-                emptyMicTestStatus({
-                  outcome: 'transcript-confirmed',
-                  transcript,
-                  detail: `Heard: “${transcript}”. Recognition stays on this PC and is not saved.`
-                })
-              )
-              return
-            }
-            if (parsed.error === 'denied') {
-              finish(
-                emptyMicTestStatus({
-                  outcome: 'denied',
-                  detail: 'Microphone access was denied. Open Windows privacy settings to allow it.'
-                })
-              )
-              return
-            }
-            if (parsed.error === 'silence') {
-              finish(
-                emptyMicTestStatus({
-                  outcome: 'silence',
-                  detail: 'No speech heard. Check the mic and try again.'
-                })
-              )
-              return
-            }
-            if (parsed.error === 'unavailable' || parsed.error === 'cancelled') {
-              finish(
-                emptyMicTestStatus({
-                  outcome: 'unavailable',
-                  detail: 'System.Speech could not start on this PC.'
-                })
-              )
-              return
-            }
-          } catch {
-            // ignore non-JSON
-          }
-        }
-      })
-      proc.once('error', () =>
-        finish(
-          emptyMicTestStatus({
-            outcome: 'unavailable',
-            detail: 'Could not start the Windows speech helper.'
-          })
-        )
-      )
-      proc.once('close', () => {
-        if (!settled) {
-          finish(
-            emptyMicTestStatus({
-              outcome: 'silence',
-              detail: 'No speech heard during the microphone test.'
-            })
-          )
-        }
-      })
-    })
-  }
+  if (process.platform === 'win32') return runWindowsMicTest()
   if (process.platform === 'darwin') {
     const status = await voicePermissionStatus(true)
     if (status.microphone === 'denied' || status.speechRecognition === 'denied') {
@@ -338,7 +237,7 @@ export async function runMicTest(): Promise<MicTestStatus> {
   })
 }
 
-export async function startListening(hold = false): Promise<{ ok: boolean; reason: string }> {
+export async function startListening(hold = false): Promise<{ ok: boolean; reason: string; help?: SpeechHelp }> {
   if (session) return { ok: true, reason: listeningDetail(hold) }
   if (process.platform === 'darwin') {
     const helper = compileHelper(LISTEN_HELPER)
@@ -346,12 +245,7 @@ export async function startListening(hold = false): Promise<{ ok: boolean; reaso
     if (!launchMac(helper.root, hold)) return { ok: false, reason: 'On-device speech recognition is not available.' }
     return { ok: true, reason: listeningDetail(hold) }
   }
-  if (process.platform === 'win32') {
-    const script = sourcePath('listen-win.ps1')
-    if (!script) return { ok: false, reason: 'Speech recognition is not available.' }
-    launchChild('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script])
-    return { ok: true, reason: listeningDetail() }
-  }
+  if (process.platform === 'win32') return startWindowsSession()
   return { ok: false, reason: 'Speech recognition is not available.' }
 }
 
@@ -422,34 +316,6 @@ function launchMac(root: string, hold: boolean): boolean {
   return true
 }
 
-function launchChild(command: string, args: string[]): void {
-  const proc: ChildProcess = spawn(command, args, { shell: false, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
-  const hooks = track(
-    {
-      stop: () => {
-        proc.stdin?.write('stop\n')
-      },
-      kill: () => {
-        proc.kill('SIGTERM')
-      }
-    },
-    LISTEN_MS
-  )
-  let buffer = ''
-  proc.stdout?.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8')
-    let splitAt = buffer.indexOf('\n')
-    while (splitAt >= 0) {
-      const line = buffer.slice(0, splitAt).trim()
-      buffer = buffer.slice(splitAt + 1)
-      splitAt = buffer.indexOf('\n')
-      if (line) hooks.line(line)
-    }
-  })
-  proc.once('close', hooks.ended)
-  proc.once('error', hooks.ended)
-}
-
 /** Returns true when the line was a result (transcript or error). */
 function deliver(line: string, id: number): boolean {
   if (cancelled || !line) return false
@@ -472,4 +338,311 @@ function deliver(line: string, id: number): boolean {
     error === 'denied' || error === 'silence' || error === 'unavailable' || error === 'cancelled' ? error : 'failed'
   postToPet(IPC.speech, { phase, session: id })
   return true
+}
+
+// ---------------------------------------------------------------- Windows
+
+interface WinHelper {
+  send: (line: 'stop' | 'cancel') => void
+  /** Asks the helper to cancel (releases the mic), then ends the process if it lingers. */
+  cancel: () => void
+}
+
+function powershellPath(): string {
+  const path = join(process.env['SystemRoot'] || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  return existsSync(path) ? path : 'powershell.exe'
+}
+
+/** Spawns listen-win.ps1 in a mode and parses its JSON lines. Null when the script file is missing. */
+function spawnWinHelper(
+  mode: 'listen' | 'test' | 'devices',
+  onLine: (line: WinSpeechLine) => void,
+  onExit: (code: number | null, stderr: string) => void
+): WinHelper | null {
+  const script = sourcePath('listen-win.ps1')
+  if (!script) {
+    logDiag('speech', 'listen-win.ps1 not found')
+    return null
+  }
+  let proc: ChildProcessWithoutNullStreams
+  try {
+    proc = spawn(
+      powershellPath(),
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Mode', mode],
+      { shell: false, windowsHide: true }
+    )
+  } catch (error) {
+    logDiag('speech', 'powershell spawn threw', { error: String(error) })
+    return null
+  }
+  let buffer = ''
+  let stderr = ''
+  let exited = false
+  proc.stdout.on('data', (chunk: Buffer) => {
+    buffer += chunk.toString('utf8')
+    let at = buffer.indexOf('\n')
+    while (at >= 0) {
+      const raw = buffer.slice(0, at).trim()
+      buffer = buffer.slice(at + 1)
+      at = buffer.indexOf('\n')
+      if (!raw) continue
+      const parsed = parseWinSpeechLine(raw)
+      if (parsed) onLine(parsed)
+    }
+  })
+  proc.stderr.on('data', (chunk: Buffer) => {
+    if (stderr.length < 1200) stderr += chunk.toString('utf8')
+  })
+  proc.stdin.on('error', () => undefined)
+  let finished = false
+  const finish = (code: number | null): void => {
+    if (finished) return
+    finished = true
+    exited = true
+    onExit(code, stderr.trim().slice(0, 400))
+  }
+  proc.once('error', (error) => {
+    logDiag('speech', 'powershell failed to start', { error: String(error) })
+    finish(null)
+  })
+  proc.once('close', (code) => finish(code))
+  const send = (line: 'stop' | 'cancel'): void => {
+    if (exited) return
+    try {
+      proc.stdin.write(`${line}\n`)
+    } catch {
+      // Helper already gone.
+    }
+  }
+  return {
+    send,
+    cancel: () => {
+      send('cancel')
+      setTimeout(() => {
+        if (!exited) {
+          try {
+            proc.kill()
+          } catch {
+            // ignore
+          }
+        }
+      }, 700)
+    }
+  }
+}
+
+function startWindowsSession(): Promise<{ ok: boolean; reason: string; help?: SpeechHelp }> {
+  return new Promise((resolve) => {
+    cancelled = false
+    sessionCount += 1
+    const id = sessionCount
+    let ready = false
+    let delivered = false
+    let started = false
+    let helper: WinHelper | null = null
+    const current: Session = {
+      stop: () => {
+        if (ready) helper?.send('stop')
+        else cancelListening()
+      },
+      kill: () => helper?.cancel()
+    }
+    const startDone = (result: { ok: boolean; reason: string; help?: SpeechHelp }): void => {
+      if (started) return
+      started = true
+      clearTimeout(readyTimer)
+      resolve(result)
+    }
+    const readyTimer = setTimeout(() => {
+      if (started) return
+      delivered = true
+      if (session === current) session = null
+      helper?.cancel()
+      logDiag('speech', 'helper did not report ready in time', { ms: WIN_READY_MS })
+      startDone({
+        ok: false,
+        reason: 'Windows speech recognition didn\u2019t start within 8 seconds. Retry, or run the microphone test in Setup.',
+        help: 'speech-language'
+      })
+    }, WIN_READY_MS)
+
+    helper = spawnWinHelper(
+      'listen',
+      (line) => {
+        if (line.kind === 'ready') {
+          if (started || session !== current) return
+          ready = true
+          logDiag('speech', 'listening', { recognizer: line.recognizer })
+          clearKillTimer()
+          // The helper ends itself at 11 s; this is only a safety net.
+          killTimer = setTimeout(() => {
+            if (session === current) cancelListening()
+          }, LISTEN_MS + 2000)
+          startDone({ ok: true, reason: listeningDetail() })
+          return
+        }
+        if (!ready) {
+          if (line.kind !== 'error') return
+          delivered = true
+          if (session === current) session = null
+          const problem = winSpeechProblem(line.code, line.detail)
+          logDiag('speech', 'could not start', { code: line.code, detail: line.detail })
+          startDone(
+            line.code === 'cancelled'
+              ? { ok: false, reason: '' }
+              : { ok: false, reason: problem.text, ...(problem.help ? { help: problem.help } : {}) }
+          )
+          return
+        }
+        if (delivered || cancelled || session !== current) return
+        if (line.kind === 'text') {
+          delivered = true
+          session = null
+          clearKillTimer()
+          logDiag('speech', 'transcript', { chars: line.text.length })
+          postToPet(IPC.speech, { phase: 'transcript', text: line.text, session: id })
+          restorePetPointerState()
+          return
+        }
+        if (line.kind === 'error') {
+          delivered = true
+          session = null
+          clearKillTimer()
+          const problem = winSpeechProblem(line.code, line.detail)
+          logDiag('speech', 'ended without transcript', { code: line.code, detail: line.detail })
+          postToPet(IPC.speech, {
+            phase: problem.phase,
+            session: id,
+            ...(problem.phase === 'cancelled' ? {} : { detail: problem.text }),
+            ...(problem.help ? { help: problem.help } : {})
+          })
+          restorePetPointerState()
+        }
+      },
+      (code, stderr) => {
+        if (!started) {
+          if (session === current) session = null
+          delivered = true
+          logDiag('speech', 'helper exited before ready', { code, stderr })
+          startDone(
+            cancelled
+              ? { ok: false, reason: '' }
+              : {
+                  ok: false,
+                  reason: `Windows speech helper stopped before it could listen${stderr ? ` (${stderr.split(/\r?\n/)[0]})` : ''}. Retry.`,
+                  help: 'speech-language'
+                }
+          )
+          return
+        }
+        if (session !== current) return
+        session = null
+        clearKillTimer()
+        if (!delivered && !cancelled) {
+          logDiag('speech', 'helper exited without a result', { code, stderr })
+          postToPet(IPC.speech, { phase: 'failed', session: id, detail: 'Windows speech helper stopped unexpectedly. Retry.' })
+        }
+        restorePetPointerState()
+      }
+    )
+    if (!helper) {
+      clearTimeout(readyTimer)
+      started = true
+      resolve({ ok: false, reason: 'MIKO\u2019s Windows speech helper is missing. Reinstall MIKO.' })
+      return
+    }
+    session = current
+  })
+}
+
+function runWindowsMicTest(): Promise<MicTestStatus> {
+  return new Promise((resolve) => {
+    let settled = false
+    let helper: WinHelper | null = null
+    const finish = (status: MicTestStatus): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (session === testSession) session = null
+      helper?.cancel()
+      resolve(status)
+    }
+    // Counts as "listening" so a mic click during the test doesn't open the mic twice.
+    const testSession: Session = { stop: () => helper?.send('stop'), kill: () => helper?.cancel() }
+    const timer = setTimeout(
+      () => finish(emptyMicTestStatus({ outcome: 'unavailable', detail: 'The microphone test didn\u2019t finish. Retry.' })),
+      WIN_READY_MS + 12_000
+    )
+    helper = spawnWinHelper(
+      'test',
+      (line) => {
+        if (line.kind === 'ready') {
+          logDiag('speech', 'mic test listening', { recognizer: line.recognizer })
+          return
+        }
+        if (line.kind === 'text') {
+          finish(
+            emptyMicTestStatus({
+              outcome: 'transcript-confirmed',
+              transcript: line.text,
+              detail: `Heard: \u201c${line.text}\u201d. Recognition stays on this PC and is not saved.`
+            })
+          )
+          return
+        }
+        if (line.kind === 'error') {
+          const problem = winSpeechProblem(line.code, line.detail)
+          logDiag('speech', 'mic test ended', { code: line.code, detail: line.detail })
+          finish(
+            emptyMicTestStatus({
+              outcome: line.code === 'denied' ? 'denied' : line.code === 'silence' || line.code === 'no-audio' ? 'silence' : 'unavailable',
+              detail: problem.text,
+              ...(problem.help ? { help: problem.help } : {})
+            })
+          )
+        }
+      },
+      (code, stderr) => {
+        if (settled) return
+        logDiag('speech', 'mic test helper exited', { code, stderr })
+        finish(
+          emptyMicTestStatus({
+            outcome: 'unavailable',
+            detail: `Windows speech helper stopped${stderr ? ` (${stderr.split(/\r?\n/)[0]})` : ''}. Retry.`,
+            help: 'speech-language'
+          })
+        )
+      }
+    )
+    if (!helper) {
+      clearTimeout(timer)
+      settled = true
+      resolve(emptyMicTestStatus({ outcome: 'unavailable', detail: 'MIKO\u2019s Windows speech helper is missing. Reinstall MIKO.' }))
+      return
+    }
+    session = testSession
+  })
+}
+
+/** Windows input devices (names only). System.Speech always records from the Windows default input. */
+export function listInputDevices(): Promise<{ devices: string[]; detail: string }> {
+  if (process.platform !== 'win32') return Promise.resolve({ devices: [], detail: '' })
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (value: { devices: string[]; detail: string }): void => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish({ devices: [], detail: 'Couldn\u2019t list microphones.' }), 10_000)
+    const helper = spawnWinHelper(
+      'devices',
+      (line) => {
+        if (line.kind === 'devices') finish({ devices: line.devices, detail: '' })
+      },
+      () => finish({ devices: [], detail: 'Couldn\u2019t list microphones.' })
+    )
+    if (!helper) finish({ devices: [], detail: 'MIKO\u2019s Windows speech helper is missing.' })
+  })
 }
