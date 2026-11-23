@@ -165,6 +165,7 @@ import { availablePets, currentPetChoice, flightInfo, isTreeSender, petModel, sa
 import { PETS, parsePetId } from '../shared/pets'
 import { closeWebsiteTabs } from './browser-tabs'
 import { openProjector, registerProjectorIpc } from './projector'
+import { registerKnowledgeIpc } from './knowledge'
 import { openLogsFolder, setSystemOptions, systemOptions } from './system-options'
 import { hideToy, parseThrowRequest, playSettings, setPlayMode, setPlaySound, throwToy } from './play'
 import { lastExternalApp } from './foreground'
@@ -1098,6 +1099,7 @@ export function registerIpc(presence: {
 
   registerSwitcherIpc()
   registerProjectorIpc()
+  registerKnowledgeIpc()
   ipcMain.on(IPC.projectorOpen, (event) => {
     if (trusted(event)) openProjector()
   })

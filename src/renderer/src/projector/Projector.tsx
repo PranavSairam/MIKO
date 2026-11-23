@@ -34,7 +34,7 @@ declare global {
 const MESSAGES: Partial<Record<ProjectorStatus, string>> = {
   frozen: 'No new frames. The video may be paused, minimised, or on another desktop.',
   black:
-    'This window shows only black. If the video is playing, it is probably protected (DRM) — streaming sites like Netflix block capture, and MIKO doesn’t get around that. Watch it in the original window.',
+    'Only black is coming through. The video may be protected (streaming sites like Netflix often block capture, and MIKO doesn’t get around that), or the window may be minimised, on another desktop, or not playing yet. Try again, pick the window again, or watch in the original.',
   ended: 'The projected window closed or can’t be captured any more. Pick another window, or close the projector.'
 }
 
@@ -424,6 +424,11 @@ export function Projector() {
             <div className="overlay">
               <p>{message || note}</p>
               <div className="row">
+                {(status === 'black' || status === 'frozen') && current ? (
+                  <button type="button" onClick={() => void choose(current)}>
+                    Try again
+                  </button>
+                ) : null}
                 {status === 'black' || status === 'frozen' ? (
                   <button type="button" onClick={() => void openOriginal()}>
                     Open original

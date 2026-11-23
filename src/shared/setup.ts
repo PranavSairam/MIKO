@@ -2,8 +2,8 @@
 
 export const SETUP_TUTORIAL_VERSION = 1
 
-/** First open: Meet MIKO → Try MIKO → Enable voice (optional) → Use ChatGPT (optional) → Ready. */
-export const SETUP_STEPS = ['meet', 'try', 'voice', 'chatgpt', 'ready', 'done'] as const
+/** First open: Meet MIKO → Try MIKO → Enable voice (optional) → Use ChatGPT (optional) → Your documents (optional) → Ready. */
+export const SETUP_STEPS = ['meet', 'try', 'voice', 'chatgpt', 'knowledge', 'ready', 'done'] as const
 
 /** Step names saved by earlier builds, mapped onto the current steps (resume never breaks). */
 const LEGACY_STEPS: Record<string, (typeof SETUP_STEPS)[number]> = {

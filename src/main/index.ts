@@ -16,6 +16,7 @@ import { postToPet } from './pet-window'
 import { startListening, stopListening } from './speech'
 import { destroyToy, playMode, setPlayMode } from './play'
 import { closeProjector, openProjector } from './projector'
+import { stopKnowledge } from './knowledge'
 import { hideSwitcher, toggleSwitcher, warmSwitcher } from './switcher-window'
 import { enableGptMode, exitGptMode, getGptModeState, pauseGptMode, resumeGptMode } from './gpt-mode'
 import { assistantEnabled, chatgptAutoPaste, setAssistantEnabled, setChatgptAutoPaste, setVoiceAutoExecute, voiceAutoExecute } from './settings'
@@ -95,6 +96,7 @@ if (!gotLock) {
     stopAllBridges()
     destroyToy()
     closeProjector()
+    stopKnowledge()
   })
 
   app.on('window-all-closed', () => {
@@ -196,6 +198,12 @@ if (!gotLock) {
     })
     // Show MIKO as soon as it starts (⌘⇧R or the paw menu still hide it).
     presence.show()
+
+    if (process.env['MIKO_VERIFY_OUTSTANDING'] === '1') {
+      void import('./verify-outstanding').then(({ runOutstandingVerify }) =>
+        runOutstandingVerify(() => presence.show())
+      )
+    }
 
     if (process.env['MIKO_VERIFY_INTERACTIVE_GPT'] === '1') {
       void import('./verify-interactive-gpt').then(({ runInteractiveGptAccessVerify }) =>

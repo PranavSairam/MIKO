@@ -48,8 +48,10 @@ describe('first open and Help & Setup (static)', () => {
   const system = read('../main/system-options.ts')
   const index = read('../main/index.ts')
 
-  it('the five steps are in order and every step can be skipped', () => {
-    assert.match(setup, /const ORDER: SetupStepId\[\] = \['meet', 'try', 'voice', 'chatgpt', 'ready'\]/)
+  it('the six steps are in order and every step can be skipped', () => {
+    assert.match(setup, /const ORDER: SetupStepId\[\] = \['meet', 'try', 'voice', 'chatgpt', 'knowledge', 'ready'\]/)
+    // The sample document is added only when clicked.
+    assert.match(setup, /Add a sample document/)
     assert.match(setup, /Skip for now/)
     assert.match(setup, /MIKO never sees your password/)
   })

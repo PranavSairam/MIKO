@@ -42,7 +42,7 @@ import { parseTldr, parseTldrFollowUp, tldrPrompt, type TldrStyle } from '../../
 import { roamFor } from '../../../shared/movement'
 import { EXIT_MS } from '../../../shared/summon'
 import { HelpSetup } from '../components/HelpSetup'
-import { TextPanel, PetChooser, type PanelEntry } from '../components/TextPanel'
+import { TextPanel, PetChooser, type PanelEntry, type PanelView } from '../components/TextPanel'
 import { ChromeProfileFan } from '../components/ChromeProfileFan'
 import {
   deliveryStatusLabel,
@@ -130,6 +130,20 @@ import {
 import type { ActionPlan } from '../../../shared/actions'
 import type { CorrectionExample, MikoStructuredPreferences } from '../../../shared/preferences'
 import { DEFAULT_PREFERENCES, retrieveExamples } from '../../../shared/preferences'
+import {
+  buildPassages,
+  knowledgePrompt,
+  parseKnowledgeAnswer,
+  parseKnowledgeIntent,
+  type KnowledgeAddResult,
+  type KnowledgeState,
+  type KnowledgeStyle,
+  type Passage,
+  type SearchHit
+} from '../../../shared/knowledge'
+import type { KnowledgeHit } from '../../../shared/api'
+import { KnowledgeView } from '../components/KnowledgeView'
+import type { KnowledgeEntry, KnowledgeHandlers } from '../components/KnowledgeAnswer'
 import { newActionId, toneFromText } from '../../../shared/actions'
 import {
   bumpPurposeRevision,
@@ -223,6 +237,14 @@ export function MotionApp() {
   const [selectionKey, setSelectionKey] = useState('')
   const [prefsMessage, setPrefsMessage] = useState('')
   const [structuredPrefs, setStructuredPrefs] = useState<MikoStructuredPreferences>(DEFAULT_PREFERENCES)
+  const [knowledgeState, setKnowledgeState] = useState<KnowledgeState | null>(null)
+  const knowledgeStateRef = useRef<KnowledgeState | null>(null)
+  knowledgeStateRef.current = knowledgeState
+  const [knowledgeLastAdd, setKnowledgeLastAdd] = useState<KnowledgeAddResult | null>(null)
+  /** The last document answer, for follow-ups (“which file says that?”, “make it shorter”). */
+  const lastKnowledgeRef = useRef<{ entryId: number; question: string; passages: Passage[]; scope: KnowledgeEntry['scope']; at: number } | null>(null)
+  /** Which kind of summary/answer came last, so “make it shorter” goes to the right one. */
+  const lastSummaryKindRef = useRef<'tldr' | 'knowledge' | null>(null)
   const [prefAliases, setPrefAliases] = useState<{ alias: string; name: string }[]>([])
   const [prefExamples, setPrefExamples] = useState<CorrectionExample[]>([])
   const [listening, setListening] = useState(false)
@@ -233,7 +255,7 @@ export function MotionApp() {
   gptModeRef.current = gptMode
   const [gptDetailsOpen, setGptDetailsOpen] = useState(false)
   const [, setStageSize] = useState({ width: 800, height: 600 })
-  const [panelView, setPanelView] = useState<'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help'>('log')
+  const [panelView, setPanelView] = useState<PanelView>('log')
   const [hostPlatform, setHostPlatform] = useState('darwin')
   const [feedbackCtx, setFeedbackCtx] = useState<{
     lastCommand: string
@@ -344,6 +366,10 @@ export function MotionApp() {
     entryId.current += 1
     setEntries((items) => [...items, { ...entry, id }])
     return id
+  }
+
+  function removeEntry(id: number): void {
+    setEntries((items) => items.filter((item) => item.id !== id))
   }
 
   function replaceEntry(id: number, entry: PanelEntry): void {
@@ -745,6 +771,20 @@ export function MotionApp() {
           if (e.kind === 'choices') {
             return { kind: e.kind, purpose: e.purpose, text: e.text, options: e.options?.map((o) => o.name) }
           }
+          if (e.kind === 'tldr') return { kind: e.kind, status: e.status, style: e.style, originalLength: e.original.length, summary: e.summary }
+          if (e.kind === 'knowledge') {
+            return {
+              kind: e.kind,
+              status: e.status,
+              style: e.style,
+              question: e.question,
+              cited: e.answer?.cited ?? [],
+              evidence: e.answer?.evidence ?? null,
+              passages: e.passages.map((p) => ({ id: p.id, name: p.name, where: p.where })),
+              stale: e.staleSourceIds.length
+            }
+          }
+          if (e.kind === 'file-drop') return { kind: e.kind, status: e.status, names: e.names }
           if (e.kind === 'gpt-mode') {
             return {
               kind: e.kind,
@@ -1801,6 +1841,25 @@ export function MotionApp() {
       if (entriesRef.current.some((e) => e.kind === 'bridge' && (e.status === 'sending' || e.status === 'running'))) setTick((n) => n + 1)
     }, 1000)
     const stopUpdate = window.miko.onUpdateStatus((s) => setUpdateStatus(s))
+    void window.miko.knowledgeState().then((st) => {
+      if (st) setKnowledgeState(st)
+    })
+    const stopKnowledge = window.miko.onKnowledge((ev) => {
+      if (ev.type === 'state') {
+        setKnowledgeState(ev.state)
+        return
+      }
+      // Removed or changed sources: answers stay in history, but their passages are marked stale.
+      const gone = new Set(ev.ids)
+      setEntries((items) =>
+        items.map((item) =>
+          item.kind === 'knowledge' && item.passages.some((p) => gone.has(p.sourceId))
+            ? { ...item, staleSourceIds: [...new Set([...item.staleSourceIds, ...ev.ids])] }
+            : item
+        )
+      )
+      if (lastKnowledgeRef.current?.passages.some((p) => gone.has(p.sourceId))) lastKnowledgeRef.current = null
+    })
     const stop = window.miko.onBridge((u) => {
       const waiter = interpretWaiters.current.get(u.requestId)
       if (waiter) {
@@ -1812,6 +1871,7 @@ export function MotionApp() {
         waiter.resolve(live && u.phase === 'done' ? u.reply ?? '' : null)
         return
       }
+      if (onKnowledgeBridge(u)) return
       const tl = entriesRef.current.find((e) => e.kind === 'tldr' && e.requestId === u.requestId)
       if (tl?.kind === 'tldr') {
         if (u.phase === 'running') return
@@ -1869,6 +1929,7 @@ export function MotionApp() {
       window.clearInterval(tick)
       stop()
       stopUpdate()
+      stopKnowledge()
       stopSelection()
       stopPaste()
     }
@@ -2120,6 +2181,7 @@ export function MotionApp() {
   async function runTldr(content: string, style: TldrStyle): Promise<void> {
     if (!panelRef.current) await applyPanel(true, 'chat')
     lastTldrRef.current = { content, at: Date.now() }
+    lastSummaryKindRef.current = 'tldr'
     const running = entriesRef.current.find((e) => e.kind === 'tldr' && e.status === 'running')
     if (running?.kind === 'tldr') window.miko.bridgeCancel(running.requestId)
     const requestId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -2137,10 +2199,313 @@ export function MotionApp() {
       return
     }
     // A fresh, separate request: the summary never continues another conversation or task.
-    const sent = await window.miko.bridgeSend(requestId, tldrPrompt(content, style), { fresh: true, keep: false })
-    if (!sent.ok) {
+    const tldrWanted = (): boolean => entriesRef.current.some((e) => e.kind === 'tldr' && e.requestId === requestId && e.status === 'running')
+    const sent = await sendWhenFree(requestId, tldrPrompt(content, style), { fresh: true, keep: false }, tldrWanted, () =>
+      setEntries((items) => items.map((item) => (item.kind === 'tldr' && item.requestId === requestId ? { ...item, detail: 'Waiting for MIKO to finish the answer before this one…' } : item)))
+    )
+    if (sent.ok) setEntries((items) => items.map((item) => (item.kind === 'tldr' && item.requestId === requestId ? { ...item, detail: '' } : item)))
+    if (!sent.ok && tldrWanted()) {
       replaceEntry(id, { id, kind: 'tldr', requestId, status: 'failed', style, original: content, summary: '', detail: sent.reason || 'The assistant didn’t accept the request.' })
     }
+  }
+
+  /**
+   * The assistant answers one request at a time. Instead of failing while another answer is
+   * still coming, wait for it (up to 90 s), as long as this request is still wanted.
+   */
+  async function sendWhenFree(
+    requestId: string,
+    prompt: string,
+    opts: { fresh?: boolean; keep?: boolean },
+    stillWanted: () => boolean,
+    onWaiting: () => void
+  ): Promise<{ ok: boolean; reason: string }> {
+    const until = Date.now() + 90_000
+    let told = false
+    for (;;) {
+      const sent = await window.miko.bridgeSend(requestId, prompt, opts)
+      if (sent.ok || !/still answering/i.test(sent.reason) || Date.now() > until || !stillWanted()) return sent
+      if (!told) {
+        told = true
+        onWaiting()
+      }
+      await new Promise((r) => window.setTimeout(r, 1200))
+      if (!stillWanted()) return { ok: false, reason: 'Cancelled.' }
+    }
+  }
+
+  // ------------------------------------------------------------------ Knowledge (document RAG)
+
+  function knowledgeEntry(id: number): KnowledgeEntry | null {
+    const e = entriesRef.current.find((item) => item.id === id)
+    return e?.kind === 'knowledge' ? e : null
+  }
+
+  function patchKnowledge(id: number, patch: Partial<KnowledgeEntry>): void {
+    entriesRef.current = entriesRef.current.map((item) => (item.id === id && item.kind === 'knowledge' ? { ...item, ...patch } : item))
+    setEntries((items) => items.map((item) => (item.id === id && item.kind === 'knowledge' ? { ...item, ...patch } : item)))
+  }
+
+  function hitsToSearch(hits: KnowledgeHit[]): SearchHit[] {
+    return hits.map((h) => ({
+      chunk: { id: h.chunkId, sourceId: h.sourceId, name: h.name, n: Number(h.chunkId.split('#')[1]) || 0, text: h.text, page: h.page, heading: h.heading, start: 0, version: h.version },
+      score: h.score
+    }))
+  }
+
+  /**
+   * Answer a question from the owner's documents: local search → (first time: consent) → the
+   * MIKO assistant with only the matching excerpts, fenced as data → citations validated and
+   * support-checked. Never forwarded to Interactive GPT or GPT Mode; nothing in a document runs.
+   */
+  async function runKnowledge(
+    question: string,
+    opts: { style?: KnowledgeStyle; scope?: KnowledgeEntry['scope']; reuse?: Passage[]; localOnly?: boolean } = {}
+  ): Promise<void> {
+    if (!panelRef.current || tabRef.current !== 'chat') await applyPanel(true, 'chat')
+    setPanelView('log')
+    lastSummaryKindRef.current = 'knowledge'
+    const style = opts.style ?? 'normal'
+    const scope = opts.scope ?? null
+    const requestId = `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const base: KnowledgeEntry = {
+      id: 0,
+      kind: 'knowledge',
+      requestId,
+      question,
+      status: 'searching',
+      style,
+      scope,
+      passages: [],
+      answer: null,
+      detail: '',
+      preview: null,
+      staleSourceIds: []
+    }
+    const id = pushEntry(base)
+    let passages = opts.reuse ?? []
+    if (!opts.reuse) {
+      const state = await window.miko.knowledgeState()
+      if (state) {
+        setKnowledgeState(state)
+        knowledgeStateRef.current = state
+      }
+      const ready = state?.sources.filter((s) => s.status === 'indexed').length ?? 0
+      if (!ready) {
+        patchKnowledge(id, {
+          status: 'failed',
+          detail: state?.sources.length
+            ? 'None of your documents are ready yet (still reading, or they have no readable text). Open Knowledge to check.'
+            : 'You haven’t added any documents yet. Open Knowledge to add some.'
+        })
+        return
+      }
+      const hits = await window.miko.knowledgeSearch(question, {
+        sourceIds: scope?.sourceIds,
+        limit: style === 'compare' ? 8 : 6,
+        perSource: style === 'compare' ? 4 : 3
+      })
+      passages = buildPassages(hitsToSearch(hits), style === 'compare' ? 8000 : 6000)
+    }
+    lastKnowledgeRef.current = { entryId: id, question, passages, scope, at: Date.now() }
+    if (!passages.length) {
+      patchKnowledge(id, { status: 'no-results', passages, detail: 'Nothing in your documents matches those words, so there’s no answer to give. Try other words, or check the file is in Knowledge.' })
+      return
+    }
+    if (opts.localOnly) {
+      patchKnowledge(id, { status: 'passages', passages, detail: 'Matching passages (found on this computer; nothing was sent).' })
+      return
+    }
+    if (!knowledgeStateRef.current?.cloudConsent) {
+      patchKnowledge(id, { status: 'consent', passages })
+      return
+    }
+    await sendKnowledge(id, question, passages, style)
+  }
+
+  async function sendKnowledge(id: number, question: string, passages: Passage[], style: KnowledgeStyle): Promise<void> {
+    const status = await window.miko.bridgeStatus()
+    const unavailable = !status?.enabled
+      ? 'The MIKO assistant is turned off (menu bar paw → MIKO assistant), so there’s no written answer. The matching passages are below.'
+      : !status.available
+        ? 'The MIKO assistant (the ChatGPT app’s Codex) wasn’t found, so there’s no written answer. The matching passages are below.'
+        : !status.signedIn
+          ? 'Sign in to the ChatGPT app to get written answers. The matching passages are below.'
+          : ''
+    if (unavailable) {
+      patchKnowledge(id, { status: 'passages', passages, detail: unavailable })
+      return
+    }
+    // One document answer at a time: a newer question replaces an unfinished one.
+    for (const other of entriesRef.current) {
+      if (other.kind === 'knowledge' && other.id !== id && other.status === 'answering') {
+        window.miko.bridgeCancel(other.requestId)
+        patchKnowledge(other.id, { status: 'cancelled', detail: 'Stopped for your newer question.' })
+      }
+    }
+    const requestId = `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    patchKnowledge(id, { status: 'answering', requestId, passages, detail: '' })
+    const sent = await sendWhenFree(
+      requestId,
+      knowledgePrompt(question, passages, style),
+      { fresh: true, keep: false },
+      () => knowledgeEntry(id)?.status === 'answering' && knowledgeEntry(id)?.requestId === requestId,
+      () => patchKnowledge(id, { detail: 'Waiting for MIKO to finish the answer before this one…' })
+    )
+    if (sent.ok) patchKnowledge(id, { detail: '' })
+    else if (knowledgeEntry(id)?.status === 'answering') patchKnowledge(id, { status: 'failed', detail: sent.reason || 'The assistant didn’t accept the request. The matching passages are below.' })
+  }
+
+  /** Bridge replies for document answers. Returns true when the update belonged to one. */
+  function onKnowledgeBridge(u: { requestId: string; phase: string; reply?: string; reason?: string }): boolean {
+    const e = entriesRef.current.find((item) => item.kind === 'knowledge' && item.requestId === u.requestId)
+    if (e?.kind !== 'knowledge') return false
+    if (u.phase === 'running') return true
+    const reply = (u.reply ?? '').trim()
+    if (u.phase === 'done' && reply) {
+      patchKnowledge(e.id, { status: 'done', answer: parseKnowledgeAnswer(reply.slice(0, 8000), e.passages), detail: '' })
+    } else {
+      patchKnowledge(e.id, {
+        status: u.phase === 'cancelled' ? 'cancelled' : 'failed',
+        detail:
+          u.phase === 'cancelled'
+            ? 'Cancelled.'
+            : u.phase === 'timeout'
+              ? 'The assistant took too long, so there’s no answer. The matching passages are below.'
+              : u.reason || 'The assistant didn’t return an answer. The matching passages are below.'
+      })
+    }
+    return true
+  }
+
+  /** Knowledge requests in chat/voice. True when handled. */
+  async function handleKnowledgeText(text: string): Promise<boolean> {
+    const last = lastKnowledgeRef.current
+    const recent = Boolean(last && Date.now() - last.at < 15 * 60_000 && lastSummaryKindRef.current === 'knowledge')
+    const intent = parseKnowledgeIntent(text, { recentAnswer: recent })
+    if (!intent) return false
+    if (intent.kind === 'ask') {
+      await runKnowledge(intent.question)
+      return true
+    }
+    if (intent.kind === 'search') {
+      await runKnowledge(intent.query, { localOnly: true })
+      return true
+    }
+    if (!last) return false
+    const entry = knowledgeEntry(last.entryId)
+    if (entry && (entry.status === 'answering' || entry.status === 'searching') && intent.kind !== 'restyle') {
+      pushEntry({ id: 0, kind: 'note', text: 'I’m still answering that. Ask again when the answer appears.' })
+      return true
+    }
+    const cited = entry?.answer ? last.passages.filter((p) => entry.answer!.cited.includes(p.id)) : []
+    if (intent.kind === 'which-file') {
+      const list = cited.length ? cited : []
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: list.length
+          ? `That comes from ${[...new Map(list.map((p) => [p.sourceId, `${p.name}${p.where ? ` (${p.where})` : ''}`])).values()].join(' and ')}.`
+          : 'The last answer didn’t cite any document, so I can’t point to a file for it.'
+      })
+      return true
+    }
+    if (intent.kind === 'show-source') {
+      const first = cited[0] ?? last.passages[0]
+      if (entry && first) knowledgeHandlers.cite(entry.id, first.id)
+      else pushEntry({ id: 0, kind: 'note', text: 'There’s no source to show for the last answer.' })
+      return true
+    }
+    if (intent.kind === 'restyle') {
+      await runKnowledge(last.question, { style: intent.style, scope: last.scope, reuse: last.passages })
+      return true
+    }
+    if (intent.kind === 'scope-this') {
+      const pick = entry?.preview?.data.ok ? last.passages.find((p) => p.id === entry.preview!.citeId) : (cited[0] ?? last.passages[0])
+      if (!pick) return false
+      await runKnowledge(last.question, { scope: { sourceIds: [pick.sourceId], label: pick.name } })
+      return true
+    }
+    if (intent.kind === 'compare') {
+      const ids = [...new Set((cited.length ? cited : last.passages).map((p) => p.sourceId))].slice(0, 2)
+      if (ids.length < 2) {
+        pushEntry({ id: 0, kind: 'note', text: 'The last answer used only one document. Ask a question that both reports cover first, then say “compare these two reports”.' })
+        return true
+      }
+      const names = ids.map((sid) => last.passages.find((p) => p.sourceId === sid)?.name ?? 'document')
+      await runKnowledge(`Compare ${names.join(' and ')}: ${last.question}`, { style: 'compare', scope: { sourceIds: ids, label: names.join(' and ') } })
+      return true
+    }
+    return false
+  }
+
+  const knowledgeHandlers: KnowledgeHandlers = {
+    cite: (entryId, citeId) => {
+      const e = knowledgeEntry(entryId)
+      const p = e?.passages.find((x) => x.id === citeId)
+      if (!e || !p) return
+      if (e.preview?.citeId === citeId) {
+        patchKnowledge(entryId, { preview: null })
+        return
+      }
+      void window.miko.knowledgePassage(p.chunkId, p.version).then((data) => patchKnowledge(entryId, { preview: { citeId, data } }))
+    },
+    open: (sourceId) => {
+      void window.miko.knowledgeOpen(sourceId).then((r) => {
+        if (!r.ok) pushEntry({ id: 0, kind: 'note', text: r.reason })
+      })
+    },
+    consent: (entryId, allow) => {
+      const e = knowledgeEntry(entryId)
+      if (!e) return
+      if (!allow) {
+        patchKnowledge(entryId, { status: 'passages', detail: 'Nothing was sent. These passages were found on this computer.' })
+        return
+      }
+      void (async () => {
+        await window.miko.knowledgeAction('consent-on')
+        setKnowledgeState((s) => (s ? { ...s, cloudConsent: true } : s))
+        if (knowledgeStateRef.current) knowledgeStateRef.current = { ...knowledgeStateRef.current, cloudConsent: true }
+        await sendKnowledge(entryId, e.question, e.passages, e.style)
+      })()
+    },
+    restyle: (entryId, style) => {
+      const e = knowledgeEntry(entryId)
+      if (e) void runKnowledge(e.question, { style, scope: e.scope, reuse: e.passages })
+    },
+    scopeTo: (entryId, sourceId) => {
+      const e = knowledgeEntry(entryId)
+      const name = e?.passages.find((p) => p.sourceId === sourceId)?.name ?? 'this document'
+      if (e) void runKnowledge(e.question, { scope: { sourceIds: [sourceId], label: name } })
+    },
+    cancel: (entryId) => {
+      const e = knowledgeEntry(entryId)
+      if (!e) return
+      if (e.status === 'answering') window.miko.bridgeCancel(e.requestId)
+      patchKnowledge(entryId, { status: 'cancelled', detail: 'Cancelled.' })
+    },
+    retry: (entryId) => {
+      const e = knowledgeEntry(entryId)
+      if (!e) return
+      if (e.status === 'passages' && e.passages.length) {
+        if (!knowledgeStateRef.current?.cloudConsent) patchKnowledge(entryId, { status: 'consent', detail: '' })
+        else void sendKnowledge(entryId, e.question, e.passages, e.style)
+        return
+      }
+      void runKnowledge(e.question, { style: e.style, scope: e.scope })
+    },
+    copy: (entryId) => {
+      const e = knowledgeEntry(entryId)
+      if (e?.answer) void window.miko.copyText(e.answer.text)
+    },
+    openKnowledge: () => setPanelView('knowledge')
+  }
+
+  async function addKnowledge(how: 'files' | 'folder' | 'paths', paths?: string[]): Promise<void> {
+    const res = await window.miko.knowledgeAdd(how, paths)
+    if (res) setKnowledgeLastAdd(res)
+    const state = await window.miko.knowledgeState()
+    if (state) setKnowledgeState(state)
   }
 
   function updateBridge(requestId: string, patch: Partial<Extract<PanelEntry, { kind: 'bridge' }>>): void {
@@ -4751,7 +5116,8 @@ export function MotionApp() {
       snapshot: snap
     })
 
-    pushEntry({ id: 0, kind: 'note', text: 'Understanding…' })
+    // A transient status: removed as soon as the interpretation ends (whatever the outcome).
+    const understandingId = pushEntry({ id: 0, kind: 'note', text: 'Understanding…' })
     const reply = await new Promise<string | null>((resolve) => {
       interpretWaiters.current.set(requestId, { resolve, token, taskId: interpretTaskId })
       void window.miko.bridgeSend(requestId, prompt, { fresh: true }).then((sent) => {
@@ -4763,6 +5129,7 @@ export function MotionApp() {
       })
     })
 
+    removeEntry(understandingId)
     if (token !== interpretToken.current) return null
     if (activeTaskRef.current?.phase === 'cancelled') return null
     if (reply === null) return null
@@ -5423,11 +5790,14 @@ export function MotionApp() {
       await runTldr(tldr.content, tldr.style)
       return
     }
-    const follow = lastTldrRef.current && Date.now() - lastTldrRef.current.at < 15 * 60_000 ? parseTldrFollowUp(text) : null
+    const follow =
+      lastTldrRef.current && lastSummaryKindRef.current === 'tldr' && Date.now() - lastTldrRef.current.at < 15 * 60_000 ? parseTldrFollowUp(text) : null
     if (follow && lastTldrRef.current) {
       await runTldr(lastTldrRef.current.content, follow)
       return
     }
+    // Document questions (“according to my documents…”) and their follow-ups: local search first.
+    if (await handleKnowledgeText(text)) return
     // Shared locals (typed) — same path as voice; Interactive GPT open does not change this.
     if (await handleSharedLocalControls(text, 'typed')) return
     // Active GPT Mode: ordinary text goes only to ChatGPT — no local router / assistant.
@@ -5585,6 +5955,7 @@ export function MotionApp() {
     if (await handleSharedLocalControls(text, 'voice')) return
     // Explicit Dictate-to-GPT session only — never because Interactive GPT is merely open.
     if (await consumeDictateToGptSession(text)) return
+    if (await handleKnowledgeText(text)) return
     if (gptModeRef.current.phase === 'active') {
       pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
       lastCommandRef.current = text.trim().slice(0, 500)
@@ -7099,8 +7470,59 @@ export function MotionApp() {
             })()
           }}
           tab={tab}
+          knowledge={
+            <KnowledgeView
+              state={knowledgeState}
+              lastAdd={knowledgeLastAdd}
+              onAdd={(how) => void addKnowledge(how)}
+              onDropFiles={(files) => {
+                const paths = window.miko.knowledgePathsFor(files)
+                if (paths.length) void addKnowledge('paths', paths)
+              }}
+              onSample={() => {
+                void window.miko.knowledgeSample().then((res) => {
+                  if (res) setKnowledgeLastAdd(res)
+                })
+              }}
+              onAction={(action, id) => {
+                void window.miko.knowledgeAction(action, id).then(() =>
+                  window.miko.knowledgeState().then((st) => {
+                    if (st) setKnowledgeState(st)
+                  })
+                )
+              }}
+              onAsk={(question) => void runKnowledge(question)}
+              onSearch={(query) => window.miko.knowledgeSearch(query, { limit: 8 })}
+              onPreview={(hit) => window.miko.knowledgePassage(hit.chunkId, hit.version)}
+              onOpen={(sourceId) => knowledgeHandlers.open(sourceId)}
+            />
+          }
+          onKnowledgeEntry={knowledgeHandlers}
+          onFilesDropped={(files) => {
+            const paths = window.miko.knowledgePathsFor(files)
+            if (!paths.length) return
+            pushEntry({ id: 0, kind: 'file-drop', names: files.map((f) => f.name).slice(0, 20), paths, status: 'asking', detail: '' })
+          }}
+          onFileDrop={(entryId, action) => {
+            const e = entriesRef.current.find((item) => item.id === entryId)
+            if (e?.kind !== 'file-drop' || e.status !== 'asking') return
+            if (action === 'dismiss') {
+              replaceEntry(entryId, { ...e, status: 'dismissed', detail: 'Okay, nothing was added or sent.' })
+              return
+            }
+            replaceEntry(entryId, { ...e, status: 'added', detail: `Adding ${e.names.length === 1 ? `“${e.names[0]}”` : `${e.names.length} files`} to Knowledge. See the Knowledge tab for progress.` })
+            void addKnowledge('paths', e.paths)
+          }}
           onTab={(next) => {
+            if (next === 'knowledge') {
+              void (async () => {
+                if (tabRef.current !== 'chat') await applyPanel(true, 'chat')
+                setPanelView('knowledge')
+              })()
+              return
+            }
             if (next !== tabRef.current) void applyPanel(true, next)
+            else if (next === 'chat') setPanelView('log')
           }}
           mail={
             <MailView
@@ -7408,6 +7830,11 @@ export function MotionApp() {
             onRunExample: (text) => {
               setPanelView('log')
               void onSubmit(text)
+            },
+            onAddSample: async () => {
+              const res = await window.miko.knowledgeSample()
+              if (res) setKnowledgeLastAdd(res)
+              return Boolean(res && res.added >= 0 && !/isn’t in this build/.test(res.note))
             }
           }}
           help={

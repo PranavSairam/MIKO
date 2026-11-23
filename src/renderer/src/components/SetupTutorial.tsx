@@ -10,14 +10,18 @@ export interface SetupTutorialProps {
   onOpenInteractiveGpt?: () => void
   /** Runs one of the Ready-step examples as if it was typed (user clicked it). */
   onRunExample?: (text: string) => void
+  /** Adds the bundled sample document to Knowledge (only when clicked). */
+  onAddSample?: () => Promise<boolean>
+  onOpenKnowledge?: () => void
 }
 
-const ORDER: SetupStepId[] = ['meet', 'try', 'voice', 'chatgpt', 'ready']
+const ORDER: SetupStepId[] = ['meet', 'try', 'voice', 'chatgpt', 'knowledge', 'ready']
 const TITLES: Record<SetupStepId, string> = {
   meet: 'Meet MIKO',
   try: 'Try MIKO',
   voice: 'Enable voice',
   chatgpt: 'Use ChatGPT',
+  knowledge: 'Your documents',
   ready: 'Ready',
   done: 'Ready'
 }
@@ -28,7 +32,7 @@ const TITLES: Record<SetupStepId, string> = {
  * for the pet or typed commands to work. Permissions are explained right before they’re used,
  * and account sign-in / Windows security choices stay with the person at the keyboard.
  */
-export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt, onRunExample }: SetupTutorialProps) {
+export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt, onRunExample, onAddSample, onOpenKnowledge }: SetupTutorialProps) {
   const win = platform === 'win32'
   const platformKey = win ? 'win32' : 'darwin'
   const [state, setState] = useState<SetupState | null>(null)
@@ -37,6 +41,7 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt, o
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [system, setSystem] = useState<SystemOptionsInfo | null>(null)
+  const [sample, setSample] = useState<'idle' | 'adding' | 'added' | 'failed'>('idle')
 
   useEffect(() => {
     if (typeof window.miko === 'undefined') return
@@ -111,13 +116,23 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt, o
 
   return (
     <div className="setup is-large">
-      <ol className="setup-progress" aria-label="Setup steps">
-        {ORDER.map((id, i) => (
-          <li key={id} className={i < index ? 'is-done' : i === index ? 'is-now' : ''} aria-current={i === index ? 'step' : undefined}>
-            {TITLES[id]}
-          </li>
-        ))}
-      </ol>
+      <div className="setup-steps">
+        <p className="setup-step-count">
+          Step {index + 1} of {ORDER.length}
+        </p>
+        <ol className="setup-dots" aria-label="Setup steps">
+          {ORDER.map((id, i) => (
+            <li
+              key={id}
+              className={i < index ? 'is-done' : i === index ? 'is-now' : ''}
+              aria-current={i === index ? 'step' : undefined}
+              title={TITLES[id]}
+            >
+              <span className="visually-hidden">{TITLES[id]}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
 
       {step === 'meet' ? (
         <Step title="Meet MIKO" body={`MIKO is a small companion that lives on your ${win ? 'PC' : 'Mac'}. Pick the pet you like. You can change it later.`}>
@@ -211,6 +226,39 @@ export function SetupTutorial({ platform, pets, onClose, onOpenInteractiveGpt, o
             ) : null}
             <button type="button" className="text-button secondary" onClick={() => go(next)}>
               {onOpenInteractiveGpt ? 'Next' : 'Skip'}
+            </button>
+          </Actions>
+        </Step>
+      ) : null}
+
+      {step === 'knowledge' ? (
+        <Step
+          title="Your documents (optional)"
+          body="Add notes, PDFs or Word files in the Knowledge tab, then ask things like “According to my documents, when is the deadline?”. MIKO searches them on this computer and shows which file each answer came from. Only the matching excerpts are sent to the MIKO assistant when you ask."
+        >
+          {sample === 'added' ? <p className="panel-detail" role="status">Sample added. Try: “According to my documents, when does the garden club meet?”</p> : null}
+          {sample === 'failed' ? <p className="panel-detail" role="status">The sample couldn’t be added. You can add your own files in Knowledge later.</p> : null}
+          <Actions>
+            {onAddSample && sample !== 'added' ? (
+              <button
+                type="button"
+                className="text-button"
+                disabled={sample === 'adding'}
+                onClick={() => {
+                  setSample('adding')
+                  void onAddSample().then((ok) => setSample(ok ? 'added' : 'failed'))
+                }}
+              >
+                {sample === 'adding' ? 'Adding…' : 'Add a sample document'}
+              </button>
+            ) : null}
+            {onOpenKnowledge ? (
+              <button type="button" className="text-button secondary" onClick={onOpenKnowledge}>
+                Open Knowledge
+              </button>
+            ) : null}
+            <button type="button" className="text-button secondary" onClick={() => go(next)}>
+              Next
             </button>
           </Actions>
         </Step>

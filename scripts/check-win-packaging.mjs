@@ -35,6 +35,17 @@ for (const name of ['START-HERE.txt', 'TROUBLESHOOTING.txt']) {
   if (!existsSync(join(root, 'docs', 'handoff', name))) errors.push(`docs/handoff/${name} missing`)
 }
 
+// Knowledge (document RAG): parsers are runtime dependencies (shipped), the sample doc is a resource,
+// and the pdfjs trim must keep the legacy Node build and its worker.
+for (const dep of ['pdfjs-dist', 'mammoth']) {
+  if (!pkg.dependencies?.[dep]) errors.push(`${dep} must be in dependencies (shipped), not devDependencies`)
+}
+if (!existsSync(join(root, 'resources', 'knowledge-sample', 'MIKO-sample-guide.md'))) errors.push('resources/knowledge-sample/MIKO-sample-guide.md missing')
+for (const keep of ['legacy/build/pdf.mjs', 'legacy/build/pdf.worker.mjs']) {
+  if (!existsSync(join(root, 'node_modules', 'pdfjs-dist', keep))) errors.push(`pdfjs-dist/${keep} missing (Knowledge PDF reading needs it)`)
+}
+if (/!\*\*\/node_modules\/pdfjs-dist\/legacy\/build\/\*\.mjs/.test(yml)) errors.push('electron-builder.yml excludes the pdfjs legacy build')
+
 // Case-sensitive resource names used from code (must match on case-sensitive volumes).
 for (const name of ['tray-mac.png', 'tray-win.png', 'listen-win.ps1', 'keys-win.ps1', 'whatsapp-win.ps1', 'listen-mac.swift', 'ax-mac.swift']) {
   const p = join(root, 'resources', name)

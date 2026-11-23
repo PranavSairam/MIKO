@@ -174,7 +174,7 @@ describe('chosen panel sizes', () => {
     assert.equal(huge.width, desktop.width - PET_WINDOW.width - MAIL_PANEL.gap)
     assert.equal(huge.height, desktop.height - 2 * EDGE_MARGIN)
     const tiny = fitPanel('chat', { width: 10, height: 10 }, placed.pet, desktop)
-    assert.deepEqual({ width: tiny.width, height: tiny.height }, { width: 240, height: 200 })
+    assert.deepEqual({ width: tiny.width, height: tiny.height }, { width: 300, height: 300 })
   })
 
   it('reads saved sizes defensively', () => {

@@ -6,8 +6,9 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
-        // electron-updater is CommonJS with dynamic requires — keep it external.
-        external: ['electron-updater']
+        // electron-updater is CommonJS with dynamic requires; the document parsers are loaded
+        // at runtime from node_modules (pdfjs-dist is ESM with its own worker file).
+        external: ['electron-updater', 'mammoth', 'pdfjs-dist', /^pdfjs-dist\//]
       }
     }
   },

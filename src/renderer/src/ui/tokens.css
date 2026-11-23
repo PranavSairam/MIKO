@@ -1,0 +1,109 @@
+/*
+ * MIKO design tokens. One source for colour, type, spacing, radii, shadows, control sizes,
+ * motion and window layers. Working surfaces are charcoal and nearly opaque; amber is the
+ * primary accent; cyan is reserved for live/projection features (Interactive GPT, projector).
+ */
+:root {
+  /* Surfaces (charcoal, darkest → raised) */
+  --m-bg: #171413;
+  --m-surface: #1e1a19;
+  --m-surface-2: #262120;
+  --m-surface-3: #2f2927;
+  --m-field: #121010;
+  --m-line: rgba(255, 255, 255, 0.12);
+  --m-line-strong: rgba(255, 255, 255, 0.22);
+
+  /* Text */
+  --m-text: #f6efe6;
+  --m-text-2: #d9cabb;
+  --m-text-3: #b3a293;
+  --m-text-disabled: rgba(246, 239, 230, 0.42);
+
+  /* Amber (primary) */
+  --m-accent: #c4844a;
+  --m-accent-hover: #d39a5c;
+  --m-accent-strong: #e7b07a;
+  --m-accent-soft: rgba(196, 132, 74, 0.16);
+  --m-accent-line: rgba(231, 176, 122, 0.5);
+  --m-on-accent: #1b130e;
+
+  /* Cyan (live / projection only) */
+  --m-live: #6fdce6;
+  --m-live-text: #b7eef2;
+  --m-live-soft: rgba(110, 220, 230, 0.12);
+  --m-live-line: rgba(110, 220, 230, 0.45);
+
+  /* Status */
+  --m-ok: #8fd19e;
+  --m-ok-soft: rgba(143, 209, 158, 0.12);
+  --m-warn: #f3ce61;
+  --m-warn-soft: rgba(243, 206, 97, 0.12);
+  --m-danger: #f08a7e;
+  --m-danger-soft: rgba(240, 138, 126, 0.12);
+  --m-focus: #f3ce61;
+
+  /* Type */
+  --m-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --m-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --m-text-xs: 12px;
+  --m-text-sm: 13px;
+  --m-text-md: 14px;
+  --m-text-lg: 16px;
+  --m-text-xl: 18px;
+  --m-leading: 1.45;
+
+  /* Spacing (4 px grid) */
+  --m-space-1: 4px;
+  --m-space-2: 8px;
+  --m-space-3: 12px;
+  --m-space-4: 16px;
+  --m-space-5: 20px;
+  --m-space-6: 24px;
+
+  /* Radii and shadows */
+  --m-radius-sm: 8px;
+  --m-radius-md: 12px;
+  --m-radius-lg: 18px;
+  --m-radius-pill: 999px;
+  --m-shadow-1: 0 4px 12px rgba(0, 0, 0, 0.28);
+  --m-shadow-2: 0 18px 40px rgba(0, 0, 0, 0.32);
+
+  /* Control sizes (readable by default; html.is-compact shrinks them) */
+  --m-control: 40px;
+  --m-control-sm: 32px;
+  --m-icon-control: 40px;
+
+  /* Motion */
+  --m-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --m-fast: 120ms;
+  --m-normal: 200ms;
+
+  /* Layers inside a window */
+  --m-layer-base: 0;
+  --m-layer-sticky: 10;
+  --m-layer-menu: 40;
+  --m-layer-dialog: 60;
+  --m-layer-toast: 80;
+}
+
+html.is-compact {
+  --m-control: 30px;
+  --m-control-sm: 26px;
+  --m-icon-control: 28px;
+  --m-text-md: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --m-fast: 0ms;
+    --m-normal: 0ms;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --m-line: rgba(255, 255, 255, 0.3);
+    --m-text-2: #efe4d8;
+    --m-text-3: #d6c7b8;
+  }
+}

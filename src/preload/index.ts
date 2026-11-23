@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   IPC,
   type AppDiscoveryInfo,
@@ -125,6 +125,33 @@ const api: MikoApi = {
   },
   projectorOpen: (): void => {
     ipcRenderer.send(IPC.projectorOpen)
+  },
+  knowledgeState: () => ipcRenderer.invoke(IPC.knowledgeState),
+  knowledgeAdd: (how, paths) => ipcRenderer.invoke(IPC.knowledgeAdd, how, Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : undefined),
+  knowledgeSample: () => ipcRenderer.invoke(IPC.knowledgeSample),
+  knowledgeAction: (action, id) => ipcRenderer.invoke(IPC.knowledgeAction, action, typeof id === 'string' ? id : undefined),
+  knowledgeSearch: (query, opts) => ipcRenderer.invoke(IPC.knowledgeSearch, String(query), opts ?? {}),
+  knowledgePassage: (chunkId, version) => ipcRenderer.invoke(IPC.knowledgePassage, String(chunkId), String(version)),
+  knowledgeOpen: (sourceId) => ipcRenderer.invoke(IPC.knowledgeOpen, String(sourceId)),
+  knowledgePathsFor: (files) => {
+    const out: string[] = []
+    for (const file of Array.from(files ?? []).slice(0, 500)) {
+      try {
+        const path = webUtils.getPathForFile(file)
+        if (path) out.push(path)
+      } catch {
+        /* not a real file (e.g. dragged text) */
+      }
+    }
+    return out
+  },
+  onKnowledge: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const p = payload as { type?: unknown } | null
+      if (p && (p.type === 'state' || p.type === 'removed')) listener(payload as Parameters<typeof listener>[0])
+    }
+    ipcRenderer.on(IPC.knowledgeEvent, wrapped)
+    return () => ipcRenderer.removeListener(IPC.knowledgeEvent, wrapped)
   },
   playToyHide: (): void => {
     ipcRenderer.send(IPC.playToyHide)

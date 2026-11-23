@@ -1,3 +1,4 @@
+import type { KnowledgeAddResult, KnowledgeState, PassagePreview } from './knowledge'
 export const IPC = {
   moveBy: 'miko:move-by',
   setPanelOpen: 'miko:set-panel-open',
@@ -10,6 +11,15 @@ export const IPC = {
   petFlight: 'miko:pet-flight',
   petCommand: 'miko:pet-command',
   // Video projector (its preload inlines these names; keep in sync with src/preload/projector.ts).
+  // Knowledge (document RAG)
+  knowledgeState: 'miko:knowledge-state',
+  knowledgeAdd: 'miko:knowledge-add',
+  knowledgeSample: 'miko:knowledge-sample',
+  knowledgeAction: 'miko:knowledge-action',
+  knowledgeSearch: 'miko:knowledge-search',
+  knowledgePassage: 'miko:knowledge-passage',
+  knowledgeOpen: 'miko:knowledge-open',
+  knowledgeEvent: 'miko:knowledge-event',
   projectorOpen: 'miko:projector-open',
   projectorSources: 'miko:projector-sources',
   projectorSelect: 'miko:projector-select',
@@ -928,6 +938,17 @@ export interface MikoApi {
   exitFinished: (generation: number) => void
   /** Open the video projector (pick a window to mirror above MIKO). */
   projectorOpen: () => void
+  /** Knowledge: the owner's documents, indexed locally. */
+  knowledgeState: () => Promise<KnowledgeState | null>
+  knowledgeAdd: (how: 'files' | 'folder' | 'paths', paths?: string[]) => Promise<KnowledgeAddResult | null>
+  knowledgeSample: () => Promise<KnowledgeAddResult | null>
+  knowledgeAction: (action: 'cancel' | 'retry' | 'refresh' | 'remove' | 'clear' | 'consent-on' | 'consent-off', id?: string) => Promise<boolean>
+  knowledgeSearch: (query: string, opts?: { sourceIds?: string[]; limit?: number; perSource?: number }) => Promise<KnowledgeHit[]>
+  knowledgePassage: (chunkId: string, version: string) => Promise<PassagePreview>
+  knowledgeOpen: (sourceId: string) => Promise<{ ok: boolean; reason: string }>
+  /** Real file paths for files dropped on the Knowledge area (never read from anywhere else). */
+  knowledgePathsFor: (files: File[]) => string[]
+  onKnowledge: (listener: (event: KnowledgeEvent) => void) => () => void
   /** Casual-mode fetch: throw the toy (main animates it in its own click-through window). */
   playThrow: (request: PlayThrowRequest) => Promise<PlayThrowResult>
   /** Hide the thrown toy (picked up, cancelled, done). */
@@ -984,3 +1005,16 @@ export interface PlayThrowResult {
 }
 
 export type PlayToyEvent = { phase: 'landed' } | { phase: 'cancelled'; reason: string }
+
+export interface KnowledgeHit {
+  chunkId: string
+  sourceId: string
+  name: string
+  page?: number
+  heading?: string
+  text: string
+  version: string
+  score: number
+}
+
+export type KnowledgeEvent = { type: 'state'; state: KnowledgeState } | { type: 'removed'; ids: string[] }

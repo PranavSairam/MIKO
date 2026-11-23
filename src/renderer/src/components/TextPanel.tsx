@@ -10,6 +10,33 @@ import {
 import { SavedChats, type SavedChatsProps } from './SavedChats'
 import { FeedbackForm } from './FeedbackForm'
 import { SetupTutorial } from './SetupTutorial'
+import { Button, IconButton } from '../ui/Button'
+import { Menu } from '../ui/Menu'
+import { Tabs } from '../ui/Tabs'
+import { Markdown } from '../ui/Markdown'
+import { TaskStatus } from '../ui/Status'
+import { KnowledgeAnswerCard, type KnowledgeEntry, type KnowledgeHandlers } from './KnowledgeAnswer'
+
+/** Long pastes (TL;DR, questions quoting a document) must not be cut off silently. */
+const MAX_INPUT = 60_000
+
+function MicGlyph() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+      <rect x="7.2" y="2.6" width="5.6" height="9.6" rx="2.8" />
+      <path d="M4.6 9.6a5.4 5.4 0 0 0 10.8 0M10 15v2.4" />
+    </svg>
+  )
+}
+
+function GptGlyph() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+      <path d="M10 2.8v3M10 14.2v3M2.8 10h3M14.2 10h3M4.9 4.9l2.1 2.1M13 13l2.1 2.1M15.1 4.9 13 7M7 13l-2.1 2.1" />
+      <circle cx="10" cy="10" r="2.2" />
+    </svg>
+  )
+}
 
 export const COMMANDS_LATER = 'Commands are coming next.'
 
@@ -23,10 +50,23 @@ export interface PanelChoice {
   exact?: boolean
 }
 
+export type PanelView = 'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help' | 'knowledge'
+
+const SUB_VIEWS: Partial<Record<PanelView, string>> = {
+  prefs: 'Preferences',
+  feedback: 'Send feedback',
+  setup: 'Setup',
+  help: 'Help & setup',
+  chats: 'Saved chats'
+}
+
 export type VoiceHelp = 'microphone-privacy' | 'sound-input' | 'speech-language'
 
 export type PanelEntry =
   | { id: number; kind: 'note'; text: string }
+  | KnowledgeEntry
+  /** Files dropped on Chat: never indexed or uploaded unless the owner picks an action. */
+  | { id: number; kind: 'file-drop'; names: string[]; paths: string[]; status: 'asking' | 'added' | 'dismissed'; detail: string }
   /** Mic couldn't start or heard nothing usable: plain reason, Retry, and the settings page that fixes it. */
   | { id: number; kind: 'voice-problem'; text: string; help?: VoiceHelp }
   /** TL;DR of pasted text: the summary, with the original kept (collapsed) underneath. */
@@ -272,13 +312,20 @@ interface TextPanelProps {
   canSpeak?: boolean
   onSpeak?: (text: string) => void
   /** 'chats' swaps the conversation for the Saved chats manager; 'feedback' is the private report form; 'setup' is first-run / tutorial. */
-  view?: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help'
-  onView?: (view: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help') => void
+  view?: PanelView
+  onView?: (view: PanelView) => void
+  /** Knowledge tab content (documents, search, sources). */
+  knowledge?: ReactNode
+  onKnowledgeEntry?: KnowledgeHandlers
+  /** Files dropped on the chat conversation (the owner then chooses what to do). */
+  onFilesDropped?: (files: File[]) => void
+  onFileDrop?: (entryId: number, action: 'knowledge' | 'dismiss') => void
   setup?: {
     platform: string
     pets?: ReactNode
     onOpenInteractiveGpt?: () => void
     onRunExample?: (text: string) => void
+    onAddSample?: () => Promise<boolean>
   }
   /** Help & Setup hub (tray “Help & Setup…”). */
   help?: ReactNode
@@ -347,9 +394,9 @@ interface TextPanelProps {
       onSaveDownloadUrl: (url: string) => void
     }
   }
-  /** Chat / Mail tabs. Mail content replaces the conversation. */
+  /** Chat / Mail / Knowledge tabs. Mail and Knowledge replace the conversation. */
   tab?: 'chat' | 'mail'
-  onTab?: (tab: 'chat' | 'mail') => void
+  onTab?: (tab: 'chat' | 'mail' | 'knowledge') => void
   mail?: ReactNode
   /** Panel size: presets for this tab, and a drag corner on the side away from the dog. */
   sizing?: {
@@ -448,13 +495,25 @@ export function TextPanel({
   tab = 'chat',
   onTab,
   mail,
+  knowledge,
+  onKnowledgeEntry,
+  onFilesDropped,
+  onFileDrop,
   sizing
 }: TextPanelProps) {
-  const [sizeMenu, setSizeMenu] = useState(false)
   const [localDraft, setLocalDraft] = useState('')
   const [localReplies, setLocalReplies] = useState<string[]>([])
   const logRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const value = draft ?? localDraft
+
+  // Grow the message box with its text (up to ~6 lines), so long pastes stay readable.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`
+  }, [value, view, tab])
   const notes = entries ?? (replies ?? localReplies).map((text, index) => ({ id: index, kind: 'note' as const, text }))
 
   useEffect(() => {
@@ -482,114 +541,78 @@ export function TextPanel({
   return (
     <section className={tab === 'mail' ? 'panel glass is-mail' : 'panel glass'} data-hit="panel" aria-label="Talk to MIKO">
       <header className="panel-bar">
-        <h1>{view === 'chats' && tab === 'chat' ? 'Saved chats' : 'MIKO'}</h1>
+        <h1 className="panel-wordmark">MIKO</h1>
         {onTab ? (
-          <div className="tabs" role="tablist" aria-label="Panel">
-            {(['chat', 'mail'] as const).map((t) => (
-              <button
-                type="button"
-                role="tab"
-                key={t}
-                aria-selected={tab === t}
-                className={tab === t ? 'tab is-on' : 'tab'}
-                onClick={() => onTab(t)}
-              >
-                {t === 'chat' ? 'Chat' : 'Mail'}
-              </button>
-            ))}
-          </div>
-        ) : null}
-        {onView && prefs && tab === 'chat' ? (
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={view === 'prefs' || view === 'feedback' || view === 'setup' || view === 'help' ? 'Back' : 'MIKO preferences'}
-            title="MIKO preferences"
-            onClick={() => onView(view === 'prefs' || view === 'feedback' || view === 'setup' || view === 'help' ? 'log' : 'prefs')}
-          >
-            {view === 'prefs' || view === 'feedback' || view === 'setup' || view === 'help' ? '←' : '⚙'}
-          </button>
-        ) : null}
-        {onView && tab === 'chat' && view !== 'prefs' && view !== 'feedback' && view !== 'setup' && view !== 'help' ? (
-          <button
-            type="button"
-            className="text-button secondary bar-button"
-            onClick={() => onView(view === 'chats' ? 'log' : 'chats')}
-          >
-            {view === 'chats' ? 'Back' : 'Saved chats'}
-          </button>
-        ) : null}
-        {sizing ? (
-          <span className="size-control">
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Panel size"
-              title="Panel size"
-              aria-expanded={sizeMenu}
-              onClick={() => setSizeMenu((v) => !v)}
-            >
-              ⤢
-            </button>
-            {sizeMenu ? (
-              <span className="size-menu" role="menu">
-                {(['small', 'medium', 'large'] as const).map((p) => (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    key={p}
-                    className="chip"
-                    onClick={() => {
-                      setSizeMenu(false)
-                      sizing.onPreset(p)
-                    }}
-                  >
-                    {p === 'small' ? 'Small' : p === 'medium' ? 'Medium' : 'Large'}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="chip subtle"
-                  onClick={() => {
-                    setSizeMenu(false)
-                    sizing.onPreset('reset')
-                  }}
-                >
-                  Default
-                </button>
-                <span className="size-hint">Or drag the panel’s corner. {tab === 'mail' ? 'Mail' : 'Chat'} keeps its own size.</span>
-              </span>
-            ) : null}
-          </span>
+          <Tabs<'chat' | 'mail' | 'knowledge'>
+            label="MIKO sections"
+            value={tab === 'mail' ? 'mail' : view === 'knowledge' ? 'knowledge' : 'chat'}
+            onChange={(next) => onTab(next)}
+            items={[
+              { id: 'chat', label: 'Chat' },
+              { id: 'mail', label: 'Mail' },
+              ...(knowledge ? [{ id: 'knowledge' as const, label: 'Knowledge' }] : [])
+            ]}
+          />
         ) : null}
         <div className="panel-bar-actions">
-          {gptMode && tab === 'chat' ? (
-            <button
-              type="button"
-              className={gptMode.phase !== 'off' ? 'text-button bar-button' : 'text-button secondary bar-button'}
-              aria-pressed={gptMode.phase !== 'off'}
-              title="GPT Mode: forward ordinary MIKO messages to the ChatGPT app (not Interactive GPT)"
-              onClick={() => gptMode.onToggle()}
-            >
-              GPT Mode
-            </button>
-          ) : null}
-          {onOpenChatGptWeb && tab === 'chat' ? (
-            <button
-              type="button"
-              className="text-button secondary bar-button interactive-gpt-btn"
-              title="Interactive GPT: use ChatGPT directly inside MIKO (sandboxed chatgpt.com — not GPT Mode, not Lens)"
+          {onOpenChatGptWeb ? (
+            <IconButton
+              label="Open Interactive GPT (chatgpt.com inside MIKO)"
+              tone="live"
+              icon={<GptGlyph />}
               onClick={() => onOpenChatGptWeb()}
-            >
-              Interactive GPT
-            </button>
+            />
           ) : null}
-          <button type="button" className="close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
+          <Menu
+            label="More"
+            icon="⋯"
+            entries={[
+              ...(gptMode
+                ? [
+                    {
+                      id: 'gpt-mode',
+                      label: 'GPT Mode',
+                      hint: 'Forward ordinary MIKO messages to the ChatGPT app (not Interactive GPT)',
+                      checked: gptMode.phase !== 'off',
+                      onSelect: () => gptMode.onToggle()
+                    }
+                  ]
+                : []),
+              ...(onView && tab === 'chat'
+                ? [{ id: 'chats', label: 'Saved chats', onSelect: () => onView('chats') }]
+                : []),
+              ...(sizing
+                ? [
+                    { kind: 'separator' as const, id: 's1' },
+                    { kind: 'label' as const, id: 'size', label: `Panel size (${tab === 'mail' ? 'Mail' : 'Chat'})` },
+                    ...(['small', 'medium', 'large', 'reset'] as const).map((p) => ({
+                      id: `size-${p}`,
+                      label: p === 'small' ? 'Small' : p === 'medium' ? 'Medium' : p === 'large' ? 'Large' : 'Default size',
+                      onSelect: () => sizing.onPreset(p)
+                    }))
+                  ]
+                : []),
+              ...(onView && prefs
+                ? [
+                    { kind: 'separator' as const, id: 's2' },
+                    { id: 'prefs', label: 'Preferences', onSelect: () => onView('prefs') },
+                    ...(help ? [{ id: 'help', label: 'Help & setup', onSelect: () => onView('help') }] : []),
+                    { id: 'feedback', label: 'Send feedback', onSelect: () => onView('feedback') }
+                  ]
+                : [])
+            ]}
+          />
+          <IconButton label="Close panel" icon="×" onClick={onClose} className="panel-close" />
         </div>
       </header>
+      {onView && tab === 'chat' && SUB_VIEWS[view] ? (
+        <div className="view-head">
+          <Button variant="ghost" size="sm" onClick={() => onView('log')}>
+            ← Back to chat
+          </Button>
+          <h2>{SUB_VIEWS[view]}</h2>
+        </div>
+      ) : null}
       {gptMode && gptMode.phase !== 'off' && tab === 'chat' && view === 'log' ? (
         <div className="gpt-mode-banner" data-hit="gpt-mode">
           <div className="gpt-mode-banner-row">
@@ -640,6 +663,8 @@ export function TextPanel({
       ) : null}
       {tab === 'mail' && mail ? (
         mail
+      ) : view === 'knowledge' && knowledge ? (
+        knowledge
       ) : view === 'help' && onView && help ? (
         help
       ) : view === 'setup' && onView ? (
@@ -648,6 +673,8 @@ export function TextPanel({
           pets={setup?.pets}
           onOpenInteractiveGpt={setup?.onOpenInteractiveGpt}
           onRunExample={setup?.onRunExample}
+          onAddSample={setup?.onAddSample}
+          onOpenKnowledge={knowledge ? () => onView('knowledge') : undefined}
           onClose={() => onView('log')}
         />
       ) : view === 'feedback' && onView ? (
@@ -663,23 +690,50 @@ export function TextPanel({
         <SavedChats chats={chats} {...chatTools} />
       ) : (
       <>
-      <div className="panel-log" ref={logRef} role="log" aria-live="polite" aria-label="MIKO replies">
+      <div
+        className="panel-log"
+        ref={logRef}
+        role="log"
+        aria-live="polite"
+        aria-label="MIKO replies"
+        onDragOver={(event) => {
+          if (onFilesDropped && event.dataTransfer.types.includes('Files')) {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'copy'
+          }
+        }}
+        onDrop={(event) => {
+          const files = Array.from(event.dataTransfer.files ?? [])
+          if (!onFilesDropped || !files.length) return
+          event.preventDefault()
+          onFilesDropped(files)
+        }}
+      >
         {notes.length === 0 ? (
           <p className="panel-empty">MIKO is listening.</p>
         ) : (
           notes.map((entry) => (
-            <div className="panel-entry" key={entry.id}>
-              {entry.kind === 'note' || entry.kind === 'closing' ? (
-                <>
-                  <p>{entry.text}</p>
-                  {canSpeak && entry.kind === 'note' ? (
-                    <div className="panel-inline">
-                      <button type="button" className="text-button secondary" onClick={() => onSpeak?.(entry.text)}>
-                        Read aloud
-                      </button>
+            <div className={`panel-entry is-${entry.kind}`} key={entry.id}>
+              {entry.kind === 'note' || entry.kind === 'closing' ? <p>{entry.text}</p> : null}
+              {entry.kind === 'knowledge' && onKnowledgeEntry ? <KnowledgeAnswerCard entry={entry} on={onKnowledgeEntry} /> : null}
+              {entry.kind === 'file-drop' ? (
+                <div className="file-drop-card">
+                  <p>
+                    {entry.status === 'asking'
+                      ? `You dropped ${entry.names.length === 1 ? `“${entry.names[0]}”` : `${entry.names.length} files`} on Chat. Chat can’t attach files. Add ${entry.names.length === 1 ? 'it' : 'them'} to Knowledge so you can ask about ${entry.names.length === 1 ? 'it' : 'them'}?`
+                      : entry.detail}
+                  </p>
+                  {entry.status === 'asking' && onFileDrop ? (
+                    <div className="msg-actions">
+                      <Button size="sm" variant="primary" onClick={() => onFileDrop(entry.id, 'knowledge')}>
+                        Add to Knowledge
+                      </Button>
+                      <Button size="sm" onClick={() => onFileDrop(entry.id, 'dismiss')}>
+                        Not now
+                      </Button>
                     </div>
                   ) : null}
-                </>
+                </div>
               ) : null}
               {entry.kind === 'voice-problem' ? (
                 <>
@@ -709,7 +763,11 @@ export function TextPanel({
                     <span className="tldr-meta"> of your text ({wordsIn(entry.original)} words)</span>
                   </p>
                   {entry.status === 'running' ? <p className="panel-detail">Summarising… (only the text you pasted; nothing in it is run)</p> : null}
-                  {entry.status === 'done' ? <p className="tldr-summary">{entry.summary}</p> : null}
+                  {entry.status === 'done' ? (
+                    <div className="tldr-summary">
+                      <Markdown text={entry.summary} />
+                    </div>
+                  ) : null}
                   {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
                   {onTldr ? (
                     <div className="panel-inline wrap">
@@ -818,36 +876,55 @@ export function TextPanel({
               ) : null}
               {entry.kind === 'bridge' && !entry.selection ? (
                 <>
-                  <p className="assistant-label">
-                    MIKO assistant · {entry.thread ? `conversation ${entry.thread.slice(0, 8)}` : 'new conversation'}
-                    {entry.turn && entry.turn > 1 ? ` · follow-up ${entry.turn - 1}` : ''}
-                  </p>
-                  <p className="prompt">{entry.prompt}</p>
-                  {entry.status === 'sending' || entry.status === 'running' ? (
-                    <p className="panel-detail">
-                      Thinking… {entry.startedAt ? Math.floor((Date.now() - entry.startedAt) / 1000) : 0} s
-                    </p>
-                  ) : null}
-                  {entry.status === 'done' ? <p className="assistant-reply">{entry.reply}</p> : null}
-                  {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
-                  <div className="panel-inline">
+                  <p className="msg-user">{entry.prompt}</p>
+                  <div className="msg-assistant">
                     {entry.status === 'sending' || entry.status === 'running' ? (
-                      <button type="button" className="text-button secondary" onClick={() => onBridgeCancel?.(entry.requestId)}>
-                        Cancel
-                      </button>
+                      <TaskStatus
+                        state="running"
+                        label={`Thinking… ${entry.startedAt ? Math.floor((Date.now() - entry.startedAt) / 1000) : 0} s`}
+                      />
                     ) : null}
-                    {entry.status === 'done' && entry.thread && entry.thread === assistantThread ? (
-                      <button type="button" className="text-button secondary" onClick={() => onBridgeNew?.()}>
-                        New conversation
-                      </button>
+                    {entry.status === 'done' ? <Markdown text={entry.reply} /> : null}
+                    {entry.status !== 'done' && entry.status !== 'sending' && entry.status !== 'running' && entry.detail ? (
+                      <TaskStatus state={entry.status === 'cancelled' ? 'cancelled' : 'failed'} label={entry.detail} />
                     ) : null}
-                    {entry.status !== 'sending' && entry.status !== 'running' ? (
-                      <button type="button" className="text-button secondary" onClick={() => onAskInChatGpt?.(entry.prompt)}>
-                        Ask in ChatGPT app
-                      </button>
-                    ) : null}
+                    <div className="msg-actions">
+                      {entry.status === 'sending' || entry.status === 'running' ? (
+                        <Button size="sm" onClick={() => onBridgeCancel?.(entry.requestId)}>
+                          Cancel
+                        </Button>
+                      ) : null}
+                      {entry.status === 'done' ? (
+                        <Button size="sm" variant="ghost" onClick={() => void window.miko?.copyText(entry.reply)}>
+                          Copy
+                        </Button>
+                      ) : null}
+                      {entry.status === 'done' && canSpeak ? (
+                        <Button size="sm" variant="ghost" onClick={() => onSpeak?.(entry.reply)}>
+                          Read aloud
+                        </Button>
+                      ) : null}
+                      {entry.status === 'done' && entry.thread && entry.thread === assistantThread ? (
+                        <Button size="sm" variant="ghost" onClick={() => onBridgeNew?.()}>
+                          New conversation
+                        </Button>
+                      ) : null}
+                      {entry.status !== 'sending' && entry.status !== 'running' ? (
+                        <Button size="sm" variant="ghost" onClick={() => onAskInChatGpt?.(entry.prompt)}>
+                          Ask in ChatGPT app
+                        </Button>
+                      ) : null}
+                    </div>
+                    <details className="msg-about">
+                      <summary>About this answer</summary>
+                      <p>
+                        MIKO assistant · {entry.thread ? `conversation ${entry.thread.slice(0, 8)}` : 'new conversation'}
+                        {entry.turn && entry.turn > 1 ? ` · follow-up ${entry.turn - 1}` : ''}
+                        {entry.status === 'done' && entry.detail ? ` · ${entry.detail}` : ''}
+                      </p>
+                      <p>{ASSISTANT_NOTE}</p>
+                    </details>
                   </div>
-                  <p className="panel-detail note">{ASSISTANT_NOTE}</p>
                 </>
               ) : null}
               {entry.kind === 'whatsapp' ? (
@@ -1028,45 +1105,46 @@ export function TextPanel({
           ))
         )}
       </div>
-      <textarea
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.shiftKey) return
-          event.preventDefault()
-          submit()
-        }}
-        placeholder="Say something…"
-        maxLength={400}
-        spellCheck={false}
-        autoFocus
-        aria-label="Message"
-      />
-      {listening ? (
-        <div className="listen-bar" role="status">
-          <span>{listenDetail || 'Listening…'}</span>
-          <button type="button" className="text-button" onClick={onListenStop}>
-            Stop
-          </button>
-          <button type="button" className="text-button secondary" onClick={onListenCancel}>
-            Cancel
-          </button>
+      <div className="composer">
+        {listening ? (
+          <div className="listen-bar" role="status">
+            <span>{listenDetail || 'Listening…'}</span>
+            <Button size="sm" variant="primary" onClick={onListenStop}>
+              Stop
+            </Button>
+            <Button size="sm" onClick={onListenCancel}>
+              Cancel
+            </Button>
+          </div>
+        ) : null}
+        <div className="composer-row">
+          <textarea
+            ref={inputRef}
+            className="composer-input"
+            rows={1}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              submit()
+            }}
+            placeholder="Ask MIKO or give a command…"
+            maxLength={MAX_INPUT}
+            spellCheck={false}
+            autoFocus
+            aria-label="Message"
+          />
+          <IconButton
+            label={listening ? 'Listening' : 'Talk to MIKO'}
+            tone={listening ? 'on' : 'plain'}
+            aria-pressed={listening}
+            icon={<MicGlyph />}
+            onClick={onListen}
+            disabled={listening}
+          />
+          <IconButton label="Send" tone="primary" icon="↑" onClick={submit} disabled={value.trim().length === 0} />
         </div>
-      ) : null}
-      <div className="panel-actions">
-        <button
-          type="button"
-          className={listening ? 'mic is-live' : 'mic'}
-          aria-pressed={listening}
-          aria-label={listening ? 'Listening' : 'Microphone'}
-          onClick={onListen}
-          disabled={listening}
-        >
-          Mic
-        </button>
-        <button type="button" className="send" onClick={submit} disabled={value.trim().length === 0}>
-          Send
-        </button>
       </div>
       </>
       )}
@@ -1232,7 +1310,12 @@ function Preferences({
 
   return (
     <div className="prefs">
-      {pets ? <PetChooser {...pets} /> : null}
+      {pets ? (
+        <details className="prefs-pet">
+          <summary>Pet: change MIKO’s look</summary>
+          <PetChooser {...pets} />
+        </details>
+      ) : null}
       <p className="panel-detail">
         <strong>MIKO preferences</strong> — {prefsStoredOnlyMessage(platform).replace(/^MIKO preferences — /, '')}
       </p>
@@ -1342,6 +1425,8 @@ function Preferences({
         </div>
       ) : null}
 
+      <details className="prefs-advanced">
+        <summary>Advanced: writing style, browser, aliases, examples, selection shortcut</summary>
       <p className="prefs-section">Structured</p>
       <label className="prefs-field">
         Preferred browser
@@ -1538,6 +1623,7 @@ function Preferences({
           <p className="panel-detail">Selected-text capture is available on macOS only.</p>
         </>
       )}
+      </details>
     </div>
   )
 }

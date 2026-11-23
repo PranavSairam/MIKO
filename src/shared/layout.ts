@@ -5,9 +5,10 @@ export const PET_WINDOW = {
   height: 250
 } as const
 
+/** Default chat panel: room for a one-row header, a readable conversation and the composer. */
 export const PANEL = {
-  width: 272,
-  height: 220,
+  width: 420,
+  height: 480,
   gap: 12
 } as const
 
@@ -54,13 +55,17 @@ function contentSize(panelOpen: boolean, panel: PanelSize = PANEL): { width: num
   }
 }
 
-/** Pet canvas origin inside the window. A left-side panel pushes the dog right; a tall panel centres it vertically. */
+/**
+ * Pet canvas origin inside the window. A left-side panel pushes the dog right. A panel taller
+ * than the pet grows upward from the pet's feet (the pet sits at the window's bottom), so the
+ * pet doesn't jump when the panel opens near the bottom of the screen, where it usually lives.
+ */
 export function petViewportOffset(panelOpen: boolean, panelSide: 'left' | 'right', panel: PanelSize = PANEL): Point {
   if (!panelOpen) return { x: 0, y: 0 }
   const size = contentSize(true, panel)
   return {
     x: panelSide === 'left' ? panel.width + panel.gap : 0,
-    y: Math.round((size.height - PET_WINDOW.height) / 2)
+    y: Math.round(size.height - PET_WINDOW.height)
   }
 }
 
@@ -84,12 +89,12 @@ export type PanelPreset = 'small' | 'medium' | 'large'
 
 /** Size choices per tab (DIP). Medium is the original size. */
 export const PANEL_PRESETS: Record<PanelKind, Record<PanelPreset, { width: number; height: number }>> = {
-  chat: { small: { width: 272, height: 220 }, medium: { width: 400, height: 340 }, large: { width: 560, height: 500 } },
+  chat: { small: { width: 340, height: 360 }, medium: { width: 420, height: 480 }, large: { width: 600, height: 660 } },
   mail: { small: { width: 540, height: 420 }, medium: { width: 700, height: 520 }, large: { width: 960, height: 700 } }
 }
 
 export const PANEL_LIMITS: Record<PanelKind, { min: { width: number; height: number }; max: { width: number; height: number } }> = {
-  chat: { min: { width: 240, height: 200 }, max: { width: 1000, height: 1000 } },
+  chat: { min: { width: 300, height: 300 }, max: { width: 1000, height: 1000 } },
   mail: { min: { width: MAIL_MIN.width, height: MAIL_MIN.height }, max: { width: 1600, height: 1200 } }
 }
 
@@ -108,9 +113,9 @@ export function parsePanelSize(kind: PanelKind, value: unknown): { width: number
  * the tab's limits and the screen (the window clamp then moves the dog).
  */
 export function fitPanel(kind: PanelKind, chosen: { width: number; height: number } | null, pet: Point, work: Rect): PanelSize {
-  if (!chosen) return kind === 'mail' ? fitMailPanel(pet, work) : { ...PANEL }
+  if (!chosen && kind === 'mail') return fitMailPanel(pet, work)
   const gap = kind === 'mail' ? MAIL_PANEL.gap : PANEL.gap
-  const size = parsePanelSize(kind, chosen) ?? PANEL_PRESETS[kind].medium
+  const size = (chosen ? parsePanelSize(kind, chosen) : null) ?? (kind === 'chat' ? { width: PANEL.width, height: PANEL.height } : PANEL_PRESETS[kind].medium)
   const { min } = PANEL_LIMITS[kind]
   const widest = work.width - PET_WINDOW.width - gap
   const tallest = work.height - 2 * EDGE_MARGIN
