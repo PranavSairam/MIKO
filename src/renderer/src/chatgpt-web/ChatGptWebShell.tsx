@@ -12,6 +12,7 @@ type Status = {
   downloadNote: string
   dropNote?: string
   dictateArmed?: boolean
+  talkArmed?: boolean
   partition: string
   label: string
   loadError?: string
@@ -36,6 +37,7 @@ type Api = {
   expandFromDrag: () => Promise<boolean>
   pasteClipboard: () => Promise<{ ok: boolean; reason: string }>
   dictateArm: (armed: boolean) => Promise<boolean>
+  talkArm: (armed: boolean) => Promise<boolean>
   lastDownload: () => Promise<{ filename: string; state: string; savePath: string } | null>
   onDownload: (handler: (info: { filename: string; state: string; savePath: string }) => void) => () => void
   onState: (handler: (info: Status) => void) => () => void
@@ -346,6 +348,20 @@ export function ChatGptWebShell(): ReactElement {
             onClick={() => void api?.setPinned(!pinned)}
           >
             Pin
+          </button>
+          <button
+            type="button"
+            className={status?.talkArmed ? 'cw-btn is-on is-talk' : 'cw-btn'}
+            disabled={!api}
+            aria-pressed={status?.talkArmed === true}
+            title={
+              status?.talkArmed
+                ? 'Talking: each sentence you say with Caps Lock + A is sent to ChatGPT. Click to stop.'
+                : 'Talk to GPT: hold Caps Lock + A and speak; each sentence is sent here and answered.'
+            }
+            onClick={() => void api?.talkArm(!(status?.talkArmed === true))}
+          >
+            {status?.talkArmed ? '● Talking' : 'Talk'}
           </button>
           <button
             type="button"

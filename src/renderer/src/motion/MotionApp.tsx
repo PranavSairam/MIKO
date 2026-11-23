@@ -130,6 +130,7 @@ import {
 import type { ActionPlan } from '../../../shared/actions'
 import type { CorrectionExample, MikoStructuredPreferences } from '../../../shared/preferences'
 import { DEFAULT_PREFERENCES, retrieveExamples } from '../../../shared/preferences'
+import { frameBudgetMs, shouldDrawFrame } from '../../../shared/frame-pacing'
 import {
   buildPassages,
   knowledgePrompt,
@@ -304,6 +305,9 @@ export function MotionApp() {
   const voiceAutoRef = useRef(true)
   /** Explicit Dictate-to-GPT arm: next mic final → Interactive GPT composer once (not merely open). */
   const dictateToGptRef = useRef(false)
+  /** Talk to GPT switch (explicit): each final voice transcript is sent to Interactive GPT. */
+  const talkToGptRef = useRef(false)
+  const [talkToGpt, setTalkToGptState] = useState(false)
   /** Typed vs voice for shared router decisions (e.g. type-in-gpt → Interactive GPT). */
   const inputSourceRef = useRef<'typed' | 'voice'>('typed')
   const messagingRef = useRef<'whatsapp' | null>(null)
@@ -851,6 +855,8 @@ export function MotionApp() {
     let pinnedRight = true
     let actor: Actor | null = null
     let pointer: PointerSample | null = null
+    /** Last time the cursor moved (the head follows it smoothly for a moment after). */
+    let pointerMovedAt = 0
     let wasDragging = false
     let disposed = false
     let order: BehaviorOrder = { ...IDLE_ORDER }
@@ -1270,6 +1276,19 @@ export function MotionApp() {
     }
 
     const draw = (now: number): void => {
+      // Frame pacing: 60 fps while something moves, 30 fps while idling (never the display's 120 Hz).
+      const budget = frameBudgetMs({
+        walking: actor?.phase === 'walk' || actor?.phase === 'turn',
+        dragging: draggingRef.current || guidingRef.current,
+        flying: flight !== null,
+        playing: playRef.current.phase !== 'idle',
+        exiting: mode === 'exit',
+        pointerMoving: now - pointerMovedAt < 1200
+      })
+      if (!shouldDrawFrame(now, last, budget)) {
+        frame = window.requestAnimationFrame(draw)
+        return
+      }
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
       if (mode === 'live' && sequence && actor) {
@@ -1520,6 +1539,7 @@ export function MotionApp() {
     const stopPlacement = window.miko.onPlacement(onPlacement)
     const stopPresence = window.miko.onPresence(onPresence)
     const stopPointer = window.miko.onPointer((sample) => {
+      if (!pointer || Math.abs(sample.windowX - pointer.windowX) + Math.abs(sample.windowY - pointer.windowY) > 1) pointerMovedAt = performance.now()
       pointer = sample
     })
     const onMotion = (): void => {
@@ -1662,6 +1682,10 @@ export function MotionApp() {
       if (typeof hint.dictateToGpt === 'boolean') {
         // Chrome / main arm the session; pet only syncs the ref (notes come from the arming UI/command).
         dictateToGptRef.current = hint.dictateToGpt
+      }
+      if (typeof hint.talkToGpt === 'boolean') {
+        talkToGptRef.current = hint.talkToGpt
+        setTalkToGptState(hint.talkToGpt)
       }
       if (hint.listen) {
         void (async () => {
@@ -5410,6 +5434,35 @@ export function MotionApp() {
       pushEntry({ id: 0, kind: 'note', text: 'Interactive GPT collapsed to a pill near MIKO.' })
       return
     }
+    if (action === 'talk-on' || action === 'talk-off') {
+      if (typeof window.miko.chatgptWebTalkArm !== 'function') {
+        pushEntry({ id: 0, kind: 'note', text: 'Talk to GPT isn’t available in this build.' })
+        return
+      }
+      if (action === 'talk-off') {
+        await window.miko.chatgptWebTalkArm(false)
+        talkToGptRef.current = false
+        setTalkToGptState(false)
+        pushEntry({ id: 0, kind: 'note', text: 'Stopped talking to ChatGPT. Your voice runs MIKO commands again.' })
+        return
+      }
+      const opened = await window.miko.chatgptWebOpen()
+      if (!opened.ok) {
+        pushEntry({ id: 0, kind: 'note', text: opened.reason || 'Couldn’t open Interactive GPT.' })
+        return
+      }
+      const on = await window.miko.chatgptWebTalkArm(true)
+      talkToGptRef.current = on
+      setTalkToGptState(on)
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: on
+          ? 'Talking to ChatGPT. Hold Caps Lock + A (or MIKO’s mic) and speak: each sentence is sent and answered in the Interactive GPT window. Say “stop talking to GPT” to stop. Typing here still goes to MIKO.'
+          : 'Couldn’t start Talk to GPT.'
+      })
+      return
+    }
     if (action === 'dictate' || action === 'stop-dictate') {
       if (typeof window.miko.chatgptWebDictateArm !== 'function') {
         pushEntry({ id: 0, kind: 'note', text: 'Dictate to GPT isn’t available in this build.' })
@@ -5633,6 +5686,38 @@ export function MotionApp() {
       text: inserted.ok
         ? `Dictate to GPT: ${inserted.reason}`
         : `Dictate to GPT failed: ${inserted.reason}`
+    })
+    return true
+  }
+
+  /**
+   * Talk to GPT: put the sentence into ChatGPT's message box and send it (verified submit). The
+   * answer appears in the Interactive GPT window. Never sends on a signed-out page.
+   */
+  async function sendTalkToGpt(text: string): Promise<boolean> {
+    if (!talkToGptRef.current || typeof window.miko === 'undefined') return false
+    const said = text.trim()
+    if (!said) return true
+    if (typeof window.miko.chatgptWebInsertTranscript !== 'function' || typeof window.miko.chatgptWebSubmitDraft !== 'function') return false
+    pushEntry({ id: 0, kind: 'note', text: `To ChatGPT: \u201c${said}\u201d` })
+    const web = await window.miko.chatgptWebStatus()
+    if (!web.open || web.collapsed) {
+      const opened = await window.miko.chatgptWebOpen()
+      if (!opened.ok) {
+        pushEntry({ id: 0, kind: 'note', text: opened.reason || 'Interactive GPT isn’t open, so nothing was sent.' })
+        return true
+      }
+    }
+    const inserted = await window.miko.chatgptWebInsertTranscript(said)
+    if (!inserted.ok) {
+      pushEntry({ id: 0, kind: 'note', text: `Not sent: ${inserted.reason}` })
+      return true
+    }
+    const result = await window.miko.chatgptWebSubmitDraft({ expectedText: said })
+    pushEntry({
+      id: 0,
+      kind: 'note',
+      text: result.ok ? 'Sent. ChatGPT is answering in its window.' : `Not sent: ${result.reason} (your words are still in ChatGPT’s box).`
     })
     return true
   }
@@ -5955,6 +6040,8 @@ export function MotionApp() {
     if (await handleSharedLocalControls(text, 'voice')) return
     // Explicit Dictate-to-GPT session only — never because Interactive GPT is merely open.
     if (await consumeDictateToGptSession(text)) return
+    // Explicit Talk to GPT switch: the sentence goes to ChatGPT (MIKO's own controls were checked above).
+    if (await sendTalkToGpt(text)) return
     if (await handleKnowledgeText(text)) return
     if (gptModeRef.current.phase === 'active') {
       pushEntry({ id: 0, kind: 'note', text: `Heard: \u201c${text}\u201d` })
@@ -7470,6 +7557,7 @@ export function MotionApp() {
             })()
           }}
           tab={tab}
+          talkToGpt={{ on: talkToGpt, onStop: () => void handleInteractiveGptLocal('talk-off') }}
           knowledge={
             <KnowledgeView
               state={knowledgeState}

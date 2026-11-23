@@ -8,6 +8,12 @@ describe('parseKeyEvent', () => {
     assert.deepEqual(parseKeyEvent('{"event":"talk-stop"}'), { kind: 'talk-stop' })
     assert.deepEqual(parseKeyEvent('{"event":"switcher"}'), { kind: 'switcher' })
   })
+  it('carries the app that was in front when Tab + Q was pressed', () => {
+    assert.deepEqual(parseKeyEvent('{"event":"switcher","front":4321}'), { kind: 'switcher', front: 4321 })
+    // Bad or missing values are ignored, never guessed.
+    assert.deepEqual(parseKeyEvent('{"event":"switcher","front":-1}'), { kind: 'switcher' })
+    assert.deepEqual(parseKeyEvent('{"event":"switcher","front":"x"}'), { kind: 'switcher' })
+  })
   it('reads a permission problem', () => {
     assert.deepEqual(parseKeyEvent('{"error":"permission"}'), { kind: 'permission' })
   })

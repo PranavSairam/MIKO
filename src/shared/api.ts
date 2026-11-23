@@ -124,6 +124,7 @@ export const IPC = {
   chatgptWebDragActive: 'miko:chatgpt-web-drag-active',
   chatgptWebExpandFromDrag: 'miko:chatgpt-web-expand-from-drag',
   chatgptWebDictateArm: 'miko:chatgpt-web-dictate-arm',
+  chatgptWebTalkArm: 'miko:chatgpt-web-talk-arm',
   /** Main → pet UI hints (tuck panel when Interactive GPT opens, etc.). */
   uiHint: 'miko:ui-hint',
   bridgeSend: 'miko:bridge-send',
@@ -633,12 +634,14 @@ export interface MikoApi {
     downloadNote: string
     dropNote: string
     dictateArmed: boolean
+    talkArmed?: boolean
     partition: string
     label: string
   }>
   onUiHint: (listener: (hint: {
     tuckPanel?: boolean
     dictateToGpt?: boolean
+    talkToGpt?: boolean
     openSetup?: boolean
     openHelp?: boolean
     runTutorial?: boolean
@@ -670,6 +673,8 @@ export interface MikoApi {
   chatgptWebCancelSubmit: () => Promise<number>
   /** Arm/disarm one-shot Dictate-to-GPT (next mic final → composer). */
   chatgptWebDictateArm: (armed: boolean) => Promise<boolean>
+  /** Talk to GPT: each spoken sentence is sent to ChatGPT until switched off. */
+  chatgptWebTalkArm: (armed: boolean) => Promise<boolean>
   gptModeSetLiveView: (enabled: boolean) => Promise<import('./gpt-mode').GptModeState>
   gptModeLiveSnapshot: () => Promise<import('./gpt-mode').GptLiveSnapshot>
   gptModeListSources: () => Promise<{

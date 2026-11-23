@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -9,6 +10,8 @@ import IOKit.hid
 //   Tab + Q             -> {"event":"switcher"}
 // The A and Q of a chord are swallowed. Caps Lock is put back to the state it
 // had before the chord. Nothing is logged or stored; only these events leave.
+// A plain Tab is held back until it's clear whether Q follows: with Q it opens the fan
+// (and never reaches the app); without Q the Tab is replayed so the app gets it as usual.
 
 let kCaps: CGKeyCode = 57
 let kA: CGKeyCode = 0
@@ -55,6 +58,33 @@ var tap: CFMachPort?
 var talking = false
 var swallowAUp = false
 var swallowQUp = false
+/// A plain Tab went down and is being held back (Tab + Q, or replayed on release).
+var tabHeld = false
+var tabUsedForSwitcher = false
+var tabFlags: CGEventFlags = []
+/// Events MIKO Keys posts itself (a replayed Tab) carry this mark and pass straight through.
+let replayMark: Int64 = 0x4D494B4F
+
+func postKey(_ code: CGKeyCode, down: Bool, flags: CGEventFlags) {
+    guard let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) else { return }
+    event.flags = flags
+    event.setIntegerValueField(.eventSourceUserData, value: replayMark)
+    event.post(tap: .cgSessionEventTap)
+}
+
+/// Give the held-back Tab to the app (as a normal press).
+func releaseHeldTab() {
+    guard tabHeld else { return }
+    tabHeld = false
+    if !tabUsedForSwitcher {
+        postKey(kTab, down: true, flags: tabFlags)
+        postKey(kTab, down: false, flags: tabFlags)
+    }
+}
+
+func frontPid() -> Int32 {
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+}
 /// Caps Lock lock state, refreshed every 50 ms while the key is not held.
 var lastCaps = false
 /// Snapshot of lastCaps when Caps Lock went down: what to restore after a chord.
@@ -73,10 +103,37 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
         if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         return Unmanaged.passUnretained(event)
     }
+    if event.getIntegerValueField(.eventSourceUserData) == replayMark {
+        return Unmanaged.passUnretained(event)
+    }
     let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
 
     if type == .flagsChanged {
         return Unmanaged.passUnretained(event)
+    }
+
+    if code == kTab {
+        let modified = !event.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
+        if type == .keyDown {
+            // Hold a plain Tab back (and its auto-repeats while held) until we know if Q follows.
+            if tabHeld { return nil }
+            if !modified && event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                tabHeld = true
+                tabUsedForSwitcher = false
+                tabFlags = event.flags
+                return nil
+            }
+        } else if type == .keyUp && tabHeld {
+            // Without Q this replays the whole press (down + up); after Tab + Q it posts nothing.
+            releaseHeldTab()
+            return nil
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    // Any other key while Tab is held (except Q): hand the Tab over first so typing order is kept.
+    if type == .keyDown && tabHeld && code != kQ {
+        releaseHeldTab()
     }
 
     if code == kA {
@@ -96,9 +153,10 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
     }
 
     if code == kQ {
-        if type == .keyDown && (swallowQUp || physicallyDown(kTab)) {
+        if type == .keyDown && (swallowQUp || tabHeld || physicallyDown(kTab)) {
             if !swallowQUp && event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-                send("{\"event\":\"switcher\"}")
+                tabUsedForSwitcher = true
+                send("{\"event\":\"switcher\",\"front\":\(frontPid())}")
             }
             swallowQUp = true
             return nil

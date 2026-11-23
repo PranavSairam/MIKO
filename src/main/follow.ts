@@ -31,7 +31,7 @@ export async function enableFollow(next: boolean): Promise<{ ok: boolean; reason
     writeSaved(false)
     return { ok: true, reason: '' }
   }
-  const probe = readForeground(process.pid)
+  const probe = await readForeground(process.pid)
   if (!probe.ok) return { ok: false, reason: probe.permission }
   enabled = true
   settle = null
@@ -62,24 +62,22 @@ export function startFollowLoop(): void {
   timer = setInterval(() => {
     if (!enabled || polling) return
     polling = true
-    try {
-      tick(false)
-    } finally {
+    void tick(false).finally(() => {
       polling = false
-    }
+    })
   }, 700)
 }
 
-export function comeToFront(): { ok: boolean; reason: string; paused: boolean } {
-  const probe = readForeground(process.pid)
+export async function comeToFront(): Promise<{ ok: boolean; reason: string; paused: boolean }> {
+  const probe = await readForeground(process.pid)
   if (!probe.ok) return { ok: false, reason: probe.permission, paused: false }
   if (!probe.window) return { ok: false, reason: 'I can\u2019t see an active window.', paused: false }
   if (followBlocked() || !isPetVisible()) return { ok: true, reason: '', paused: true }
-  tick(true)
+  await tick(true)
   return { ok: true, reason: '', paused: false }
 }
 
-function tick(once: boolean): void {
+async function tick(once: boolean): Promise<void> {
   if (!isPetVisible()) return
   const blocked = followBlocked()
   if (blocked) {
@@ -90,8 +88,10 @@ function tick(once: boolean): void {
     wasBlocked = false
     lastActed = ''
   }
-  const read = readForeground(process.pid)
+  const read = await readForeground(process.pid)
   if (!read.ok || !read.window) return
+  // State may have changed while the probe ran.
+  if (!isPetVisible() || followBlocked()) return
   const front = read.window
   const key = `${front.pid}:${front.bounds.x},${front.bounds.y},${front.bounds.width},${front.bounds.height}:${front.fullscreen ? 1 : 0}`
   if (!once) {

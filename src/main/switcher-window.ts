@@ -16,6 +16,8 @@ import {
   waitUntilPidGone
 } from './running'
 import { winFocusWindow } from './win-keys'
+import { lastExternalFresh } from './foreground'
+import { logDiag } from './diagnostics'
 
 /** The running-apps fan: a second transparent window anchored above MIKO (macOS; Windows via Tab + Q too). */
 
@@ -35,6 +37,27 @@ let switcherIgnoring = true
 let lastBlurHideAt = 0
 /** A pet click this soon after a blur-hide was the click that closed the fan: don't reopen it. */
 const REOPEN_GUARD_MS = 450
+/** The app that was in front when the fan opened: closing the fan from the keyboard returns there. */
+let restorePid: number | null = null
+
+function captureRestoreTarget(frontPid?: number): void {
+  // Exact: the key helper reports the front app at the moment of the chord. Fallback: Follow's
+  // recent reading (never older than 3 s, so focus never jumps to a stale app).
+  if (frontPid && frontPid !== process.pid) {
+    restorePid = frontPid
+    return
+  }
+  const front = lastExternalFresh(3000)
+  restorePid = front && front.pid !== process.pid ? front.pid : null
+}
+
+/** Hide, then hand focus back to the app the owner was using (keyboard closes only). */
+function hideAndRestore(): void {
+  const pid = restorePid
+  restorePid = null
+  hideSwitcher(true)
+  if (pid && process.platform === 'darwin') void focusPid(pid).catch(() => false)
+}
 
 function applySwitcherIgnore(ignore: boolean): void {
   if (!win || win.isDestroyed()) return
@@ -88,9 +111,15 @@ export function toggleSwitcherFromPet(): void {
   openSwitcher()
 }
 
-export function toggleSwitcher(): void {
-  if (win && !win.isDestroyed() && win.isVisible()) hideSwitcher()
-  else openSwitcher()
+/** Tab + Q: open the fan, or close it and return to the previous app. */
+export function toggleSwitcher(frontPid?: number): void {
+  logDiag('switcher', 'toggle from keys', { visible: Boolean(win && !win.isDestroyed() && win.isVisible()), ready, front: Boolean(frontPid) })
+  if (win && !win.isDestroyed() && win.isVisible()) {
+    hideAndRestore()
+    return
+  }
+  captureRestoreTarget(frontPid)
+  openSwitcher()
 }
 
 export function hideSwitcher(force = false): void {
@@ -104,7 +133,10 @@ export function registerSwitcherIpc(): void {
   ipcMain.handle(IPC.switcherFocus, async (event, pid: unknown) => {
     if (!trusted(event) || !Number.isInteger(pid)) return false
     const ok = await focusPid(pid as number)
-    if (ok) hideSwitcher()
+    if (ok) {
+      restorePid = null
+      hideSwitcher()
+    }
     return ok
   })
   ipcMain.handle(IPC.switcherQuit, (event, pid: unknown) => {
@@ -161,7 +193,8 @@ export function registerSwitcherIpc(): void {
     )
   })
   ipcMain.on(IPC.switcherClose, (event) => {
-    if (trusted(event)) hideSwitcher(true)
+    // Escape in the fan: close and return to the app the owner was in.
+    if (trusted(event)) hideAndRestore()
   })
   ipcMain.on(IPC.switcherIgnoreMouse, (event, ignore: unknown) => {
     if (!trusted(event) || typeof ignore !== 'boolean') return

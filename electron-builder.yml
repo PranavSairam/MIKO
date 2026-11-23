@@ -68,6 +68,8 @@ mac:
   artifactName: MIKO-${version}-${arch}-mac.${ext}
   extendInfo:
     LSUIElement: true
+    # macOS shows this when MIKO (or ChatGPT's voice mode inside Interactive GPT) first uses the mic.
+    NSMicrophoneUsageDescription: MIKO listens when you hold its talk key or use ChatGPT voice in Interactive GPT.
 dmg:
   artifactName: MIKO-${version}-${arch}.${ext}
 # Windows NSIS installer for owner PC testing / dad handoff.

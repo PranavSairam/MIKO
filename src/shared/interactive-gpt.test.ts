@@ -41,3 +41,47 @@ describe('Interactive GPT phrases as Windows dictation writes them', () => {
     assert.equal(parseInteractiveGptLocalAction('open calculator'), null)
   })
 })
+
+describe('Interactive GPT: spoken requests with filler and mishearings', () => {
+  it('opens for polite or chatty requests ending in the open command', () => {
+    for (const phrase of [
+      'Nothing much can you open interact ChatGPT',
+      'can you open interactive GPT',
+      'could you please open the interactive chat GPT',
+      'hey miko open interactive gpt',
+      'please open inter active GPT',
+      'open interact GPT'
+    ]) {
+      assert.equal(parseInteractiveGptLocalAction(phrase), 'open', phrase)
+    }
+  })
+
+  it('does not open for questions or prompts that merely mention it', () => {
+    for (const phrase of [
+      'should I open interactive GPT later?',
+      'what is interactive GPT',
+      'ask interactive GPT to open my email',
+      'how do I interact with ChatGPT'
+    ]) {
+      assert.equal(parseInteractiveGptLocalAction(phrase), null, phrase)
+    }
+  })
+})
+
+describe('Talk to GPT switch (voice goes to ChatGPT and is sent)', () => {
+  it('turns on', () => {
+    for (const phrase of ['talk to GPT', 'talk to chat GPT', 'start talking to interactive GPT', 'can you start talk mode', 'chat with ChatGPT', 'talk mode on']) {
+      assert.equal(parseInteractiveGptLocalAction(phrase), 'talk-on', phrase)
+    }
+  })
+  it('turns off', () => {
+    for (const phrase of ['stop talking to GPT', 'stop talk mode', 'talk mode off', 'end chat with GPT', 'stop talking to chat GPT.']) {
+      assert.equal(parseInteractiveGptLocalAction(phrase), 'talk-off', phrase)
+    }
+  })
+  it('does not trigger on ordinary sentences', () => {
+    for (const phrase of ['I need to talk to my GPT teacher tomorrow', 'should I chat with GPT about this?', 'talk to mom']) {
+      assert.equal(parseInteractiveGptLocalAction(phrase), null, phrase)
+    }
+  })
+})

@@ -59,6 +59,8 @@ export function Switcher() {
   const [reducedMotion, setReducedMotion] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<DragState | null>(null)
+  /** Tab went down inside the fan; its action runs on release only if the fan is still open. */
+  const tabDownRef = useRef(false)
   const suppressClick = useRef(false)
 
   const shown = useMemo(() => filterApps(apps, query), [apps, query])
@@ -128,6 +130,7 @@ export function Switcher() {
   const isOpen = useRef(false)
   useEffect(() => {
     const reset = (): void => {
+      tabDownRef.current = false
       isOpen.current = false
       openSerial.current += 1
       setQuery('')
@@ -323,8 +326,9 @@ export function Switcher() {
         setSelected((value) => (shown.length ? (value - 1 + shown.length) % shown.length : 0))
       } else if (event.key === 'Enter') {
         void choose(shown[selected])
-      } else if (event.key === 'Tab' && browserFor(shown[selected]?.bundleId ?? '')) {
-        void openTabs(shown[selected])
+      } else if (event.key === 'Tab') {
+        // Acted on at key release (below): Tab + Q to close the fan must not open a browser's tabs.
+        tabDownRef.current = !event.repeat
       } else if (event.key === 'Backspace') {
         setQuery((value) => value.slice(0, -1))
         setSelected(0)
@@ -338,8 +342,19 @@ export function Switcher() {
       }
       event.preventDefault()
     }
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab' || !tabDownRef.current) return
+      tabDownRef.current = false
+      if (document.hidden || dragRef.current || tabsView) return
+      const app = shown[selected]
+      if (app && browserFor(app.bundleId ?? '')) void openTabs(app)
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
+    }
   })
 
   useEffect(() => {

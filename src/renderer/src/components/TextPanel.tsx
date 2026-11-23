@@ -316,6 +316,8 @@ interface TextPanelProps {
   onView?: (view: PanelView) => void
   /** Knowledge tab content (documents, search, sources). */
   knowledge?: ReactNode
+  /** Talk to GPT is on: spoken sentences go to ChatGPT. */
+  talkToGpt?: { on: boolean; onStop: () => void }
   onKnowledgeEntry?: KnowledgeHandlers
   /** Files dropped on the chat conversation (the owner then chooses what to do). */
   onFilesDropped?: (files: File[]) => void
@@ -496,6 +498,7 @@ export function TextPanel({
   onTab,
   mail,
   knowledge,
+  talkToGpt,
   onKnowledgeEntry,
   onFilesDropped,
   onFileDrop,
@@ -611,6 +614,17 @@ export function TextPanel({
             ← Back to chat
           </Button>
           <h2>{SUB_VIEWS[view]}</h2>
+        </div>
+      ) : null}
+      {talkToGpt?.on && tab === 'chat' && view === 'log' ? (
+        <div className="talk-banner" role="status">
+          <span className="talk-dot" aria-hidden="true" />
+          <span className="talk-text">
+            <strong>Talking to ChatGPT.</strong> Hold Caps Lock + A and speak; answers appear in Interactive GPT.
+          </span>
+          <Button size="sm" variant="live" onClick={talkToGpt.onStop}>
+            Stop
+          </Button>
         </div>
       ) : null}
       {gptMode && gptMode.phase !== 'off' && tab === 'chat' && view === 'log' ? (

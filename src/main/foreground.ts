@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import type { Rect } from '../shared/layout'
 
 export interface FrontWindow {
@@ -15,12 +15,35 @@ export type FrontRead =
 
 /** Last non-MIKO front window. Opening the panel must not erase this. */
 let lastExternal: FrontWindow | null = null
+let lastExternalAt = 0
 
-/** Read the front app's name and window bounds. Nothing else is collected. */
-export function readForeground(ownPid: number): FrontRead {
-  const result = process.platform === 'win32' ? readWindows(ownPid) : readMac(ownPid)
-  if (result.ok && result.window) lastExternal = result.window
+/**
+ * Read the front app's name and window bounds. Nothing else is collected.
+ * Asynchronous: the osascript / PowerShell probe takes ~200 ms, and the follow loop runs it
+ * every 700 ms. A synchronous spawn froze MIKO's main process (window moves, click-through,
+ * Tab + Q) for that long each time.
+ */
+export async function readForeground(ownPid: number): Promise<FrontRead> {
+  const result = process.platform === 'win32' ? await readWindows(ownPid) : await readMac(ownPid)
+  if (result.ok && result.window) {
+    lastExternal = result.window
+    lastExternalAt = Date.now()
+  }
   return result
+}
+
+/** The last external app, only if it was seen recently (never act on a stale guess). */
+export function lastExternalFresh(maxAgeMs: number): FrontWindow | null {
+  return lastExternal && Date.now() - lastExternalAt <= maxAgeMs ? lastExternal : null
+}
+
+function run(command: string, args: string[], timeout: number): Promise<{ stdout: string; stderr: string; failed: boolean; status: number }> {
+  return new Promise((resolve) => {
+    execFile(command, args, { shell: false, encoding: 'utf8', timeout, maxBuffer: 8000, windowsHide: true }, (error, stdout, stderr) => {
+      const code = error && typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === 'number' ? Number((error as { code: number }).code) : error ? 1 : 0
+      resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), failed: Boolean(error && code === 1 && !stdout), status: code })
+    })
+  })
 }
 
 /** Snapshot of the last external app before MIKO took focus. */
@@ -28,16 +51,10 @@ export function lastExternalApp(): FrontWindow | null {
   return lastExternal
 }
 
-function readMac(ownPid: number): FrontRead {
-  const result = spawnSync('/usr/bin/osascript', ['-e', MAC_SCRIPT], {
-    shell: false,
-    encoding: 'utf8',
-    timeout: 2500,
-    maxBuffer: 4000,
-    windowsHide: true
-  })
-  const error = `${result.stderr ?? ''}`
-  if (result.error || /not allowed|assistive|1002|-1743|-1719/i.test(error)) {
+async function readMac(ownPid: number): Promise<FrontRead> {
+  const result = await run('/usr/bin/osascript', ['-e', MAC_SCRIPT], 2500)
+  const error = result.stderr
+  if (/not allowed|assistive|1002|-1743|-1719/i.test(error)) {
     return {
       ok: false,
       permission:
@@ -48,15 +65,9 @@ function readMac(ownPid: number): FrontRead {
   return { ok: true, window: parseLine(result.stdout, ownPid) }
 }
 
-function readWindows(ownPid: number): FrontRead {
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_SCRIPT], {
-    shell: false,
-    encoding: 'utf8',
-    timeout: 4000,
-    maxBuffer: 4000,
-    windowsHide: true
-  })
-  if (result.error || result.status !== 0) {
+async function readWindows(ownPid: number): Promise<FrontRead> {
+  const result = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_SCRIPT], 4000)
+  if (result.status !== 0) {
     return { ok: false, permission: 'MIKO could not read the foreground window.' }
   }
   return { ok: true, window: parseLine(result.stdout, ownPid) }

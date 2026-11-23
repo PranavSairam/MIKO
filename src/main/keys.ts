@@ -1,20 +1,22 @@
 import { parseKeyEvent } from '../shared/keys'
 import { compileHelper, launchHelper, type HelperHandle, type HelperSpec } from './helper-app'
 import { startWinKeys } from './win-keys'
+import { logDiag } from './diagnostics'
 
 const KEYS_HELPER: HelperSpec = {
   source: 'keys-mac.swift',
   name: 'miko-keys',
   displayName: 'MIKO Keys',
   bundleId: 'com.miko.keys',
-  frameworks: ['CoreGraphics', 'IOKit', 'ApplicationServices'],
+  frameworks: ['AppKit', 'CoreGraphics', 'IOKit', 'ApplicationServices'],
   plistExtra: ''
 }
 
 export interface KeyHandlers {
   talkStart: () => void
   talkStop: () => void
-  switcher: () => void
+  /** front: pid of the app in front when the chord was pressed (macOS helper), if known. */
+  switcher: (front?: number) => void
   permission: () => void
 }
 
@@ -33,13 +35,19 @@ export function startKeys(handlers: KeyHandlers): () => void {
 
   const launch = (): void => {
     const helper = compileHelper(KEYS_HELPER)
-    if (!helper) return
+    if (!helper) {
+      logDiag('keys', 'helper not built (swiftc missing or failed)')
+      return
+    }
     handle = launchHelper(
       helper.root,
       ['--parent', String(process.pid)],
       (line) => {
+        if (/^\{"pid":/.test(line.trim())) logDiag('keys', 'helper started')
         const event = parseKeyEvent(line)
         if (!event) return
+        // Event names only (never keystrokes): shows whether the chord reaches MIKO.
+        if (event.kind === 'switcher' || event.kind === 'permission') logDiag('keys', `helper event: ${event.kind}`)
         if (event.kind === 'talk-start') {
           talking = true
           handlers.talkStart()
@@ -47,7 +55,7 @@ export function startKeys(handlers: KeyHandlers): () => void {
           talking = false
           handlers.talkStop()
         } else if (event.kind === 'switcher') {
-          handlers.switcher()
+          handlers.switcher(event.front)
         } else {
           handlers.permission()
         }

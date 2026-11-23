@@ -332,9 +332,11 @@ const api: MikoApi = {
   chatgptWebCancelSubmit: async () => (await ipcRenderer.invoke(IPC.chatgptWebCancelSubmit)) as number,
   chatgptWebDictateArm: async (armed: boolean) =>
     (await ipcRenderer.invoke(IPC.chatgptWebDictateArm, armed === true)) as boolean,
+  chatgptWebTalkArm: async (armed: boolean) => (await ipcRenderer.invoke(IPC.chatgptWebTalkArm, armed === true)) as boolean,
   onUiHint: (listener: (hint: {
     tuckPanel?: boolean
     dictateToGpt?: boolean
+    talkToGpt?: boolean
     openSetup?: boolean
     openHelp?: boolean
     runTutorial?: boolean
@@ -345,6 +347,7 @@ const api: MikoApi = {
       const p = payload as {
         tuckPanel?: boolean
         dictateToGpt?: boolean
+        talkToGpt?: boolean
         openSetup?: boolean
         openHelp?: boolean
         runTutorial?: boolean
@@ -353,6 +356,7 @@ const api: MikoApi = {
       listener({
         tuckPanel: p.tuckPanel === true,
         dictateToGpt: typeof p.dictateToGpt === 'boolean' ? p.dictateToGpt : undefined,
+        talkToGpt: typeof p.talkToGpt === 'boolean' ? p.talkToGpt : undefined,
         openSetup: p.openSetup === true,
         openHelp: p.openHelp === true,
         runTutorial: p.runTutorial === true,

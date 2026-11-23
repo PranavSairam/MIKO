@@ -3840,3 +3840,34 @@ html:not(.is-compact) .panel-bar {
   align-self: stretch;
   text-align: left;
 }
+/* Talk to GPT banner (cyan = live feature). */
+.talk-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--m-space-2);
+  flex: 0 0 auto;
+  padding: var(--m-space-2) var(--m-space-3);
+  border-radius: var(--m-radius-md);
+  background: var(--m-live-soft);
+  border: 1px solid var(--m-live-line);
+  font-size: var(--m-text-sm);
+  color: var(--m-live-text);
+}
+.talk-banner .talk-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+.talk-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--m-live);
+  flex: 0 0 auto;
+  animation: m-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .talk-dot {
+    animation: none;
+  }
+}

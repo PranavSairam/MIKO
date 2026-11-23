@@ -213,3 +213,9 @@ body,
   background: #05070a;
   pointer-events: none;
 }
+/* Talk to GPT on: cyan (live feature), matches the banner in MIKO's panel. */
+.cw-btn.is-on.is-talk {
+  background: rgba(110, 220, 230, 0.18);
+  border-color: rgba(110, 220, 230, 0.6);
+  color: #b7eef2;
+}

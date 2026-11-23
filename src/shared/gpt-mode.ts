@@ -205,12 +205,15 @@ export function parseGptModeLocalAction(raw: string): GptLocalAction {
     .trim()
   if (!t) return null
   if (
-    /^(?:exit|leave|quit|turn\s+off|disable|stop)\s+(?:gpt\s+mode|chatgpt\s+mode|gpt)$/i.test(t) ||
+    /^(?:exit|leave|quit|turn\s+off|switch\s+off|disable|deactivate|close|stop)\s+(?:gpt\s+mode|chatgpt\s+mode|gpt)$/i.test(t) ||
     /^gpt\s+mode\s+off$/i.test(t)
   ) {
     return 'exit'
   }
-  if (/^(?:enable|start|enter|turn\s+on)\s+(?:gpt\s+mode|chatgpt\s+mode)$/i.test(t) || /^gpt\s+mode\s+on$/i.test(t)) {
+  if (
+    /^(?:enable|start|enter|turn\s+on|switch\s+on|open|activate|go\s+(?:in)?to)\s+(?:gpt\s+mode|chatgpt\s+mode)$/i.test(t) ||
+    /^gpt\s+mode\s+on$/i.test(t)
+  ) {
     return 'enable'
   }
   if (/^(?:pause|hold)\s+(?:gpt\s+mode|chatgpt\s+mode|gpt)?$/i.test(t) || /^pause$/i.test(t)) return 'pause'

@@ -197,7 +197,7 @@ export class PetRig {
       canvas,
       alpha: true,
       antialias: true,
-      premultipliedAlpha: false
+      premultipliedAlpha: true
     })
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -595,7 +595,9 @@ export class PetRig {
     this.pitchTurn.setFromAxisAngle(this.axisX, -this.lookPitch * headShare)
     head.quaternion.multiply(this.yawTurn).multiply(this.pitchTurn)
     this.lookApplied = true
-    this.canvas.dataset.look = this.lookYaw.toFixed(2)
+    // Debug/verification hint; written only when it changes (a per-frame DOM write dirties the page).
+    const look = this.lookYaw.toFixed(2)
+    if (this.canvas.dataset.look !== look) this.canvas.dataset.look = look
     pet.skinned?.skeleton.update()
   }
 

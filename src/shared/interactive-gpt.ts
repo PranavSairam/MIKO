@@ -3,7 +3,7 @@
  * Distinct from GPT Mode (forwarding) and Lens (mirror).
  */
 
-export type InteractiveGptLocalAction = 'open' | 'show' | 'hide' | 'dictate' | 'stop-dictate' | null
+export type InteractiveGptLocalAction = 'open' | 'show' | 'hide' | 'dictate' | 'stop-dictate' | 'talk-on' | 'talk-off' | null
 
 /**
  * Whole-utterance workspace controls only.
@@ -29,8 +29,16 @@ export function parseInteractiveGptLocalAction(raw: string): InteractiveGptLocal
   }
 
   // Dictation spells it out: “interactive G P T”, “interactive g.p.t.”, “interactive chat GPT”.
-  const w = normalizeGptWords(t)
+  const w = stripRequestLeadIn(
+    normalizeGptWords(t)
+      // Speech often hears “interact” / “inter active” for “interactive” (only right before GPT).
+      .replace(/\binter\s*act(?:ive)?\b(?=\s+(?:the\s+)?(?:gpt|chatgpt)\b)/g, 'interactive')
+  )
   const target = '(?:the\\s+)?(?:interactive\\s+(?:gpt|chatgpt)|chatgpt\\s+web)(?:\\s+(?:window|workspace))?'
+  // Talk to GPT switch: while on, each spoken sentence goes to ChatGPT and is sent.
+  const gpt = '(?:the\\s+)?(?:interactive\\s+)?(?:gpt|chatgpt)'
+  if (new RegExp(`^(?:stop|end|quit|exit)\\s+(?:talking|chatting|talk\\s+mode|the\\s+talk\\s+mode)(?:\\s+(?:to|with)\\s+${gpt})?$|^talk\\s+mode\\s+off$|^(?:end|stop)\\s+(?:the\\s+)?chat\\s+with\\s+${gpt}$`, 'i').test(w)) return 'talk-off'
+  if (new RegExp(`^(?:start\\s+)?(?:talking|talk|chatting|chat)\\s+(?:to|with)\\s+${gpt}$|^(?:start\\s+)?talk\\s+mode(?:\\s+on)?$`, 'i').test(w)) return 'talk-on'
   if (new RegExp(`^(?:hide|collapse)\\s+${target}$`, 'i').test(w)) return 'hide'
   if (new RegExp(`^show\\s+${target}$`, 'i').test(w)) return 'show'
   if (new RegExp(`^(?:open|launch|start|bring\\s+up)\\s+${target}$`, 'i').test(w)) return 'open'
@@ -50,6 +58,20 @@ export function parseInteractiveGptLocalAction(raw: string): InteractiveGptLocal
     return 'stop-dictate'
   }
   return null
+}
+
+/**
+ * A spoken request often starts with filler: “hey MIKO”, “please”, or a whole lead-in that ends in
+ * “can you / could you …” (“nothing much, can you open …”). Only that lead-in is removed; the rest
+ * must still be exactly a workspace command.
+ */
+function stripRequestLeadIn(text: string): string {
+  return text
+    .replace(/^(?:hey\s+)?miko[,\s]+/, '')
+    .replace(/^(?:.*?\b)?(?:can|could|would|will)\s+you\s+(?:please\s+)?/, '')
+    .replace(/^please\s+/, '')
+    .replace(/[?]+$/, '')
+    .trim()
 }
 
 /** Joins spelled-out “G P T” / “g.p.t.” and “chat gpt” so voice and typing match the same phrases. */

@@ -260,7 +260,7 @@ if (!gotLock) {
         })
       },
       talkStop: () => stopListening(),
-      switcher: () => toggleSwitcher(),
+      switcher: (front) => toggleSwitcher(front),
       permission: () => postToPet(IPC.keys, { kind: 'permission' })
     })
 

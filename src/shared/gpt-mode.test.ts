@@ -88,3 +88,16 @@ describe('GPT Mode helpers', () => {
     })
   })
 })
+
+describe('GPT Mode: everyday open/close words', () => {
+  it('“open GPT mode” enables it (never an app called “GPT Mode”)', () => {
+    for (const t of ['Open GPT mode', 'activate GPT mode', 'switch on chatgpt mode', 'go into GPT mode']) {
+      assert.equal(parseGptModeLocalAction(t), 'enable', t)
+    }
+  })
+  it('“close GPT mode” exits it', () => {
+    for (const t of ['close GPT mode', 'switch off GPT mode', 'deactivate GPT mode']) {
+      assert.equal(parseGptModeLocalAction(t), 'exit', t)
+    }
+  })
+})

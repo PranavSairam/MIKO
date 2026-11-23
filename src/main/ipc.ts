@@ -80,6 +80,7 @@ import {
   setChatGptWebChromeDragActive,
   setChatGptWebChromeHeight,
   setChatGptWebDictateArmed,
+  setChatGptWebTalkArmed,
   setChatGptWebPinned
 } from './chatgpt-web-window'
 import { addChat, removeChat, renameChat, type ChatEdit } from '../shared/chatgpt'
@@ -615,6 +616,7 @@ export function registerIpc(presence: {
           downloadNote: '',
           dropNote: '',
           dictateArmed: false,
+          talkArmed: false,
           partition: '',
           label: 'MIKO · ChatGPT'
         }
@@ -646,6 +648,10 @@ export function registerIpc(presence: {
   ipcMain.handle(IPC.chatgptWebDictateArm, (event, armed: unknown) => {
     if (!trusted(event) && !trustedChatGptWeb(event)) return false
     return setChatGptWebDictateArmed(armed === true)
+  })
+  ipcMain.handle(IPC.chatgptWebTalkArm, (event, armed: unknown) => {
+    if (!trusted(event) && !trustedChatGptWeb(event)) return false
+    return setChatGptWebTalkArmed(armed === true)
   })
   ipcMain.handle(IPC.chatgptWebBack, (event) =>
     trustedChatGptWeb(event) ? chatgptWebBack() : false

@@ -102,6 +102,8 @@ let blockedLink: { url: string; host: string } | null = null
 let dropNoteClearTimer: NodeJS.Timeout | null = null
 /** Explicit one-shot Dictate-to-GPT arm (next MIKO mic final → composer, then clear). */
 let dictateArmed = false
+/** Talk to GPT: each final MIKO voice transcript is sent to ChatGPT (explicit switch; off on close). */
+let talkArmed = false
 /** Debounce pet raise on GPT blur to avoid focus/z-order fighting. */
 let raisePetFromBlurTimer: NodeJS.Timeout | null = null
 /** Bumped to drop in-flight Interactive GPT submits (cancel / source change). */
@@ -183,14 +185,25 @@ function configureGuestSession(): void {
   if (guestSessionConfigured) return
   guestSessionConfigured = true
   const ses = guestSession()
-  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) => {
     if (permission === 'clipboard-sanitized-write') {
       callback(true)
       return
     }
+    // ChatGPT's own voice mode: microphone only (never camera or screen), only for chatgpt.com.
+    if (permission === 'media') {
+      const d = details as { mediaTypes?: string[]; requestingUrl?: string; securityOrigin?: string }
+      const types = d.mediaTypes ?? []
+      callback(chatgptMicOrigin(d.requestingUrl ?? d.securityOrigin ?? '') && types.length > 0 && types.every((t) => t === 'audio'))
+      return
+    }
     callback(false)
   })
-  ses.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write')
+  ses.setPermissionCheckHandler((_wc, permission, origin, details) => {
+    if (permission === 'clipboard-sanitized-write') return true
+    const d = details as { mediaType?: string; securityOrigin?: string } | undefined
+    return permission === 'media' && d?.mediaType === 'audio' && chatgptMicOrigin(origin || d?.securityOrigin || '')
+  })
 
   ses.on('will-download', (_event, item) => {
     const dir = join(app.getPath('downloads'), 'MIKO-ChatGPT-Web')
@@ -839,6 +852,10 @@ function invalidatePendingTransfers(): void {
   chromeDragActive = false
   lastDropNote = ''
   dictateArmed = false
+  if (talkArmed) {
+    talkArmed = false
+    postToPet(IPC.uiHint, { talkToGpt: false })
+  }
   cancelChatGptWebSubmit()
   if (dropNoteClearTimer) {
     clearTimeout(dropNoteClearTimer)
@@ -865,6 +882,27 @@ export function setChatGptWebDictateArmed(armed: boolean): boolean {
 
 export function isChatGptWebDictateArmed(): boolean {
   return dictateArmed
+}
+
+/** Talk to GPT on/off. Turning it on cancels a one-shot Dictate (they'd compete for the next sentence). */
+export function setChatGptWebTalkArmed(armed: boolean): boolean {
+  talkArmed = armed === true && isChatGptWebOpen()
+  if (talkArmed && dictateArmed) {
+    dictateArmed = false
+    postToPet(IPC.uiHint, { dictateToGpt: false })
+  }
+  postChromeState()
+  postToPet(IPC.uiHint, { talkToGpt: talkArmed })
+  return talkArmed
+}
+
+function chatgptMicOrigin(url: string): boolean {
+  try {
+    const host = new URL(url).hostname
+    return host === 'chatgpt.com' || host.endsWith('.chatgpt.com')
+  } catch {
+    return false
+  }
 }
 
 export function hideChatGptWebSurfaces(): void {
@@ -1297,6 +1335,7 @@ export function chatgptWebStatus(): {
   downloadNote: string
   dropNote: string
   dictateArmed: boolean
+  talkArmed: boolean
   partition: string
   label: string
   loadError: string
@@ -1315,6 +1354,7 @@ export function chatgptWebStatus(): {
     downloadNote: lastDownloadNote,
     dropNote: lastDropNote,
     dictateArmed,
+    talkArmed,
     partition: PARTITION,
     label: 'MIKO · ChatGPT',
     loadError,
