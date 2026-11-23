@@ -25,8 +25,23 @@ import {
 } from '../../../shared/doberman'
 import { ARRIVE_EPS, clampTravel, guideDestination, nextGuideTarget } from '../../../shared/guide'
 import { LOOK_PITCH_LIMIT, canvasOrigin, lookTarget, pointerToViewport } from '../../../shared/look'
+import {
+  insideRect,
+  PLAY_IDLE,
+  playControlsPet,
+  playReduce,
+  StrokeDetector,
+  type PlayEvent,
+  type PlayReaction,
+  type PlayState,
+  type Toy
+} from '../../../shared/play'
+import type { PlaySettings } from '../../../shared/api'
+import { PlayLayer, type PlayEffect, type PlayMenu } from './PlayLayer'
+import { parseTldr, parseTldrFollowUp, tldrPrompt, type TldrStyle } from '../../../shared/tldr'
 import { roamFor } from '../../../shared/movement'
 import { EXIT_MS } from '../../../shared/summon'
+import { HelpSetup } from '../components/HelpSetup'
 import { TextPanel, PetChooser, type PanelEntry } from '../components/TextPanel'
 import { ChromeProfileFan } from '../components/ChromeProfileFan'
 import {
@@ -144,11 +159,56 @@ import {
 
 const HIT_SLOP_PX = 2
 
+/** How high the bird flies above its ground line while it travels (DIP). */
+const BIRD_HOVER_PX = 26
+
 export function MotionApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelSide, setPanelSide] = useState<'left' | 'right'>('left')
   const [hit, setHit] = useState<HitRect>({ x: 36, y: 24, width: 148, height: 200 })
+  const hitRef = useRef(hit)
+  hitRef.current = hit
+  // Casual-mode play (one state machine; nothing persisted except mode and sound).
+  const [playSettings, setPlaySettings] = useState<PlaySettings>({ mode: 'work', sound: false })
+  const playSettingsRef = useRef(playSettings)
+  playSettingsRef.current = playSettings
+  const [play, setPlayState] = useState<PlayState>(PLAY_IDLE)
+  const playRef = useRef<PlayState>(PLAY_IDLE)
+  const [playMenu, setPlayMenuState] = useState<PlayMenu>('closed')
+  const playMenuRef = useRef<PlayMenu>('closed')
+  const [playHint, setPlayHint] = useState('')
+  const [playEffects, setPlayEffects] = useState<PlayEffect[]>([])
+  const [playChip, setPlayChip] = useState(false)
+  const [playFacing, setPlayFacing] = useState<1 | -1>(-1)
+  const [dropTarget, setDropTarget] = useState(false)
+  const [hopCount, setHopCount] = useState(0)
+  /** A command is running: the resting toys step aside until it's done. */
+  const [taskBusy, setTaskBusy] = useState(0)
+  /** The bird is up in the air / on its perch (the pet window moved off the ground). */
+  const [petAirborne, setPetAirborne] = useState(false)
+  const carryRef = useRef<HTMLDivElement | null>(null)
+  const playTimers = useRef<number[]>([])
+  const playAudio = useRef<AudioContext | null>(null)
+  const effectSerial = useRef(0)
+  /** Set by the pet controller effect: play's handle on the existing walking / reaction code. */
+  const playBridge = useRef<{
+    walkTo: (x: number) => void
+    release: () => void
+    react: (reaction: PlayReaction) => void
+    homeX: () => number
+    facing: () => 1 | -1
+    head: () => { x: number; y: number } | null
+    maxThrow: () => number
+  }>({
+    walkTo: () => undefined,
+    release: () => undefined,
+    react: () => undefined,
+    homeX: () => 0,
+    facing: () => -1,
+    head: () => null,
+    maxThrow: () => 560
+  })
   const [draft, setDraft] = useState('')
   const [entries, setEntries] = useState<PanelEntry[]>([])
   const entriesRef = useRef<PanelEntry[]>([])
@@ -173,7 +233,7 @@ export function MotionApp() {
   gptModeRef.current = gptMode
   const [gptDetailsOpen, setGptDetailsOpen] = useState(false)
   const [, setStageSize] = useState({ width: 800, height: 600 })
-  const [panelView, setPanelView] = useState<'log' | 'chats' | 'prefs' | 'feedback' | 'setup'>('log')
+  const [panelView, setPanelView] = useState<'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help'>('log')
   const [hostPlatform, setHostPlatform] = useState('darwin')
   const [feedbackCtx, setFeedbackCtx] = useState<{
     lastCommand: string
@@ -205,6 +265,7 @@ export function MotionApp() {
   const panelRef = useRef(false)
   const panelSideRef = useRef(panelSide)
   const draggingRef = useRef(false)
+  const armedRef = useRef(false)
   /** Tab+Q feed-to-close: one-shot snack reaction when an app/tab is dropped on the pet. */
   const feedPulseRef = useRef(false)
   /** Brief upward glance when the pet has no snack clip (Doberman). */
@@ -230,6 +291,10 @@ export function MotionApp() {
   const pendingUrlRef = useRef<{ url: string; name: string } | null>(null)
   /** Active Chrome profile fan (token guards stale clicks / superseded requests). */
   const chromeChooserToken = useRef(0)
+  /** The chooser token whose launch already started (each choice launches once). */
+  const chromeLaunchToken = useRef(-1)
+  /** The text of the last TL;DR (for “shorter”, “one sentence”, “action items only”). */
+  const lastTldrRef = useRef<{ content: string; at: number } | null>(null)
   const [chromeChooser, setChromeChooser] = useState<{
     token: number
     profiles: ChromeProfileView[]
@@ -239,6 +304,8 @@ export function MotionApp() {
   const chromeChooserRef = useRef(chromeChooser)
   chromeChooserRef.current = chromeChooser
   const [reducedMotion, setReducedMotionState] = useState(false)
+  const reducedMotionRef = useRef(false)
+  reducedMotionRef.current = reducedMotion
   /** Held open+tell draft until the chat is verified (instruction + tone/pronoun). */
   const pendingWaDraftRef = useRef<HeldWaDraft | null>(null)
   /** Contact search returned no match; waiting for a corrected recipient name. */
@@ -283,8 +350,191 @@ export function MotionApp() {
     setEntries((items) => items.map((item) => (item.id === id ? { ...entry, id } : item)))
   }
 
+  // ------------------------------------------------------------ Casual-mode play
+
+  function setPlayMenu(next: PlayMenu): void {
+    playMenuRef.current = next
+    setPlayMenuState(next)
+  }
+
+  function clearPlayTimers(): void {
+    for (const id of playTimers.current) window.clearTimeout(id)
+    playTimers.current = []
+  }
+
+  function playLater(ms: number, run: () => void): void {
+    const id = window.setTimeout(() => {
+      playTimers.current = playTimers.current.filter((item) => item !== id)
+      run()
+    }, ms)
+    playTimers.current.push(id)
+  }
+
+  /** A short, quiet blip. Only when play sounds are on (off by default). */
+  function playBlip(kind: 'happy' | 'eat' | 'drop'): void {
+    if (!playSettingsRef.current.sound) return
+    try {
+      const ctx = playAudio.current ?? new AudioContext()
+      playAudio.current = ctx
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      const now = ctx.currentTime
+      const [from, to] = kind === 'eat' ? [420, 300] : kind === 'drop' ? [520, 700] : [600, 900]
+      osc.frequency.setValueAtTime(from, now)
+      osc.frequency.exponentialRampToValueAtTime(to, now + 0.12)
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.05, now + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16)
+      osc.connect(gain).connect(ctx.destination)
+      osc.start(now)
+      osc.stop(now + 0.18)
+    } catch {
+      // No audio device: play stays silent.
+    }
+  }
+
+  function releasePlayAudio(): void {
+    const ctx = playAudio.current
+    playAudio.current = null
+    if (ctx) void ctx.close().catch(() => undefined)
+  }
+
+  function addEffects(kind: PlayEffect['kind'], count: number): void {
+    const head = playBridge.current.head() ?? { x: hitRef.current.x + hitRef.current.width / 2, y: hitRef.current.y + 30 }
+    const made: PlayEffect[] = []
+    for (let i = 0; i < count; i += 1) {
+      effectSerial.current += 1
+      made.push({ id: effectSerial.current, kind, x: head.x - 12 + i * 12 + (i % 2 ? 4 : -4), y: head.y - 18 - (i % 2) * 8 })
+    }
+    setPlayEffects((items) => [...items, ...made])
+    const ids = new Set(made.map((m) => m.id))
+    playLater(1300, () => setPlayEffects((items) => items.filter((item) => !ids.has(item.id))))
+  }
+
+  function onPlayTransition(prev: PlayState, next: PlayState): void {
+    if (next.phase === 'idle') {
+      clearPlayTimers()
+      window.miko?.playToyHide()
+      playBridge.current.release()
+      setDropTarget(false)
+      setPlayEffects([])
+      if (prev.phase !== 'idle') setPlayHint('')
+      return
+    }
+    if (next.phase === 'ready') {
+      setPlayFacing(playBridge.current.facing())
+      if (next.activity === 'fetch' && prev.phase !== 'reaction') {
+        setPlayHint('Drag the toy and let go to throw it. Esc or Done stops.')
+        playLater(5000, () => setPlayHint((h) => (h.startsWith('Drag the toy') ? '' : h)))
+      } else if (next.activity === 'feed') {
+        setPlayHint('Drag the treat onto MIKO.')
+      } else if (next.activity === 'pet') {
+        setPlayHint('Stroke MIKO: move the pointer back and forth over it (no click).')
+        const token = next.token
+        playLater(15000, () => {
+          if (playRef.current.token === token) playDispatch({ type: 'cancel' })
+        })
+      }
+      return
+    }
+    if (next.phase === 'activity') {
+      if (next.step === 'flying') setPlayHint('')
+      if (next.step === 'chasing') playBridge.current.walkTo(next.targetX)
+      if (next.step === 'carrying') {
+        window.miko?.playToyHide()
+        playBridge.current.walkTo(next.homeX)
+      }
+      return
+    }
+    // reaction
+    setPlayHint('')
+    playBridge.current.react(next.reaction)
+    playBlip(next.reaction === 'eat' ? 'eat' : next.reaction === 'drop' ? 'drop' : 'happy')
+    addEffects(next.reaction === 'eat' ? 'crumb' : next.reaction === 'drop' ? 'spark' : 'heart', next.reaction === 'eat' ? 4 : 3)
+    const token = next.token
+    playLater(1500, () => {
+      if (playRef.current.token === token) playDispatch({ type: 'reaction-done' })
+    })
+  }
+
+  function playDispatch(event: PlayEvent): PlayState {
+    const prev = playRef.current
+    const next = playReduce(prev, event)
+    if (next === prev) return prev
+    playRef.current = next
+    setPlayState(next)
+    onPlayTransition(prev, next)
+    return next
+  }
+
+  /**
+   * Stop play right away: Done, Escape, Dismiss, Work mode, a pet switch, the panel opening,
+   * or any assistant/local command (which then gets the pet's full attention).
+   */
+  function stopPlay(reason: 'done' | 'escape' | 'task' | 'dismiss' | 'mode' | 'pet' | 'panel' | 'drag' | 'toy', note?: string): void {
+    const busy = playRef.current.phase !== 'idle' || playMenuRef.current !== 'closed'
+    playDispatch({ type: 'cancel' })
+    setPlayMenu('closed')
+    setPlayChip(false)
+    setPlayHint(note ?? '')
+    if (note) playLater(3500, () => setPlayHint((h) => (h === note ? '' : h)))
+    if (reason !== 'task' && reason !== 'panel') releasePlayAudio()
+    if (busy) console.info(`[miko] play stopped (${reason})`)
+  }
+
+  function openPlay(activity: 'fetch' | null): void {
+    if (playSettingsRef.current.mode !== 'casual') {
+      pushEntry({ id: 0, kind: 'note', text: 'Play is part of Casual mode. Turn it on in Preferences \u2192 Mode (or the tray menu \u2192 Mode \u2192 Casual).' })
+      return
+    }
+    if (panelRef.current) void applyPanel(false)
+    setPlayMenu(activity === 'fetch' ? 'fetch' : 'main')
+  }
+
+  async function throwPlayToy(release: { x: number; y: number; vx: number; vy: number }, picked: Toy): Promise<void> {
+    if (playSettingsRef.current.mode !== 'casual') return
+    // A resting toy can be grabbed any time play is idle: that's choosing it.
+    if (playRef.current.phase === 'idle' || (playRef.current.phase === 'ready' && playRef.current.activity !== 'fetch')) {
+      playDispatch({ type: 'cancel' })
+      playDispatch({ type: 'choose', activity: 'fetch', toy: picked })
+    } else if (playRef.current.phase === 'ready' && playRef.current.toy !== picked) {
+      playDispatch({ type: 'cancel' })
+      playDispatch({ type: 'choose', activity: 'fetch', toy: picked })
+    }
+    const state = playRef.current
+    if (state.phase !== 'ready' || state.activity !== 'fetch' || !state.toy) return
+    const token = state.token
+    const toy = state.toy
+    const origin = canvasOrigin(panelRef.current, panelSideRef.current, panelSizeRef.current)
+    const homeX = playBridge.current.homeX()
+    const result = await window.miko.playThrow({
+      toy,
+      localX: origin.x + release.x,
+      localY: origin.y + release.y,
+      vx: release.vx,
+      vy: release.vy,
+      mouthDx: Math.round(hitRef.current.width * 0.32),
+      maxDistance: playBridge.current.maxThrow(),
+      reduced: reducedMotionRef.current
+    })
+    if (playRef.current.token !== token) {
+      // Cancelled while main was starting the throw.
+      window.miko.playToyHide()
+      return
+    }
+    if (!result.ok) {
+      // The toy comes back to the ground for another try.
+      playDispatch({ type: 'cancel' })
+      playDispatch({ type: 'choose', activity: 'fetch', toy })
+      setPlayHint(result.reason || 'That throw didn\u2019t work.')
+      return
+    }
+    playDispatch({ type: 'throw', homeX, targetX: result.targetX })
+  }
+
   async function applyPanel(open: boolean, mode: 'chat' | 'mail' = 'chat'): Promise<void> {
     if (typeof window.miko === 'undefined') return
+    if (open && (playRef.current.phase !== 'idle' || playMenuRef.current !== 'closed')) stopPlay('panel')
     // Capture external editable field BEFORE MIKO steals focus (“type here”).
     if (open && !panelRef.current) {
       try {
@@ -410,6 +660,7 @@ export function MotionApp() {
 
   /** Switch the pet in place; panel drafts, entries and pending tasks are untouched. */
   async function switchPet(id: PetId, announce: boolean): Promise<void> {
+    if (playRef.current.phase !== 'idle') stopPlay('pet')
     const name = petNoun(id)
     setPetBusy(id)
     setPetMessage(`Loading the ${name}…`)
@@ -443,6 +694,7 @@ export function MotionApp() {
   })
   panelRef.current = panelOpen
   draggingRef.current = gestures.dragging
+  armedRef.current = gestures.armed
   guidingRef.current = gestures.guiding
   cancelGesture.current = gestures.cancel
 
@@ -735,7 +987,8 @@ export function MotionApp() {
       }
       const resting = actor && (actor.phase === 'idle' || actor.phase === 'sitIdle')
       const restingOrder = order.kind === 'auto' || (order.kind === 'sit' && followSit)
-      const free = !panelRef.current && !guidingRef.current && !guideTracking && restingOrder && !followGoal.current && !media.matches
+      const free =
+        !panelRef.current && !guidingRef.current && !guideTracking && restingOrder && !followGoal.current && !media.matches && playRef.current.phase === 'idle'
       if (resting && free) {
         flightWait -= dt
         if (flightWait <= 0) {
@@ -917,6 +1170,65 @@ export function MotionApp() {
       return { ok: true, reason: '' }
     }
 
+    // ---- Casual play: drives the same controller (walk orders, clips) as typed commands.
+    let playWalk: number | null = null
+    let playArriveTimer = 0
+    const stroke = new StrokeDetector()
+    let chipUntil = 0
+    let chipShown = false
+    let airborneShown = false
+    const playArrived = (): void => {
+      playWalk = null
+      playDispatch({ type: 'arrived' })
+    }
+    playBridge.current = {
+      walkTo: (x) => {
+        window.clearTimeout(playArriveTimer)
+        const destination = Math.min(placed.span, Math.max(0, x))
+        if (Math.abs(destination - placed.x) <= ARRIVE_EPS || media.matches) {
+          // Reduced motion: no walk, MIKO steps over in one go.
+          if (media.matches && Math.abs(destination - placed.x) > ARRIVE_EPS) window.miko.travelBy({ dx: destination - placed.x, reduced: true })
+          playWalk = null
+          playArriveTimer = window.setTimeout(playArrived, media.matches ? 450 : 150)
+          return
+        }
+        followSit = false
+        order = { kind: 'walk', destination, commitHome: false, token: order.token + 1 }
+        guideTracking = false
+        guideTarget = null
+        playWalk = order.token
+      },
+      release: () => {
+        window.clearTimeout(playArriveTimer)
+        if (playWalk !== null && order.kind === 'walk' && order.token === playWalk) {
+          order = { token: order.token + 1, kind: 'auto', destination: placed.x, commitHome: false }
+          if (actor && actor.errand !== 'auto') actor = { ...actor, errand: 'auto' }
+        }
+        playWalk = null
+        if (carryRef.current) carryRef.current.style.display = 'none'
+      },
+      react: (reaction) => {
+        const pet = rig.current()
+        const clips = reaction === 'eat' ? pet?.feedClips ?? [] : pet?.happyClips ?? []
+        for (const name of clips) {
+          if (rig.hasClip(name)) {
+            flavorSerial += 1
+            flavor = { clip: name, token: -flavorSerial }
+            rig.playLoops(name, 1, flavor.token)
+            return
+          }
+        }
+        if (media.matches) return
+        // No suitable clip for this pet: a short glance up for a treat, a little hop otherwise.
+        if (reaction === 'eat') feedLookUntilRef.current = performance.now() + 520
+        else setHopCount((n) => n + 1)
+      },
+      homeX: () => placed.x,
+      facing: () => (actor?.facing ?? -1) as 1 | -1,
+      head: () => rig.headViewport(),
+      maxThrow: () => Math.max(140, Math.min(560, rig.dipPerSecond() * 6))
+    }
+
     const draw = (now: number): void => {
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
@@ -936,7 +1248,9 @@ export function MotionApp() {
           followSit = true
         }
         const goal = followGoal.current
-        const followPaused = panelRef.current || draggingRef.current || guidingRef.current || guideTracking
+        const playBusy = playControlsPet(playRef.current)
+        if (playBusy && (draggingRef.current || guidingRef.current)) stopPlay('drag')
+        const followPaused = panelRef.current || draggingRef.current || guidingRef.current || guideTracking || playBusy
         if (goal && pointer && Math.hypot(goal.x - pointer.windowX, goal.y - pointer.windowY) < 8) {
           followGoal.current = null
         }
@@ -972,6 +1286,7 @@ export function MotionApp() {
             window.miko.shiftBy({ dx: 0, dy: step, reduced: false })
           }
         }
+        if (playWalk !== null && actor.settledToken === playWalk && actor.errand !== 'walk') playArrived()
         if (
           order.kind === 'walk' &&
           actor.settledToken === order.token &&
@@ -995,9 +1310,52 @@ export function MotionApp() {
         rig.setPaused(true)
         stepFeedPulse()
       }
+      // Bird locomotion: rise into a gentle hover while it travels (Fly clip), settle back down at rest.
+      // Other pets never lift. Reduced motion: no lift or bob.
+      if (rig.current()?.flies) {
+        const travelling = mode === 'live' && !media.matches && !flight && !perched && actor?.phase === 'walk' && !draggingRef.current
+        const target = travelling ? BIRD_HOVER_PX : 0
+        const eased = rig.lift() + (target - rig.lift()) * Math.min(1, dt * (travelling ? 3.2 : 4.5))
+        const bob = travelling && rig.lift() > BIRD_HOVER_PX * 0.6 ? Math.sin((now / 1000) * Math.PI * 2 * 0.8) * 2.5 : 0
+        rig.setLift(media.matches ? 0 : Math.max(0, eased + bob * (rig.lift() / BIRD_HOVER_PX)))
+      } else if (rig.lift() !== 0) {
+        rig.setLift(0)
+      }
       rig.setPaused(freezeClip())
       rig.advance(freezeClip() ? 0 : dt)
       const head = rig.headViewport()
+      const carry = carryRef.current
+      if (carry && head && playRef.current.phase === 'activity' && playRef.current.step === 'carrying') {
+        const dir = actor?.facing ?? -1
+        if (rig.current()?.carry === 'talons') {
+          // The bird carries the toy in its feet, under its body.
+          const box = rig.hitRect()
+          carry.style.transform = `translate(${Math.round(box.x + box.width / 2 - 15)}px, ${Math.round(box.y + box.height - 14)}px)`
+        } else {
+          carry.style.transform = `translate(${Math.round(head.x + dir * 14 - 15)}px, ${Math.round(head.y + 4 - 15)}px)`
+        }
+      }
+      const airborne = perched || flight !== null
+      if (airborne !== airborneShown) {
+        airborneShown = airborne
+        setPetAirborne(airborne)
+      }
+      if (pointer && mode === 'live') {
+        const casual = playSettingsRef.current.mode === 'casual'
+        const origin = canvasOrigin(panelRef.current, panelSideRef.current, panelSizeRef.current)
+        const lx = pointer.windowX - origin.x
+        const ly = pointer.windowY - origin.y
+        const over = insideRect(lx, ly, hitRef.current)
+        const calm = casual && !panelRef.current && !draggingRef.current && !guidingRef.current && !armedRef.current
+        if (calm && stroke.sample(lx, over, now)) playDispatch({ type: 'petted' })
+        if (!calm) stroke.reset()
+        if (casual && over && !panelRef.current) chipUntil = now + 2500
+        const wantChip = casual && now < chipUntil && playMenuRef.current === 'closed' && !panelRef.current
+        if (wantChip !== chipShown) {
+          chipShown = wantChip
+          setPlayChip(wantChip)
+        }
+      }
       const tracking = mode === 'live' && !media.matches && !draggingRef.current
       const blendingOut = !tracking || !actor || flight !== null || (!perched && (actor.phase === 'sit' || actor.phase === 'standUp'))
       let goalYaw = 0
@@ -1081,6 +1439,8 @@ export function MotionApp() {
         cancelGesture.current()
         if (actor) actor = silence({ ...actor, errand: 'auto', remaining: 0 })
         rig.stop()
+        // Dismiss stops play too (main already hid the thrown toy).
+        stopPlay('dismiss')
         // Dismiss tucks the chat panel in React too (main already closed layout).
         panelRef.current = false
         setPanelOpen(false)
@@ -1182,6 +1542,33 @@ export function MotionApp() {
     }
   }, [panelView, petListing])
 
+  // Readable controls by default; Preferences → Compact controls restores the small sizes.
+  useEffect(() => {
+    document.documentElement.classList.toggle('is-compact', structuredPrefs.compactControls === true)
+  }, [structuredPrefs.compactControls])
+
+  // Casual-mode settings and the thrown toy's events from main.
+  useEffect(() => {
+    if (typeof window.miko?.playSettingsGet !== 'function') return
+    void window.miko.playSettingsGet().then(setPlaySettings)
+    const stopSettings = window.miko.onPlaySettings((next) => {
+      setPlaySettings(next)
+      if (next.mode === 'work') stopPlay('mode')
+    })
+    const stopToy = window.miko.onPlayToy((event) => {
+      if (event.phase === 'landed') playDispatch({ type: 'landed' })
+      else if (playRef.current.phase === 'activity') {
+        stopPlay('toy', event.reason === 'display-changed' ? 'The screen changed, so I stopped the game.' : '')
+      }
+    })
+    return () => {
+      stopSettings()
+      stopToy()
+      clearPlayTimers()
+      releasePlayAudio()
+    }
+  }, [])
+
   // Paw menu → Pet.
   useEffect(() => {
     if (typeof window.miko === 'undefined') return
@@ -1189,9 +1576,23 @@ export function MotionApp() {
     return window.miko.onPetCommand((command) => {
       if (command.kind === 'switch') void switchPet(command.pet, true)
       else if (command.kind === 'feed') feedPulseRef.current = true
+      else if (command.kind === 'play') openPlay(null)
       else void openPetChooser()
     })
   }, [])
+
+  // Last-resort guard: main ends every session with a result or a reason, but if that message
+  // never arrives the panel must not sit on "Listening…" forever.
+  useEffect(() => {
+    if (!listening) return
+    const timer = window.setTimeout(() => {
+      setListening(false)
+      setListenDetail('')
+      window.miko?.listenCancel()
+      pushEntry({ id: 0, kind: 'voice-problem', text: 'The microphone didn\u2019t answer, so I stopped listening. Retry, or run the microphone test in Preferences.' })
+    }, 75_000)
+    return () => window.clearTimeout(timer)
+  }, [listening])
 
   /** Mic click, tray "Talk to MIKO", or Retry: one start path for every surface. */
   const startMicRef = useRef<() => void>(() => undefined)
@@ -1228,6 +1629,12 @@ export function MotionApp() {
           startMicRef.current()
         })()
       }
+      if (hint.openHelp) {
+        void (async () => {
+          setPanelView('help')
+          if (!panelRef.current) await applyPanel(true, 'chat')
+        })()
+      }
       if (hint.openSetup || hint.runTutorial) {
         void (async () => {
           if (hint.runTutorial) await window.miko.setupUpdate({ action: 'restart-tutorial' })
@@ -1242,6 +1649,11 @@ export function MotionApp() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      if (playRef.current.phase !== 'idle' || playMenuRef.current !== 'closed') {
+        event.preventDefault()
+        stopPlay('escape')
+        return
+      }
       if (chromeChooserRef.current) {
         event.preventDefault()
         dismissChromeChooser()
@@ -1288,7 +1700,7 @@ export function MotionApp() {
       observer.disconnect()
       window.removeEventListener('resize', schedule)
     }
-  }, [panelOpen, panelSide, hit, chromeChooser, gptMode.liveView])
+  }, [panelOpen, panelSide, hit, chromeChooser, gptMode.liveView, playMenu, play, playChip, playSettings.mode, taskBusy, petAirborne])
 
   useEffect(() => {
     return () => {
@@ -1356,9 +1768,11 @@ export function MotionApp() {
     })
     void window.miko.setupGet().then((setup) => {
       if (setup.status === 'pending') {
-        void window.miko.setupUpdate({ action: 'start' }).then(() => {
+        void window.miko.setupUpdate({ action: 'start' }).then(async () => {
           setPanelView('setup')
-          if (!panelRef.current) void applyPanel(true, 'chat')
+          if (!panelRef.current) await applyPanel(true, 'chat')
+          // First open on a fresh install: a roomier panel so the setup text is easy to read.
+          void window.miko.panelPreset('medium')
         })
       }
     })
@@ -1396,6 +1810,30 @@ export function MotionApp() {
         const live =
           waiter.token === interpretToken.current && activeTaskRef.current?.phase !== 'cancelled'
         waiter.resolve(live && u.phase === 'done' ? u.reply ?? '' : null)
+        return
+      }
+      const tl = entriesRef.current.find((e) => e.kind === 'tldr' && e.requestId === u.requestId)
+      if (tl?.kind === 'tldr') {
+        if (u.phase === 'running') return
+        const reply = (u.reply ?? '').trim()
+        setEntries((items) =>
+          items.map((item) =>
+            item.kind === 'tldr' && item.requestId === u.requestId
+              ? u.phase === 'done' && reply
+                ? { ...item, status: 'done', summary: reply.slice(0, 4000), detail: '' }
+                : {
+                    ...item,
+                    status: u.phase === 'cancelled' ? 'cancelled' : 'failed',
+                    detail:
+                      u.phase === 'cancelled'
+                        ? 'Cancelled. Your text is kept below.'
+                        : u.phase === 'timeout'
+                          ? 'The assistant took too long, so there’s no summary. Your text is kept below.'
+                          : u.reason || 'The assistant didn’t return a summary. Your text is kept below.'
+                  }
+              : item
+          )
+        )
         return
       }
       const wa = entriesRef.current.find((e) => e.kind === 'wa-reply' && e.requestId === u.requestId)
@@ -1673,6 +2111,36 @@ export function MotionApp() {
     })
     const sent = await window.miko.bridgeSend(requestId, prompt, { fresh: opts.fresh, keep: opts.keep })
     if (!sent.ok) updateBridge(requestId, { status: 'failed', detail: sent.reason })
+  }
+
+  /**
+   * TL;DR through the existing assistant. Never falls back to the ChatGPT app or to truncating
+   * the text: if the assistant isn't available, it says so and keeps the original text.
+   */
+  async function runTldr(content: string, style: TldrStyle): Promise<void> {
+    if (!panelRef.current) await applyPanel(true, 'chat')
+    lastTldrRef.current = { content, at: Date.now() }
+    const running = entriesRef.current.find((e) => e.kind === 'tldr' && e.status === 'running')
+    if (running?.kind === 'tldr') window.miko.bridgeCancel(running.requestId)
+    const requestId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const id = pushEntry({ id: 0, kind: 'tldr', requestId, status: 'running', style, original: content, summary: '', detail: '' })
+    const status = await window.miko.bridgeStatus()
+    const unavailable = !status?.enabled
+      ? 'TL;DR uses the MIKO assistant, which is turned off (menu bar paw → MIKO assistant). Your text is kept below; nothing was sent anywhere.'
+      : !status.available
+        ? 'TL;DR needs the MIKO assistant (the ChatGPT app’s Codex), which wasn’t found. Your text is kept below; nothing was summarised.'
+        : !status.signedIn
+          ? 'TL;DR needs the MIKO assistant: sign in to the ChatGPT app first. Your text is kept below; nothing was summarised.'
+          : ''
+    if (unavailable) {
+      replaceEntry(id, { id, kind: 'tldr', requestId, status: 'failed', style, original: content, summary: '', detail: unavailable })
+      return
+    }
+    // A fresh, separate request: the summary never continues another conversation or task.
+    const sent = await window.miko.bridgeSend(requestId, tldrPrompt(content, style), { fresh: true, keep: false })
+    if (!sent.ok) {
+      replaceEntry(id, { id, kind: 'tldr', requestId, status: 'failed', style, original: content, summary: '', detail: sent.reason || 'The assistant didn’t accept the request.' })
+    }
   }
 
   function updateBridge(requestId: string, patch: Partial<Extract<PanelEntry, { kind: 'bridge' }>>): void {
@@ -2381,6 +2849,12 @@ export function MotionApp() {
     saveDefault: boolean
   ): Promise<void> {
     if (token !== chromeChooserToken.current) return
+    // One launch per choice: a double-click on a profile card (or Enter + click) can't launch twice.
+    if (chromeLaunchToken.current === token) return
+    chromeLaunchToken.current = token
+    const pendingName = chromeChooserRef.current?.pendingUrl?.name || pendingUrlRef.current?.name || null
+    // The fan goes away right away; the launch result replaces the status line below.
+    setChromeChooser(null)
     const searchQuery = searchQueryFromUrl(url)
     const statusId = pushEntry({ id: 0, kind: 'note', text: 'Opening Chrome…' })
     const result = await window.miko.chromeProfilesLaunch({ directoryId, url, displayName })
@@ -2413,7 +2887,7 @@ export function MotionApp() {
       if (ok) setStructuredPrefs(next)
     }
     if (url) {
-      const siteName = chromeChooserRef.current?.pendingUrl?.name || pendingUrlRef.current?.name || new URL(url).hostname
+      const siteName = pendingName || new URL(url).hostname
       pendingUrlRef.current = null
       lastWebsiteRef.current = {
         url: result.url || url,
@@ -4834,10 +5308,22 @@ export function MotionApp() {
   async function handleGptModeLocal(action: NonNullable<ReturnType<typeof parseGptModeLocalAction>>): Promise<void> {
     if (typeof window.miko === 'undefined') return
     if (action === 'cancel') {
+      // A pending local task (Chrome chooser, held site/search, WhatsApp wait, …) is what “cancel”
+      // usually means, even while GPT Mode is on or paused: cancel it too, not only GPT Mode.
+      const chromePending = Boolean(chromeChooserRef.current || pendingUrlRef.current)
+      const localPending =
+        chromePending ||
+        awaitingWaRecipientRef.current ||
+        Boolean(pendingWaDraftRef.current) ||
+        (activeTaskRef.current !== null && !['completed', 'cancelled', 'failed'].includes(activeTaskRef.current.phase))
       window.miko.gptModeCancel()
       if (listening) {
         window.miko.listenCancel()
         setListening(false)
+      }
+      if (localPending) {
+        cancelWorkflow(chromePending ? 'Okay. Cancelled — Chrome wasn\u2019t opened.' : 'Okay. Cancelled.')
+        return
       }
       pushEntry({
         id: 0,
@@ -4930,6 +5416,18 @@ export function MotionApp() {
     if (!text || typeof window.miko === 'undefined') return
     setDraft('')
     inputSourceRef.current = 'typed'
+    // TL;DR first: pasted text is data. It is only summarised (never routed, launched, drafted,
+    // forwarded to GPT Mode or sent), whatever commands it happens to contain.
+    const tldr = parseTldr(text)
+    if (tldr) {
+      await runTldr(tldr.content, tldr.style)
+      return
+    }
+    const follow = lastTldrRef.current && Date.now() - lastTldrRef.current.at < 15 * 60_000 ? parseTldrFollowUp(text) : null
+    if (follow && lastTldrRef.current) {
+      await runTldr(lastTldrRef.current.content, follow)
+      return
+    }
     // Shared locals (typed) — same path as voice; Interactive GPT open does not change this.
     if (await handleSharedLocalControls(text, 'typed')) return
     // Active GPT Mode: ordinary text goes only to ChatGPT — no local router / assistant.
@@ -5207,6 +5705,32 @@ export function MotionApp() {
   }
 
   async function runDecision(decision: CommandResult): Promise<void> {
+    if (decision.type === 'play') return runDecisionInner(decision)
+    // While a command runs the resting toys step aside; they come back when it's done.
+    setTaskBusy((n) => n + 1)
+    try {
+      await runDecisionInner(decision)
+    } finally {
+      setTaskBusy((n) => Math.max(0, n - 1))
+    }
+  }
+
+  async function runDecisionInner(decision: CommandResult): Promise<void> {
+    if (decision.type === 'play') {
+      openPlay(decision.activity)
+      return
+    }
+    if (decision.type === 'project-video') {
+      window.miko.projectorOpen()
+      pushEntry({
+        id: 0,
+        kind: 'note',
+        text: 'Opening the projector. Pick the window with your video — it shows a live mirror above MIKO (no sound; play and pause in the original window).'
+      })
+      return
+    }
+    // Any other command gets the pet's full attention: play stops first.
+    if (playRef.current.phase !== 'idle' || playMenuRef.current !== 'closed') stopPlay('task')
     const keepsWaRecipientWait =
       decision.type === 'whatsapp' ||
       decision.type === 'whatsapp-reply' ||
@@ -6482,6 +7006,7 @@ export function MotionApp() {
   const petClass = [
     'pet-hit',
     'walk-hit',
+    dropTarget ? 'is-drop-target' : '',
     gestures.armed ? 'is-armed' : '',
     gestures.dragging || gestures.guiding ? 'is-dragging' : ''
   ]
@@ -6641,6 +7166,20 @@ export function MotionApp() {
             }
           }}
           onBridgeCancel={(requestId) => window.miko.bridgeCancel(requestId)}
+          onTldr={{
+            restyle: (id, style) => {
+              const e = entriesRef.current.find((item) => item.id === id)
+              if (e?.kind === 'tldr') void runTldr(e.original, style)
+            },
+            cancel: (id) => {
+              const e = entriesRef.current.find((item) => item.id === id)
+              if (e?.kind === 'tldr') window.miko.bridgeCancel(e.requestId)
+            },
+            copy: (id) => {
+              const e = entriesRef.current.find((item) => item.id === id)
+              if (e?.kind === 'tldr' && e.summary) void window.miko.copyText(e.summary)
+            }
+          }}
           onSelectionAction={(id, action, instruction) => void runSelectionAction(id, action, instruction)}
           onUseClipboard={() => {
             void window.miko.selectionClipboard().then((ev) => pushEntry({ id: 0, kind: 'selection', ...ev }))
@@ -6709,6 +7248,20 @@ export function MotionApp() {
             pushEntry({ id: 0, kind: 'handoff', prompt, status: 'ready', detail: 'For your ChatGPT chats and memory. Nothing has been sent.', destination: '' })
           }
           prefs={{
+            play: {
+              mode: playSettings.mode,
+              sound: playSettings.sound,
+              onMode: (mode) => {
+                void window.miko.playSettingsSet({ mode }).then((next) => {
+                  setPlaySettings(next)
+                  if (next.mode === 'work') stopPlay('mode')
+                  setPrefsMessage(next.mode === 'casual' ? 'Casual mode on. Point at MIKO for the Play button.' : 'Work mode: no games.')
+                })
+              },
+              onSound: (on) => {
+                void window.miko.playSettingsSet({ sound: on }).then(setPlaySettings)
+              }
+            },
             pets: petListing
               ? {
                   available: petListing.available,
@@ -6761,6 +7314,7 @@ export function MotionApp() {
               void beginChromeProfiles({ forceChooser: true, profileQuery: null, url: null, name: null })
             },
             onOpenFeedback: () => openFeedback({ lastCommand: lastCommandRef.current }),
+            onOpenHelp: () => setPanelView('help'),
             onRunTutorial: () => {
               void window.miko.setupUpdate({ action: 'restart-tutorial' }).then(() => {
                 setPanelView('setup')
@@ -6850,8 +7404,33 @@ export function MotionApp() {
             ) : null,
             onOpenInteractiveGpt: () => {
               void window.miko.chatgptWebOpen()
+            },
+            onRunExample: (text) => {
+              setPanelView('log')
+              void onSubmit(text)
             }
           }}
+          help={
+            <HelpSetup
+              platform={hostPlatform}
+              version={versionLine}
+              update={updateStatus}
+              onOpenTutorial={(resume) => {
+                void window.miko.setupUpdate({ action: resume ? 'start' : 'restart' }).then(() => setPanelView('setup'))
+              }}
+              onOpenInteractiveGpt={() => {
+                void window.miko.chatgptWebOpen()
+              }}
+              onOpenFeedback={() => openFeedback({ lastCommand: lastCommandRef.current })}
+              onUpdateDownload={() => {
+                void window.miko.updateOpenDownload(draftRef.current).then((r) => {
+                  if (!r.ok) pushEntry({ id: 0, kind: 'note', text: r.reason })
+                  else void window.miko.updateGet().then(setUpdateStatus)
+                })
+              }}
+              onClose={() => setPanelView('log')}
+            />
+          }
           onUseChatGpt={(id) => {
             void onUseChatGpt(id)
           }}
@@ -7267,7 +7846,9 @@ export function MotionApp() {
           }}
         />
       ) : null}
-      <div className={chromeChooser ? 'pet-slot is-motion has-chrome-chooser' : 'pet-slot is-motion'}>
+      <div
+        className={`${chromeChooser ? 'pet-slot is-motion has-chrome-chooser' : 'pet-slot is-motion'}${hopCount % 2 ? ' is-hop-a' : hopCount ? ' is-hop-b' : ''}`}
+      >
         <canvas ref={canvasRef} className="motion-canvas" />
         {chromeChooser ? (
           <div
@@ -7305,6 +7886,38 @@ export function MotionApp() {
               }}
             />
           </div>
+        ) : null}
+        {playSettings.mode === 'casual' || play.phase !== 'idle' || playMenu !== 'closed' ? (
+          <PlayLayer
+            play={play}
+            menu={playMenu}
+            hit={hit}
+            facing={playFacing}
+            reducedMotion={reducedMotion}
+            hint={playHint}
+            effects={playEffects}
+            chip={playChip && !panelOpen}
+            restingToys={playSettings.mode === 'casual' && !panelOpen && taskBusy === 0 && !petAirborne && play.phase !== 'reaction'}
+            carryRef={carryRef}
+            onMenu={(next) => {
+              if (next === 'main' && playRef.current.phase === 'ready') playDispatch({ type: 'cancel' })
+              setPlayMenu(next)
+            }}
+            onChoose={(choice) => {
+              playDispatch(
+                choice.activity === 'fetch'
+                  ? { type: 'choose', activity: 'fetch', toy: choice.toy }
+                  : choice.activity === 'feed'
+                    ? { type: 'choose', activity: 'feed', treat: choice.treat }
+                    : { type: 'choose', activity: 'pet' }
+              )
+              setPlayMenu('main')
+            }}
+            onDone={() => stopPlay('done')}
+            onThrow={(release, toy) => void throwPlayToy(release, toy)}
+            onFeed={() => playDispatch({ type: 'fed' })}
+            onDropTarget={setDropTarget}
+          />
         ) : null}
         <button
           type="button"

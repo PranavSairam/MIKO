@@ -51,11 +51,14 @@ Needs Node 22.12 or newer.
 - **Interactive GPT / ChatGPT Web (opt-in, separate):** Panel **Interactive GPT** (beside GPT Mode) opens real `chatgpt.com` in an isolated `WebContentsView` (`persist:miko-chatgpt-web`). Pin, pill collapse, restore size/page; local open/show/hide; native DnD into composer; **Paste clipboard into GPT** + “copy this WhatsApp message to GPT” (explicit selection only). Not GPT Mode, not Lens. See Session log 2026-11-21.
 - **Chrome profiles (macOS live-checked):** “open Chrome” / “choose chrome profile” / “open … in Chrome” → glass fan of real Local State profiles (avatar/initials, directory id separate from name). Optional saved default; never auto-saved. Launch by `--profile-directory` without closing other profile windows.
 - **WhatsApp attachments (macOS):** “fetch/download the latest file/PDF”, “copy this file”, “save to Downloads”, “show in Finder”, “attach it here” → attachment actions (not the general assistant). Visible document bubbles only; Save to Downloads + verified local file; file card; real file pasteboard; attach unsent with header recheck.
+- **Project video (2026-11-22):** "project video" / tray → Project video… mirrors a chosen window above MIKO (live mirror, no audio, crop, pin, collapse; protected video explained, not bypassed).
+- **TL;DR (2026-11-22):** "TLDR: …" / "… TLDR" / "Summarize this briefly: …" → summary card via the assistant; follow-ups shorter / one sentence / action items only.
+- **Play (Casual mode, 2026-11-22):** "let's play" / "play with me" open the Play menu; "play fetch" / "throw the ball" go straight to Fetch. Work mode (default) answers with how to turn Casual on. Any other command stops play first.
 - **Questions** (ending in `?`, or starting with how/what/why/explain/write/…) go to the MIKO assistant when that setting is on, and to the ChatGPT app handoff when it is off.
 
 ### Known loose ends
 
-- The Windows smoke test is still pending. WhatsApp contact search exists on Windows (UI Automation, untested live); message reading, reply drafting/insertion and attachments are unimplemented there on purpose.
+- The Windows smoke test is still pending (0.1.2 handoff installer built; Victus checklist in Session log 2026-11-22). WhatsApp contact search exists on Windows (UI Automation, untested live); message reading, reply drafting/insertion and attachments are unimplemented there on purpose.
 - Helper permission grants are tied to the exact ad-hoc build. A real Swift change means removing the helper in System Settings and adding it again.
 
 ---
@@ -90,6 +93,224 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 ---
 
 ## Session log
+
+### 2026-11-22: Fixes from owner + Mukundan testing — Chrome, readable controls, app fan, bird, toys; video projector; TL;DR (Mac)
+- **Owner ask:** in order, (1) daily-use fixes: Chrome profiles, larger controls, the single-click app fan, bird movement, always-available Casual toys; (2) "Project video" above MIKO; (3) TL;DR in chat. Reuse existing code, keep Windows support, live-check on the Mac, Windows pending, local only.
+
+#### Phase 1 — causes found and fixed
+- **Chrome profiles:**
+  - **Cause:** a choice wasn't consumed when the launch started, so a double-click / Enter + click on a profile card launched Chrome twice. The renderer now consumes the chooser token at launch start and hides the fan immediately. Main also merges identical launch requests (same profile + URL within 1.5 s).
+  - **Cause:** launch errors were swallowed. The first line of `open` / spawn stderr now appears in the message, and "Nothing else was opened."
+  - Chrome installed in `~/Applications` is found too (`open -na <bundle path>`).
+  - The success message is honest: "Started Chrome with the "X" profile … I can't see which profile's window is in front."
+  - **Found live:** with GPT Mode on or paused (the default after relaunch for anyone opted in), typed "cancel" only cancelled GPT Mode and left the Chrome chooser open. "Cancel" now also cancels a pending local task (chooser, held site/search, WhatsApp wait, unfinished task).
+- **Readable controls:**
+  - A default CSS layer gives primary buttons, bar buttons, Send, Mic and glass buttons a 40 px minimum height; tabs and chips 36 px; icon-only buttons (×, ⚙, ⤢, mail icons) a 40×40 hit area. Labels are 13–14 px, and every control has a visible focus ring.
+  - Action rows wrap. Preferences → **Compact controls** (off by default) restores the small sizes.
+  - **Found live:** the wrapped header row was drawn under the GPT Mode card. Cause: `.panel-bar` was a shrinkable flex item in the fixed-height column. It now has `flex-shrink: 0` (same for the banner).
+  - Sizes are CSS px, so Windows display scaling and Retina scale them.
+- **App fan (single click):**
+  - **Cause 1:** while hidden, the fan kept its last layout, so a reopen showed it collapsing, then fanning again. It now resets on `visibilitychange` (hidden) and fans out once per opening.
+  - **Cause 2:** every "opened" message, including a second click, restarted the animation. Main now ignores an open while visible, and the renderer guards with `isOpen`.
+  - **Cause 3:** clicking MIKO while the fan was open blurred (hid) it, then the same click reopened it 250 ms later. New `toggleSwitcherFromPet()` closes when visible and ignores a pet click within ~750 ms of a blur-hide.
+  - **Cause 4:** after a drag, `suppressClick` could stay set and eat the next real click. It now resets right after the drag's own click.
+  - Quit stays graceful (window close / app quit, waits, "Waiting for X — finish any save dialog", never force).
+- **Bird:**
+  - **Inspected clips:** Chirp, Fly (0.42 s flap loop), Hop, Idle, Land, Peck, TakeOff, Walk.
+  - Travelling now uses only `Fly` (no hop / walk fallback; `Idle` if missing), with `walkUnitsPerSecond` 0.7.
+  - New `PetRig.setLift()`: the bird rises to a 26 px hover with a gentle 0.8 Hz, 2.5 px bob while it travels, and settles at rest. The click area follows, republished every ≥8 px rather than every frame.
+  - Reduced motion: no lift or bob. Other pets never lift.
+- **Casual toys:**
+  - Ball and stick rest at fixed spots on the pet window's ground line, at its left and right edges. They move with MIKO, so they stay on screen at display edges, and never cover the pet.
+  - Grab either to throw (no menu needed).
+  - They hide while the panel is open, while any command runs (`taskBusy`, wrapped around `runDecision`), while the bird is airborne / perched, and during the drop reaction. They come back when idle.
+  - They're DOM inside the pet window, so a summon, pet switch or monitor change can't duplicate them. Work mode / Dismiss: no play layer.
+  - **Found live:** they were first anchored to the pet's box, so they floated up with the flying bird. Fixed.
+  - Bird fetch flies, and carries the toy in its feet (new `carry: 'talons'`); other pets use the mouth anchor.
+
+#### Phase 2 — Video projector (`src/main/projector.ts`, `src/renderer/src/projector/`, `src/shared/projector.ts`)
+- Opens with "project video" (or the tray → Project video…). A picker lists the shareable windows, browsers first; MIKO's own windows are excluded by exact title.
+- **Capture:**
+  - `getDisplayMedia` in a dedicated partition, answered by `setDisplayMediaRequestHandler` with exactly the selected `desktopCapturer` window.
+  - If that window is gone, the request is refused and no other source is used.
+  - `audio: false`, so sound plays only from the original.
+- **Badge and controls:**
+  - The badge says **Live mirror**: it's a picture of the window, not a player.
+  - Controls sit outside the video: Open original (reuses `lensOpenOriginal` on the Mac and `winFocusWindow` on Windows), Source, Crop / Uncrop (drag a box, Esc cancels), Freeze (only the mirror), Pin, Small / Medium / Large, Beam, Collapse to pill, Close.
+  - No remote play / pause: there's no verified way to control another app's video, so the badge and Open original say playback stays in the original.
+- **Window:** keeps the video's (or crop's) aspect, sized from the measured control height. It's placed above MIKO inside the work area, or beside it when there's no room, and never covers MIKO.
+- **Health:**
+  - Black for 3 s while frames still arrive → "probably protected (DRM) … MIKO doesn't get around that", with Open original.
+  - No frames for 2.5 s → "paused, minimised, or on another desktop". It then checks whether the window still exists; macOS keeps a closed window's capture open without ending it.
+  - Permission denied → a link to Screen Recording settings.
+- **Cleanup:** Close, Dismiss and Quit stop every track and destroy the window. Switching sources stops the old capture first.
+
+#### Phase 3 — TL;DR (`src/shared/tldr.ts`)
+- **Forms:** "TLDR: …", "tl;dr - …", "TLDR⏎…", "… TLDR" (at least 8 words before it), "Summarize this briefly: …", "Give me a TLDR of this: …".
+- **Not instructions:** a TLDR in the middle of text, a quoted / code / `>` example, or a message too short to be content.
+- **Order:** checked first in `onSubmit`, before local controls, GPT Mode forwarding and the router, so pasted text is never routed, launched, drafted, forwarded or sent.
+- **Prompt:** a fresh assistant request. The pasted text sits between fences that the text can't close. The prompt asks for 2–4 bullets (one sentence under ~40 words), keeps names / dates / amounts / decisions / action items, adds nothing, and treats embedded instructions as data.
+- **Card:** the summary, Copy, Shorter / One sentence / Action items only (also as typed follow-ups within 15 min), Cancel, and the original text, collapsed.
+- **Assistant off / missing / signed out:** a clear error and the original kept. No ChatGPT handoff, no truncation.
+
+#### Automated (Mac)
+- typecheck **PASS**
+- `npm test` **463 PASS** (was 444). New `tldr.test.ts` and `phase1.test.ts` cover Chrome single launch and cancel, app-fan guards, bird clips and carry, toy anchoring, control sizing, projector placement / aspect / crop / health / phrases / capture guards. The `pets.test.ts` bird fallback was updated.
+- build **PASS**
+
+#### Live on this Mac (scratch profile, DevTools-driven; real Chrome profiles, real apps)
+
+| Check | Result |
+|---|---|
+| Chrome: real profiles listed; "search Chrome for weather in Chennai" held until a choice; double-click on a profile → **one** "Opened search…" | **passed** |
+| Chrome: "choose chrome profile" then "cancel" with GPT Mode paused → chooser closed, "Chrome wasn't opened" | **passed** (after the fix) |
+| Readable controls: panel buttons 40 px; header wraps without overlapping the GPT card | **passed** (after the fix; screenshots) |
+| App fan ×3: pet click opens fully, second click closes, no reopen; Escape closes | **passed** |
+| App fan: drag + drop elsewhere → "Cancelled — nothing was closed"; next click still works; Esc mid-drag cancels; drag Calculator onto MIKO → target lights, "Release to quit Calculator", quit once | **passed** |
+| Bird: ball and stick beside it; flies (lifted, side-on) carrying the ball in its feet; toys stay on the ground during flight | **passed** (after the anchor fix; screenshots) |
+| Toys hidden while the panel is open, back after | **passed** |
+| Projector, unprotected browser video (local MP4 page in Chrome): live mirror 3600×2260, frames advancing, 1 video track, **0 audio tracks**; crop resizes to the region; collapse to pill; expand keeps the picture (after the fix); close removes the window | **passed** |
+| Projector, **YouTube** (Big Buck Bunny in Chrome): mirrored, not black | **passed** |
+| Projector: source window closed → "The projected window closed…", tracks stopped | **passed** (after the fix) |
+| TL;DR prefix with embedded "Open Calculator … send to Dad on WhatsApp … ignore previous instructions": 4 factual bullets, Calculator not opened, no WhatsApp / ChatGPT entries | **passed** |
+| TL;DR "shorter", "action items only", short suffix note → one sentence; incidental "TLDR" made no card; original kept | **passed** |
+
+- **Not tested live:**
+  - **Protected streaming (Netflix etc.):** no account here; black-frame detection is unit-tested only.
+  - Screen Recording denied path (permission already granted here).
+  - Bird reduced motion.
+  - Compact mode visuals.
+  - Interactive GPT open with the projector.
+- **Not claimed:** smoothness under load, or video compatibility beyond the two sources above.
+- **Committed and pushed 2026-11-23** at the owner's request, together with the earlier mic / Casual / audit / installer stages. Before the commit: typecheck 0 errors, 463/463 tests, build PASS, and a secret / personal-data scan with no hits. Left out of the commit: the root `main` binary, the `paused` scratch file, the local `scripts/probe-*` scripts and `scripts/live-chatgpt-web-acceptance.cjs`. Protected streaming and all Windows checks: **UNVERIFIED**.
+
+#### Windows checks still pending (Victus)
+1. Chrome chooser / single launch / cancel.
+2. 40 px controls at 125–150 % scaling.
+3. Fan via pet click (Windows `focusable` / blur timing).
+4. Bird flight and toys.
+5. Projector: Windows needs no permission; check Open original via `winFocusWindow`, and Edge / Chrome capture.
+6. TL;DR (needs Codex on PATH).
+
+### 2026-11-22: Windows mic diagnostics, Casual mode (Fetch / Feed / Pet), automation audit, Windows handoff for Dad (made on the Mac)
+- **Owner ask (4 stages):** (1) find and diagnose the intermittent Windows microphone without guessing, add diagnostics and a mic test in Preferences; (2) Work / Casual mode with a compact Play menu and three interactions on the existing pet controller; (3) audit existing automation per platform and pick three next workflows (no broad new automation); (4) an easy Windows installer + first open + Help & Setup + handoff folder for Dad. Local only, no commit/push.
+- **Version bumped 0.1.1 → 0.1.2** (package.json + lock) so the new installer doesn't share a name with the older 0.1.1 build.
+
+#### Stage 1: Windows microphone
+- **Not reproduced (Mac).** Code reading found these real lifecycle problems, now fixed:
+  - **Windows:** a second click while the helper was starting returned "Listening" before Windows had confirmed it was ready. It now joins the start in progress, so there is one helper and one answer.
+  - **Windows:** a mic click during the microphone test showed "Listening" forever (the test owned the mic). It now gets a clear reason.
+  - **Both:** the safety timeout ended a session silently. It now says "Listening stopped without a result. Retry…".
+  - **Mac:** the Setup mic test ran the spoken words as a real command. The test now has its own result path.
+  - **Both:** a renderer guard (75 s) stops a "Listening" that never got an answer.
+- **Diagnostics** (`src/shared/mic-session.ts`, `miko-diagnostics.log`):
+  - Per-session id, mode (tap / hold / test) and source.
+  - Helper stage timings (`speech-loaded` / `recognizer` / `input` / `recognizing`), plus ready / heard / end times.
+  - Outcome and error code (`ready-timeout`, `helper-exit`, `safety-timeout`, `no-audio`, …).
+  - Stale-callback lines, the Windows default recording device (Core Audio, `[PreserveSig]` COM) and the installed recognizers.
+  - Never audio or words (a transcript is logged only as its length).
+- **Mic test card** (`MicTestCard.tsx`), in Preferences, Setup and Help:
+  - Shows the microphone Windows uses ("Windows default"), Change microphone… (Sound settings) and Refresh.
+  - Test → Starting → Listening → Hearing you… → the words, then Retry / Cancel.
+  - Errors come with the settings page that fixes them. Leaving the card cancels the test and releases the mic.
+- **Honest limit:** System.Speech records only from the Windows default input. MIKO shows and explains it; it does not claim to pick a device itself.
+- Reproduction steps: `docs/WINDOWS_SETUP.md` → "Reproducing the intermittent microphone problem".
+
+#### Stage 2: Casual mode
+- **Mode:** Preferences → Mode (Work default / Casual), also tray → Mode. Play sounds are optional and off by default. Only the mode and sound are saved; unfinished games never are.
+- **State machine** (`src/shared/play.ts`): idle → ready → activity (flying → chasing → carrying) → reaction → idle (fetch returns to ready with the toy).
+  - Tokens on every transition, so stale timers and late events do nothing.
+  - No overlap; cancel from anywhere.
+- **Renderer** (`PlayLayer.tsx` + `MotionApp.tsx`): a compact Play pill (Fetch, Feed, Pet, Done) inside the pet window.
+  - A "Play" chip appears for 2.5 s when the pointer is over the pet (Casual only).
+  - Only visible controls are click targets (`data-hit`); a held toy holds the pointer only while dragged.
+- **Fetch:**
+  - Choose Ball or Stick, then drag and let go (velocity from the last 100 ms; a tap is a soft toss toward the side with more room).
+  - Main (`src/main/play.ts`) flies the toy in its own tiny window: `focusable: false`, always click-through.
+  - The arc and landing stay inside the pet display's work area (taskbar / Dock excluded). Throw length is limited by the pet's walk speed.
+  - Display changes cancel the throw; reduced motion means no arc.
+  - The pet walks with the existing controller's walk order. On arrival the toy window hides and the toy is drawn at the head anchor, then the pet walks back and drops it.
+  - The toy window is destroyed 15 s after play ends.
+- **Feed:** pick Bone or Biscuit and drag it onto the pet. The pet gets a subtle glow while the treat is over it.
+  - The pet plays its `feedClips` if it has them; otherwise (Doberman) the existing short upward glance. Crumbs effect. No hunger, no nagging.
+- **Pet:** a stroke, meaning the pointer moved back and forth over the pet four times with no button pressed (from main's cursor polling).
+  - It can't collide with click, double-click or drag, and has a cooldown. The Pet button shows the hint.
+  - The pet plays its `happyClips` (new per-pet field: cat Stretch, bird Chirp, koala Wave, Doberman none → a short hop) and hearts.
+- **Priority:** any command (`runDecision`), opening the panel, Escape, Done, Dismiss, a pet switch, Work mode, or dragging the pet stops play immediately.
+  - During a fetch, Follow and bird flights pause.
+  - Router phrases: "let's play" / "play with me" → menu; "play fetch" / "throw the ball" → fetch. A bare "fetch" stays with WhatsApp attachments, and "play music" stays with Spotify.
+
+#### Stage 3: Automation audit
+- `docs/AUTOMATION_AUDIT.md`: every action's inputs, Mac / Windows status (live vs code), permissions, read / modify / send, how success is observed, and cancel / recovery.
+- Three next workflows: site search templates, explicit selection → Interactive GPT, WhatsApp contact → reply prep (Windows draft shown in MIKO only).
+- No new executor was added.
+
+#### Stage 4: Windows install for Dad
+- **NSIS:**
+  - One-click and per-user (`perMachine: false`, `allowElevation: false`, no admin). Progress bar, Start menu shortcut, MIKO starts after install.
+  - The desktop shortcut is no longer forced: "desktop shortcut" and "start when I sign in" are opt-in (`src/main/system-options.ts`, installed app only).
+  - `build/installer.nsh`: a real uninstall (not an upgrade) removes MIKO's desktop link and Run entries, and says settings and ChatGPT sign-in were kept in `%APPDATA%\MIKO-Beta`.
+  - Upgrades keep user data; single-instance is unchanged.
+- **First open:** five steps with large controls:
+  1. Meet MIKO (pet).
+  2. Try MIKO (click, drag, live show/hide check).
+  3. Enable voice (permission explained right before Test).
+  4. Use ChatGPT (sign-in on ChatGPT's own page).
+  5. Ready (three clickable examples + Windows options).
+
+  Older saved step names map onto the new steps. Skip for now keeps the step, and Help → Continue setup resumes it. On a fresh install the panel opens at medium size.
+- **Help & Setup** (tray "Help & Setup…", Preferences button):
+  - Test microphone, show/change shortcut, tutorial / Continue setup, Open Interactive GPT.
+  - What works on Windows, Send feedback (existing preview / export), Open logs folder (Explorer with the log selected).
+  - Desktop shortcut / start at sign-in.
+  - Update line: "Download the update" only when the existing manual flow reports one; otherwise "Updates come as a new installer file — there's no automatic update service set up." Nothing replays automation after a restart (tasks aren't persisted).
+- **Handoff:** `npm run handoff:win` builds `release/windows-handoff/MIKO-<v>/` (git-ignored).
+  - It checks `win-unpacked` for settings, logs, cookies, keys and browser partitions, and for the Windows helpers and pet models, then writes START-HERE.txt (three steps), TROUBLESHOOTING.txt and SHA256SUMS.txt.
+  - **Built:** `release/windows-handoff/MIKO-0.1.2/MIKO-0.1.2-win-x64.exe`, 141,416,357 bytes (134.9 MB), SHA-256 `7ee8ee068ffdd38c9acd413e51abdce8fea7825e4cdc5debfe684931c184149f`.
+  - **Not Dad-ready until the Windows checks below pass.**
+
+#### Automated (Mac)
+- typecheck **PASS**
+- `npm test` **444 PASS** (was 405). New `mic-session.test.ts`, `play.test.ts`, `handoff.test.ts`; `win-speech.test.ts` and `setup.test.ts` were extended.
+- build **PASS**
+- `pack:win-check` **PASS**
+- `dist:win` **PASS**: NSIS compiled, including `installer.nsh`.
+- `handoff:win` **PASS**
+- **Not compiled or run here:** the new C# (default-mic COM) and the PowerShell changes.
+
+#### Live on the Mac
+Scratch profile, MIKO driven through DevTools; real mouse events inside the pet window.
+
+| Check | Result |
+|---|---|
+| "let's play" opens Play (panel stays closed); Fetch → Ball shows the toy and hint | **passed** |
+| Drag-flick throw: toy leaves the window, pet walks ~220 px to it, carries it back to its start, drops it, toy ready again | **passed** |
+| Escape removes menu and toy | **passed** |
+| Feed: treat dragged onto pet, glow while over it, crumbs, treat gone, no panel or app action | **passed** |
+| A command ("sit") mid-fetch stops play at once (menu, toy, carry gone; pet stops chasing) | **passed** |
+| 3 throw + Done cycles, each fully cleaned | **passed** |
+| Work mode: no play layer; "let's play" explains Casual mode | **passed** |
+| Preferences: Mode + sound + mic card render; Help & Setup tiles; tutorial Meet → Try; Skip keeps "try" | **passed** |
+| Toy window renderer released after Done (renderers 5 → 4 after 16 s) | **passed** |
+| Resources, 11 processes total | Idle: pet renderer ~14 % CPU + GPU ~22 % (the always-on 3D pet), about 718–729 MB RSS. During play: total +~10 % CPU (main moves the toy window). Hidden toy window: 0 % CPU, about 84 MB until released. |
+
+- **Not tested live on the Mac:**
+  - The stroke gesture (DevTools can't move the real cursor; unit-tested instead).
+  - The real mic test (skipped to avoid a macOS permission prompt for the scratch-profile helper).
+  - Play with Interactive GPT open, display edges / monitor unplug, reduced motion, play sounds.
+
+#### Windows checks still pending (Victus)
+1. Install `MIKO-0.1.2-win-x64.exe` as a normal user. Expect SmartScreen → More info → Run anyway, no admin prompt, a progress bar, and MIKO starting by itself. Start menu entry present; no desktop shortcut.
+2. Launch from the Start menu on a PC without Node / Git. The pet, the tray and Ctrl+Shift+R work.
+3. First open: the five steps, Skip for now, Help → Continue setup resumes the step.
+4. Help → Test microphone. Default device shown, the words appear (and aren't run), Cancel, Retry, Change microphone…
+5. Mic reproduction (WINDOWS_SETUP.md), then send `miko-diagnostics.log`.
+6. Help → Open logs folder; Interactive GPT opens inside MIKO.
+7. Casual: Fetch at both screen edges and near the taskbar (throw, chase, return), Feed, Pet stroke, Esc, a command mid-fetch. Desktop clicks around the toys go through.
+8. Desktop shortcut / start-at-sign-in toggles, then sign out and back in.
+9. Upgrade: run the installer again. Preferences and the ChatGPT session are kept.
+10. Uninstall: the message mentions `%APPDATA%\MIKO-Beta`, and the shortcut and Run entry are removed.
+11. Earlier pending items (WhatsApp search, Chrome search, app launch).
 
 ### 2026-11-22: Windows WhatsApp contact search + Chrome web search (made on the Mac)
 - **Owner ask:** WhatsApp contact search (typed/voice, chooser, no-match retry, Cancel, contextual "Open Dad", never touch the composer) and Chrome web search (encoded URL, profile choice, "search instead", no GPT side effects) on Windows; keep the Mac working; local only, no commit.

@@ -1,0 +1,197 @@
+/* MIKO video projector: a dark reading surface with a faint holographic edge. */
+.projector {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgba(10, 16, 20, 0.94);
+  border: 1px solid rgba(90, 220, 235, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 0 18px rgba(90, 220, 235, 0.18);
+  color: #e9f6f8;
+  font-size: 13px;
+}
+.projector.has-beam::after {
+  /* A soft light beam from the projector's lower edge toward MIKO below. */
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 46%;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 0 0 50% 50%;
+  background: radial-gradient(ellipse at top, rgba(120, 235, 245, 0.55), rgba(120, 235, 245, 0) 70%);
+  pointer-events: none;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  flex-wrap: wrap;
+  -webkit-app-region: drag;
+}
+.bar button,
+.bar select,
+.row button,
+.picker .wide,
+.is-pill button {
+  -webkit-app-region: no-drag;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07);
+  color: #e9f6f8;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bar button:hover,
+.row button:hover,
+.is-pill button:hover {
+  background: rgba(90, 220, 235, 0.2);
+}
+.bar button.is-on {
+  border-color: rgba(90, 220, 235, 0.7);
+  color: #b7f2f7;
+}
+.bar button:focus-visible,
+.bar select:focus-visible,
+.row button:focus-visible,
+.source:focus-visible {
+  outline: 2px solid #f3ce61;
+  outline-offset: 2px;
+}
+.badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(90, 220, 235, 0.16);
+  color: #a6eef5;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.title {
+  min-width: 60px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: #cfe7ea;
+}
+.spacer {
+  flex: 1;
+}
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #000;
+}
+.stage.is-cropping {
+  cursor: crosshair;
+}
+.crop-box {
+  position: absolute;
+  border: 2px solid #f3ce61;
+  background: rgba(243, 206, 97, 0.12);
+  pointer-events: none;
+}
+.overlay,
+.overlay-hint {
+  position: absolute;
+  inset: auto 10px 10px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(10, 16, 20, 0.9);
+  border: 1px solid rgba(90, 220, 235, 0.3);
+  line-height: 1.4;
+}
+.overlay p {
+  margin: 0 0 8px;
+}
+.overlay-hint {
+  inset: 10px 10px auto 10px;
+  pointer-events: none;
+}
+.picker {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.picker .note,
+.foot {
+  margin: 4px 2px 8px;
+  color: #b9d6da;
+  line-height: 1.4;
+}
+.foot {
+  margin: 6px 2px 0;
+  font-size: 12px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+.source {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.source.is-browser {
+  border-color: rgba(90, 220, 235, 0.45);
+}
+.source:hover {
+  background: rgba(90, 220, 235, 0.14);
+}
+.source img,
+.source .blank {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #050809;
+}
+.source .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.projector.is-pill {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  -webkit-app-region: drag;
+}
+.projector.is-pill .title {
+  flex: 1;
+  max-width: none;
+}

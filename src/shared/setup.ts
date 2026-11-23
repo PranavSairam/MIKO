@@ -2,19 +2,28 @@
 
 export const SETUP_TUTORIAL_VERSION = 1
 
-export const SETUP_STEPS = [
-  'welcome',
-  'pet',
-  'microphone',
-  'assistant',
-  'shortcuts',
-  'show-hide',
-  'drag',
-  'command',
-  'voice',
-  'interactive-gpt',
-  'done'
-] as const
+/** First open: Meet MIKO → Try MIKO → Enable voice (optional) → Use ChatGPT (optional) → Ready. */
+export const SETUP_STEPS = ['meet', 'try', 'voice', 'chatgpt', 'ready', 'done'] as const
+
+/** Step names saved by earlier builds, mapped onto the current steps (resume never breaks). */
+const LEGACY_STEPS: Record<string, (typeof SETUP_STEPS)[number]> = {
+  welcome: 'meet',
+  pet: 'meet',
+  microphone: 'voice',
+  voice: 'voice',
+  assistant: 'chatgpt',
+  'interactive-gpt': 'chatgpt',
+  shortcuts: 'try',
+  'show-hide': 'try',
+  drag: 'try',
+  command: 'try'
+}
+
+function stepFrom(value: unknown): (typeof SETUP_STEPS)[number] | null {
+  if (typeof value !== 'string') return null
+  if ((SETUP_STEPS as readonly string[]).includes(value)) return value as (typeof SETUP_STEPS)[number]
+  return LEGACY_STEPS[value] ?? null
+}
 
 export type SetupStepId = (typeof SETUP_STEPS)[number]
 export type SetupStatus = 'pending' | 'in-progress' | 'completed' | 'skipped'
@@ -68,7 +77,7 @@ export const SUMMON_ALTERNATIVES = [
 ] as const
 
 /** Outcome of an explicit Try microphone action (native helper only). */
-export type MicTestOutcome = 'not-tested' | 'transcript-confirmed' | 'denied' | 'silence' | 'unavailable'
+export type MicTestOutcome = 'not-tested' | 'transcript-confirmed' | 'denied' | 'silence' | 'unavailable' | 'cancelled'
 
 export interface MicTestStatus {
   outcome: MicTestOutcome
@@ -91,7 +100,7 @@ export function defaultSetupState(): SetupState {
   return {
     tutorialVersion: SETUP_TUTORIAL_VERSION,
     status: 'pending',
-    currentStep: 'welcome',
+    currentStep: 'meet',
     completedAt: null
   }
 }
@@ -103,11 +112,8 @@ export function parseSetupState(value: unknown): SetupState {
     row.status === 'in-progress' || row.status === 'completed' || row.status === 'skipped'
       ? row.status
       : 'pending'
-  const currentStep = SETUP_STEPS.includes(row.currentStep as SetupStepId)
-    ? (row.currentStep as SetupStepId)
-    : status === 'completed' || status === 'skipped'
-      ? 'done'
-      : 'welcome'
+  const currentStep =
+    stepFrom(row.currentStep) ?? (status === 'completed' || status === 'skipped' ? 'done' : 'meet')
   return {
     tutorialVersion:
       typeof row.tutorialVersion === 'number' && Number.isInteger(row.tutorialVersion) && row.tutorialVersion > 0
@@ -134,9 +140,8 @@ export function parseSetupUpdate(value: unknown): SetupUpdate | null {
   ) {
     return { action: row.action }
   }
-  if (row.action === 'go' && SETUP_STEPS.includes(row.step as SetupStepId)) {
-    return { action: 'go', step: row.step as SetupStepId }
-  }
+  const step = row.action === 'go' ? stepFrom(row.step) : null
+  if (step) return { action: 'go', step }
   return null
 }
 
@@ -146,7 +151,8 @@ export function applySetupUpdate(current: SetupState, update: SetupUpdate, now =
     return {
       tutorialVersion: SETUP_TUTORIAL_VERSION,
       status: 'in-progress',
-      currentStep: state.status === 'pending' ? 'welcome' : state.currentStep,
+      // Resume where the owner left off (Skip keeps the step); a finished tutorial starts over.
+      currentStep: state.status === 'pending' || state.currentStep === 'done' ? 'meet' : state.currentStep,
       completedAt: null
     }
   }
@@ -167,17 +173,18 @@ export function applySetupUpdate(current: SetupState, update: SetupUpdate, now =
     }
   }
   if (update.action === 'skip') {
+    // “Skip for now”: closes setup and remembers the step, so Help & Setup can resume it.
     return {
       tutorialVersion: SETUP_TUTORIAL_VERSION,
       status: 'skipped',
-      currentStep: 'done',
+      currentStep: state.currentStep,
       completedAt: now
     }
   }
   return {
     tutorialVersion: SETUP_TUTORIAL_VERSION,
     status: 'in-progress',
-    currentStep: update.action === 'restart-tutorial' ? 'show-hide' : 'welcome',
+    currentStep: update.action === 'restart-tutorial' ? 'try' : 'meet',
     completedAt: null
   }
 }

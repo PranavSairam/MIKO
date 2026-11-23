@@ -14,6 +14,7 @@ import {
   type WhatsAppReplyIntent,
   type WhatsAppSummarizeIntent
 } from './whatsapp-reply.ts'
+import { matchProjectVideo } from './projector.ts'
 import { parseAttachmentIntent, type WhatsAppAttachmentIntent } from './whatsapp-attachments.ts'
 import { isFeedbackCommand } from './feedback.ts'
 import { isSendItPhrase } from './send-destination.ts'
@@ -67,6 +68,10 @@ export type CommandResult =
   | { type: 'corner'; edge: 'left' | 'right' }
   | { type: 'home' }
   | { type: 'pose'; pose: 'sit' | 'stand' | 'stay' | 'wander' }
+  /** Casual-mode play: open the Play menu (activity null) or go straight to fetch. */
+  | { type: 'play'; activity: 'fetch' | null }
+  /** Open the video projector (mirror a chosen window above MIKO). */
+  | { type: 'project-video' }
   | { type: 'launch'; appId: string; name: string }
   | { type: 'confirm'; appId: string; name: string }
   | { type: 'close'; appId: string; name: string }
@@ -324,6 +329,11 @@ export function routeCommand(
   if (closedSite) return closedSite
 
   const waMessaging = waMessagingEarly
+
+  // Exact play phrases (“play fetch”) before attachment “fetch …” wording.
+  const played = matchPlay(normalize(lead))
+  if (played) return played
+  if (matchProjectVideo(normalize(lead))) return { type: 'project-video' }
 
   // Attachment fetch/copy/attach — before assistant fallback (verified chat checked at run time).
   const waAttachment = parseAttachmentIntent(lead)
@@ -876,6 +886,18 @@ function matchMotion(spoken: string): CommandResult | null {
   if (spoken === 'stay' || spoken === 'stay there') return { type: 'pose', pose: 'stay' }
   if (spoken === 'resume wandering' || spoken === 'start wandering' || spoken === 'wander') {
     return { type: 'pose', pose: 'wander' }
+  }
+  return matchPlay(spoken)
+}
+
+/** Exact play phrases only, so “play music” / “play <song>” keep going to Spotify. */
+export function matchPlay(spoken: string): CommandResult | null {
+  const text = spoken.replace(/[.!?]+$/g, '').replace(/^(?:hey\s+)?miko[,\s]+/, '').replace(/’/g, "'").trim()
+  if (/^(?:let'?s\s+)?play\s+fetch$|^throw\s+(?:the|a|my)\s+(?:ball|stick)$|^go\s+fetch$/.test(text)) {
+    return { type: 'play', activity: 'fetch' }
+  }
+  if (/^(?:let'?s\s+play|play\s+with\s+(?:me|miko)|play\s*time|open\s+play|show\s+play)$/.test(text)) {
+    return { type: 'play', activity: null }
   }
   return null
 }

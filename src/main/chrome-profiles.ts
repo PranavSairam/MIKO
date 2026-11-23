@@ -96,8 +96,11 @@ function chromeUserDataDir(): string | null {
 
 function chromeExecutable(): string | null {
   if (process.platform === 'darwin') {
-    const path = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    return existsSync(path) ? path : null
+    const candidates = [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      join(homedir(), 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome')
+    ]
+    return candidates.find((p) => existsSync(p)) || null
   }
   if (process.platform === 'win32') {
     const candidates = [
@@ -240,14 +243,36 @@ export function listChromeProfiles(savedDefaultDirectoryId?: string | null): Chr
   }
 }
 
-export async function launchChromeProfile(opts: {
+/** Same profile + URL requested again while the first launch is still starting: one launch, one answer. */
+const inflight = new Map<string, Promise<ChromeLaunchResult>>()
+
+export function launchChromeProfile(opts: { directoryId: string; url?: string | null; displayName?: string | null }): Promise<ChromeLaunchResult> {
+  const key = `${opts.directoryId}\n${opts.url ?? ''}`
+  const running = inflight.get(key)
+  if (running) return running
+  const work = launchChromeProfileOnce(opts).finally(() => {
+    // Keep a short window so a double-click that lands just after the launch still doesn't repeat it.
+    setTimeout(() => inflight.delete(key), 1500)
+  })
+  inflight.set(key, work)
+  return work
+}
+
+/** A short, readable launch error (first line of stderr / the error message). */
+function launchError(error: unknown): string {
+  const e = error as { stderr?: unknown; message?: unknown; code?: unknown }
+  const text = typeof e?.stderr === 'string' && e.stderr.trim() ? e.stderr : typeof e?.message === 'string' ? e.message : ''
+  const line = text.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ''
+  return line.replace(/\/Users\/[^/\s]+/g, '~').slice(0, 160)
+}
+
+async function launchChromeProfileOnce(opts: {
   directoryId: string
   url?: string | null
   displayName?: string | null
 }): Promise<ChromeLaunchResult> {
   const listed = listChromeProfiles()
-  const verificationNote =
-    'Launch was requested with the chosen profile directory. Tab listing cannot confirm which Chrome profile owns a window, so I don’t claim the frontmost window was verified.'
+  const verificationNote = '(Chrome accepted the launch; I can’t see which profile’s window is in front, so that part isn’t checked.)'
 
   if (listed.status !== 'ok') {
     return {
@@ -317,7 +342,9 @@ export async function launchChromeProfile(opts: {
     if (process.platform === 'darwin') {
       // -n asks for a new instance; Chrome’s singleton forwards to the running process
       // and opens a window for this profile without closing other profile windows.
-      const args = ['-na', 'Google Chrome', '--args', profileArg]
+      // -a with the bundle path (not the name) so a Chrome in ~/Applications works too.
+      const bundle = exe.replace(/\/Contents\/MacOS\/Google Chrome$/, '')
+      const args = ['-na', bundle, '--args', profileArg]
       if (url) args.push(url)
       await execFileAsync('/usr/bin/open', args, { timeout: 15_000, shell: false })
     } else {
@@ -326,23 +353,24 @@ export async function launchChromeProfile(opts: {
       if (url) args.push(url)
       await startDetached(exe, args)
     }
-    const where = url ? ` and opened ${new URL(url).hostname}` : ''
+    const where = url ? ` with ${new URL(url).hostname}` : ''
     return {
       ok: true,
       directoryId: live.directoryId,
       displayName: live.displayName,
       url: url || '',
-      reason: `Opened Chrome as “${live.displayName}”${where}.`,
+      reason: `Started Chrome with the “${live.displayName}” profile${where}.`,
       verified: false,
       verificationNote
     }
-  } catch {
+  } catch (error) {
+    const detail = launchError(error)
     return {
       ok: false,
       directoryId: live.directoryId,
       displayName: live.displayName,
       url: url || '',
-      reason: `I couldn’t launch Chrome as “${live.displayName}”.`,
+      reason: `I couldn’t launch Chrome as “${live.displayName}”${detail ? ` (${detail})` : ''}. Nothing else was opened.`,
       verified: false,
       verificationNote
     }

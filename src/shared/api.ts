@@ -9,6 +9,23 @@ export const IPC = {
   petActive: 'miko:pet-active',
   petFlight: 'miko:pet-flight',
   petCommand: 'miko:pet-command',
+  // Video projector (its preload inlines these names; keep in sync with src/preload/projector.ts).
+  projectorOpen: 'miko:projector-open',
+  projectorSources: 'miko:projector-sources',
+  projectorSelect: 'miko:projector-select',
+  projectorAspect: 'miko:projector-aspect',
+  projectorSize: 'miko:projector-size',
+  projectorCollapse: 'miko:projector-collapse',
+  projectorPin: 'miko:projector-pin',
+  projectorOpenOriginal: 'miko:projector-open-original',
+  projectorPrivacy: 'miko:projector-privacy',
+  projectorClose: 'miko:projector-close',
+  playThrow: 'miko:play-throw',
+  playToyHide: 'miko:play-toy-hide',
+  playToy: 'miko:play-toy',
+  playSettings: 'miko:play-settings',
+  playSettingsGet: 'miko:play-settings-get',
+  playSettingsSet: 'miko:play-settings-set',
   setHitRects: 'miko:set-hit-rects',
   setDragActive: 'miko:set-drag-active',
   setReducedMotion: 'miko:set-reduced-motion',
@@ -112,6 +129,11 @@ export const IPC = {
   voiceSettingsOpen: 'miko:voice-settings-open',
   voiceInputDevices: 'miko:voice-input-devices',
   voiceMicTest: 'miko:voice-mic-test',
+  systemOptionsGet: 'miko:system-options-get',
+  systemOptionsSet: 'miko:system-options-set',
+  openLogsFolder: 'miko:open-logs-folder',
+  voiceMicTestCancel: 'miko:voice-mic-test-cancel',
+  voiceMicTestPhase: 'miko:voice-mic-test-phase',
   summonShortcutGet: 'miko:summon-shortcut-get',
   summonShortcutSet: 'miko:summon-shortcut-set',
   prefsGet: 'miko:prefs-get',
@@ -356,6 +378,23 @@ export interface ListenStartResult {
   help?: 'microphone-privacy' | 'sound-input' | 'speech-language'
 }
 
+export interface SystemOptionsInfo {
+  launchAtLogin: boolean
+  desktopShortcut: boolean
+  canLaunchAtLogin: boolean
+  canDesktopShortcut: boolean
+  detail: string
+}
+
+export interface VoiceInputDevices {
+  devices: string[]
+  /** Windows default recording device (System.Speech listens to this one). */
+  defaultDevice: string
+  /** Installed Windows speech recognizer languages. */
+  recognizers: string[]
+  detail: string
+}
+
 export interface SpeechEvent {
   phase: 'transcript' | 'denied' | 'silence' | 'unavailable' | 'cancelled' | 'failed'
   text?: string
@@ -591,6 +630,7 @@ export interface MikoApi {
     tuckPanel?: boolean
     dictateToGpt?: boolean
     openSetup?: boolean
+    openHelp?: boolean
     runTutorial?: boolean
     listen?: boolean
   }) => void) => () => void
@@ -789,8 +829,17 @@ export interface MikoApi {
   /** Opens microphone privacy settings, or a specific page for a speech failure. */
   voiceSettingsOpen: (help?: 'microphone-privacy' | 'sound-input' | 'speech-language') => Promise<boolean>
   /** Windows: input devices Windows reports (System.Speech always uses the default input). */
-  voiceInputDevices: () => Promise<{ devices: string[]; detail: string }>
+  voiceInputDevices: () => Promise<VoiceInputDevices>
   voiceMicTest: () => Promise<import('./setup').MicTestStatus>
+  /** Windows (installed app): start at sign-in and a desktop shortcut. Both off unless chosen. */
+  systemOptionsGet: () => Promise<SystemOptionsInfo>
+  systemOptionsSet: (next: { launchAtLogin?: boolean; desktopShortcut?: boolean }) => Promise<SystemOptionsInfo & { reason: string }>
+  /** Show the troubleshooting log in Explorer / Finder. */
+  openLogsFolder: () => Promise<boolean>
+  /** Cancel a running microphone test (releases the microphone). */
+  voiceMicTestCancel: () => void
+  /** Progress of a running microphone test (starting → listening → hearing → done / error). */
+  onMicTestPhase: (listener: (event: import('./mic-session').MicTestPhaseEvent) => void) => () => void
   summonShortcutGet: () => Promise<import('./setup').SummonShortcutStatus>
   summonShortcutSet: (accelerator: string) => Promise<import('./setup').SummonShortcutStatus>
   bridgeCancel: (requestId: string) => void
@@ -877,6 +926,16 @@ export interface MikoApi {
   setReducedMotion: (reduced: boolean) => void
   /** The exit pose finished for this summon generation. */
   exitFinished: (generation: number) => void
+  /** Open the video projector (pick a window to mirror above MIKO). */
+  projectorOpen: () => void
+  /** Casual-mode fetch: throw the toy (main animates it in its own click-through window). */
+  playThrow: (request: PlayThrowRequest) => Promise<PlayThrowResult>
+  /** Hide the thrown toy (picked up, cancelled, done). */
+  playToyHide: () => void
+  onPlayToy: (listener: (event: PlayToyEvent) => void) => () => void
+  playSettingsGet: () => Promise<PlaySettings>
+  playSettingsSet: (next: Partial<PlaySettings>) => Promise<PlaySettings>
+  onPlaySettings: (listener: (settings: PlaySettings) => void) => () => void
   /** Main-to-renderer presence. Returns an unsubscribe. */
   onPresence: (listener: (event: PresenceEvent) => void) => () => void
   /** Where the pet sits in the current display's roam range. Returns an unsubscribe. */
@@ -899,4 +958,29 @@ export interface PetFlightInfo {
   perch: { x: number; y: number } | null
 }
 
-export type PetCommand = { kind: 'switch'; pet: PetId } | { kind: 'choose' } | { kind: 'feed' }
+export type PetCommand = { kind: 'switch'; pet: PetId } | { kind: 'choose' } | { kind: 'feed' } | { kind: 'play' }
+
+export interface PlaySettings {
+  mode: import('./play').PlayMode
+  sound: boolean
+}
+
+export interface PlayThrowRequest {
+  toy: import('./play').Toy
+  localX: number
+  localY: number
+  vx: number
+  vy: number
+  mouthDx: number
+  maxDistance: number
+  reduced: boolean
+}
+
+export interface PlayThrowResult {
+  ok: boolean
+  reason: string
+  targetX: number
+  seconds: number
+}
+
+export type PlayToyEvent = { phase: 'landed' } | { phase: 'cancelled'; reason: string }

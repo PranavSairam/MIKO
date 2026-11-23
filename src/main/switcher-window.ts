@@ -31,6 +31,10 @@ let feedHold = 0
 const feedBusy = new Set<string>()
 /** Click-through for empty glass. macOS-only forward so cards can still arm on hover. */
 let switcherIgnoring = true
+/** When the fan last hid because it lost focus (a click elsewhere, including on MIKO). */
+let lastBlurHideAt = 0
+/** A pet click this soon after a blur-hide was the click that closed the fan: don't reopen it. */
+const REOPEN_GUARD_MS = 450
 
 function applySwitcherIgnore(ignore: boolean): void {
   if (!win || win.isDestroyed()) return
@@ -46,6 +50,11 @@ export function openSwitcher(): void {
   const current = ensureWindow()
   if (!ready) {
     openWhenReady = true
+    return
+  }
+  if (current.isVisible()) {
+    // Already open: never restart the fan animation, just keep it focused.
+    current.focus()
     return
   }
   place(current)
@@ -64,6 +73,19 @@ export function openSwitcher(): void {
       void winFocusWindow(hwnd)
     }, 120)
   }
+}
+
+/**
+ * Single click on MIKO: open the fan, or close it if it's open. Clicking MIKO while the fan is
+ * open first blurs (and hides) the fan; that same click must not open it again 250 ms later.
+ */
+export function toggleSwitcherFromPet(): void {
+  if (win && !win.isDestroyed() && win.isVisible()) {
+    hideSwitcher(true)
+    return
+  }
+  if (Date.now() - lastBlurHideAt < REOPEN_GUARD_MS + 300) return
+  openSwitcher()
 }
 
 export function toggleSwitcher(): void {
@@ -269,7 +291,10 @@ function ensureWindow(): BrowserWindow {
   created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   created.webContents.on('will-navigate', (event) => event.preventDefault())
   created.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  created.on('blur', () => hideSwitcher())
+  created.on('blur', () => {
+    if (created.isVisible() && feedHold === 0) lastBlurHideAt = Date.now()
+    hideSwitcher()
+  })
   created.webContents.once('did-finish-load', () => {
     ready = true
     if (openWhenReady) {

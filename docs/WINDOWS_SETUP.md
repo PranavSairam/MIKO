@@ -131,3 +131,23 @@ Add-Type -AssemblyName System.Speech; [System.Speech.Recognition.SpeechRecogniti
 powershell -NoProfile -ExecutionPolicy Bypass -File .\resources\listen-win.ps1 -Mode test
 '{"search":"Dad"}' | powershell -NoProfile -ExecutionPolicy Bypass -File .\resources\whatsapp-win.ps1
 ```
+
+## Microphone diagnostics (2026-11-22)
+
+Every capture has a session id. `miko-diagnostics.log` (Help & Setup → Open logs folder) gets `mic: #N start`, helper stage timings (`speech-loaded`, `recognizer`, `input`, `recognizing`), `listening {ms}`, and `end {outcome, code, …}` with a one-line summary such as
+`#7 tap panel ready-timeout end=8001ms [speech-loaded=2140 recognizer=4310]`. No audio and no words (transcripts only as a character count). `mic: devices` records the Windows default recording device and installed recognizers when the microphone test card loads.
+
+### Reproducing the intermittent microphone problem
+
+1. Help & Setup → Open logs folder; note the time.
+2. Click the panel mic 5 times in a row (wait for each result), then hold Shift + A 5 times, then run Test microphone 3 times.
+3. Repeat once right after a reboot (cold start) and once with a Bluetooth headset connected/disconnected.
+4. Send the log. Look for `ready-timeout` (helper slower than 8 s; check the stage times), `no-audio` / `silence` with `level`, `helper-exit` codes, `stale … ignored` (late callbacks), and `start request joined` (double starts).
+
+## Windows handoff build
+
+```bash
+npm run build && npm run dist:win && npm run handoff:win
+```
+
+`release/windows-handoff/MIKO-<version>/` gets the installer, START-HERE.txt, TROUBLESHOOTING.txt and SHA256SUMS.txt. `release/` is git-ignored. The script refuses to assemble the folder if `win-unpacked` contains settings, logs, cookies, keys or browser partitions, or is missing the Windows helpers or pet models.

@@ -74,7 +74,9 @@ describe('pet registry against the real assets', () => {
 
 describe('fallbacks', () => {
   it('falls back through the list, then to Idle; no Idle means unusable', () => {
-    assert.deepEqual(resolvePetClips(PETS.bird, ['Idle', 'Walk']), { idle: 'Idle', walk: 'Walk', sit: 'Idle', sitIdle: 'Idle', standUp: 'Idle' })
+    // The bird travels by flying; it never falls back to its hop / walk clips.
+    assert.deepEqual(resolvePetClips(PETS.bird, ['Idle', 'Fly', 'Hop', 'Walk']), { idle: 'Idle', walk: 'Fly', sit: 'Idle', sitIdle: 'Idle', standUp: 'Idle' })
+    assert.deepEqual(resolvePetClips(PETS.bird, ['Idle', 'Walk']), { idle: 'Idle', walk: 'Idle', sit: 'Idle', sitIdle: 'Idle', standUp: 'Idle' })
     assert.deepEqual(resolvePetClips(PETS.cat, ['Idle']), { idle: 'Idle', walk: 'Idle', sit: 'Idle', sitIdle: 'Idle', standUp: 'Idle' })
     assert.equal(resolvePetClips(PETS.cat, ['Walk', 'Sit']), null)
     assert.deepEqual(usableFlavors(PETS.koala, ['Idle', 'Wave']).map((f) => f.clip), ['Wave'])

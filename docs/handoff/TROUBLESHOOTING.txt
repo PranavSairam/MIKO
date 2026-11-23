@@ -1,0 +1,29 @@
+MIKO - if something isn't working
+=================================
+
+MIKO doesn't appear
+  - Press Ctrl + Shift + R.
+  - Or click the small up-arrow near the clock, right-click the MIKO icon, choose Show.
+  - Or open it again from the Start menu (MIKO). Only one MIKO runs at a time.
+
+The microphone doesn't hear me
+  - MIKO icon near the clock -> Help & Setup -> Test microphone.
+  - It shows which microphone Windows is using. "Change microphone..." opens
+    Windows Sound settings where you can pick another one.
+  - If it says Windows blocked the microphone: Settings -> Privacy & security ->
+    Microphone -> turn on "Let desktop apps access your microphone".
+  - You can always type instead of talking.
+
+Windows warned me when installing
+  - "Windows protected your PC" -> More info -> Run anyway. This is expected for this
+    version. Only do this for the file Pranav sent you.
+
+Something else
+  - Help & Setup -> Send feedback. You'll see exactly what is in the report before
+    anything is saved. Then send that file to Pranav.
+  - Help & Setup -> Open logs folder shows MIKO's log file, if Pranav asks for it.
+
+Uninstalling
+  - Settings -> Apps -> Installed apps -> MIKO -> Uninstall.
+  - Your MIKO settings and ChatGPT sign-in stay on the PC so a reinstall picks them up.
+    To remove them too, delete the MIKO-Beta folder in %APPDATA%.

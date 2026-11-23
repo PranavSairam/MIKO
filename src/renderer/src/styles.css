@@ -2809,3 +2809,555 @@ pre.mail-body.text {
   color: #8fe8c8;
   font-size: 9px;
 }
+
+/* ---------------------------------------------------------------- Microphone test card */
+.mic-card {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(231, 176, 122, 0.28);
+  background: rgba(255, 255, 255, 0.03);
+}
+.mic-card .prefs-field select {
+  width: 100%;
+  margin-top: 4px;
+  min-height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(231, 176, 122, 0.4);
+  background: rgba(20, 16, 14, 0.9);
+  color: #f1e4d6;
+  font-size: 12px;
+}
+.mic-status {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #f1e4d6;
+  font-size: 13px;
+  line-height: 1.4;
+  min-height: 20px;
+}
+.mic-status.phase-listening,
+.mic-status.phase-hearing {
+  box-shadow: inset 0 0 0 1px rgba(150, 210, 120, 0.55);
+}
+.mic-status.phase-done {
+  box-shadow: inset 0 0 0 1px rgba(150, 210, 120, 0.8);
+}
+.mic-status.phase-error {
+  box-shadow: inset 0 0 0 1px rgba(240, 140, 110, 0.75);
+}
+.mic-card.is-large .mic-status {
+  font-size: 16px;
+}
+.mic-card.is-large .text-button {
+  min-height: 34px;
+  font-size: 14px;
+  padding: 0 16px;
+}
+
+/* ---------------------------------------------------------------- Casual-mode play (inside the pet window) */
+.play-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+.play-layer button {
+  pointer-events: auto;
+}
+.play-menu {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(28, 24, 22, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.play-menu button {
+  border: 0;
+  border-radius: 999px;
+  min-height: 24px;
+  padding: 0 8px;
+  background: transparent;
+  color: #f1e4d6;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.play-menu button svg {
+  width: 16px;
+  height: 16px;
+}
+.play-menu button:hover,
+.play-menu button:focus-visible {
+  background: rgba(231, 176, 122, 0.3);
+  outline: none;
+}
+.play-menu button.is-done {
+  background: #c4844a;
+  color: #1b130e;
+}
+.play-chip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  min-height: 22px;
+  padding: 0 9px;
+  background: rgba(28, 24, 22, 0.8);
+  color: #f1e4d6;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  animation: play-fade-in 0.18s ease-out;
+}
+.play-chip:hover {
+  background: rgba(196, 132, 74, 0.9);
+  color: #1b130e;
+}
+.play-item {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  touch-action: none;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35));
+  transition: transform 0.12s ease-out;
+}
+.play-item:hover,
+.play-item:focus-visible {
+  transform: scale(1.12);
+  outline: none;
+}
+.play-item.is-held {
+  cursor: grabbing;
+  transform: scale(1.18);
+  transition: none;
+}
+.play-carry,
+.play-dropped {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35));
+}
+.play-dropped {
+  display: grid;
+  animation: play-drop 0.35s ease-in;
+}
+.play-effect {
+  position: absolute;
+  pointer-events: none;
+  font-size: 15px;
+  line-height: 1;
+  animation: play-float 1.2s ease-out forwards;
+}
+.play-effect.is-heart {
+  color: #f26b7a;
+}
+.play-effect.is-crumb {
+  color: #d9a35a;
+  font-size: 12px;
+  animation-name: play-crumb;
+}
+.play-effect.is-spark {
+  color: #f6dd6b;
+}
+.play-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  max-width: 206px;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(28, 24, 22, 0.82);
+  color: #f1e4d6;
+  font-size: 10.5px;
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: none;
+}
+.pet-hit.is-drop-target {
+  border-radius: 40%;
+  box-shadow: 0 0 0 2px rgba(246, 221, 107, 0.55), 0 0 18px rgba(246, 221, 107, 0.35);
+}
+.pet-slot.is-hop-a .motion-canvas {
+  animation: play-hop-a 0.42s ease-out;
+}
+.pet-slot.is-hop-b .motion-canvas {
+  animation: play-hop-b 0.42s ease-out;
+}
+.play-layer.is-reduced .play-effect,
+.play-layer.is-reduced .play-dropped,
+.play-layer.is-reduced .play-chip {
+  animation: play-fade 1.2s linear forwards;
+}
+.play-layer.is-reduced .play-dropped,
+.play-layer.is-reduced .play-chip {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-slot.is-hop-a .motion-canvas,
+  .pet-slot.is-hop-b .motion-canvas {
+    animation: none;
+  }
+  .play-item,
+  .play-item:hover,
+  .play-item.is-held {
+    transform: none;
+    transition: none;
+  }
+}
+@keyframes play-hop-a {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-14px); }
+}
+@keyframes play-hop-b {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-14px); }
+}
+@keyframes play-float {
+  0% { opacity: 0; transform: translateY(4px) scale(0.8); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-26px) scale(1.1); }
+}
+@keyframes play-crumb {
+  0% { opacity: 1; transform: translate(0, 0); }
+  100% { opacity: 0; transform: translate(6px, 22px); }
+}
+@keyframes play-fade {
+  0% { opacity: 0; }
+  20% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes play-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes play-drop {
+  from { transform: translateY(-40px); }
+  to { transform: translateY(0); }
+}
+
+/* ---------------------------------------------------------------- First open + Help & Setup (large, readable) */
+.setup.is-large,
+.help.is-large {
+  font-size: 14.5px;
+  line-height: 1.45;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+.setup-title {
+  margin: 4px 0 6px;
+  font-size: 18px;
+  font-weight: 750;
+  color: #f6e9dc;
+}
+.setup-body {
+  margin: 0 0 10px;
+  font-size: 14.5px;
+  color: #ead8c6;
+}
+.setup.is-large .text-button,
+.help.is-large .text-button {
+  min-height: 34px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+.setup-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+}
+.setup-progress li {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(231, 176, 122, 0.3);
+  color: #b9a796;
+}
+.setup-progress li.is-now {
+  background: #c4844a;
+  color: #1b130e;
+  border-color: transparent;
+  font-weight: 700;
+}
+.setup-progress li.is-done {
+  color: #9fd38a;
+  border-color: rgba(159, 211, 138, 0.45);
+}
+.setup-tries {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+.setup-tries li {
+  margin: 4px 0;
+}
+.setup-ok {
+  color: #9fd38a;
+  font-weight: 700;
+}
+.setup kbd,
+.help kbd {
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  font: inherit;
+  font-weight: 700;
+}
+.setup-actions {
+  margin-top: 8px;
+}
+.setup-examples {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.setup-example {
+  text-align: left;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(231, 176, 122, 0.4);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f6e9dc;
+  font-size: 14.5px;
+  cursor: pointer;
+}
+.setup-example:hover,
+.setup-example:focus-visible {
+  background: rgba(196, 132, 74, 0.25);
+  outline: none;
+}
+.setup-options {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+.prefs-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: #ead8c6;
+}
+.prefs-check input {
+  width: 18px;
+  height: 18px;
+}
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.help-tile {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  min-height: 58px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(231, 176, 122, 0.32);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f6e9dc;
+  cursor: pointer;
+}
+.help-tile strong {
+  font-size: 14px;
+}
+.help-tile span {
+  font-size: 12px;
+  color: #c9b6a4;
+}
+.help-tile:hover,
+.help-tile:focus-visible {
+  background: rgba(196, 132, 74, 0.22);
+  outline: none;
+}
+
+/* ================================================================ Readable controls (default)
+ * Primary controls get ~40–44 px hit areas, readable labels and a visible focus ring.
+ * Preferences → “Compact controls” adds html.is-compact, which restores the small sizes.
+ * Sizes are in CSS px (logical pixels), so Windows display scaling and Retina both scale them.
+ */
+html:not(.is-compact) .text-button,
+html:not(.is-compact) .glass-button,
+html:not(.is-compact) .bar-button,
+html:not(.is-compact) .send,
+html:not(.is-compact) .help-tile,
+html:not(.is-compact) .setup-example {
+  min-height: 40px;
+  font-size: 13.5px;
+  padding-left: 14px;
+  padding-right: 14px;
+  line-height: 1.2;
+}
+html:not(.is-compact) .glass-button {
+  border-radius: 12px;
+}
+html:not(.is-compact) .tab {
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+html:not(.is-compact) .chip,
+html:not(.is-compact) .mail-cat-chip {
+  min-height: 36px;
+  padding: 6px 13px;
+  font-size: 13px;
+}
+/* Icon-only buttons: the glyph stays small, the hit area doesn't. */
+html:not(.is-compact) .close,
+html:not(.is-compact) .icon-button,
+html:not(.is-compact) .m-icon {
+  min-width: 40px;
+  min-height: 40px;
+  font-size: 18px;
+  opacity: 0.9;
+}
+html:not(.is-compact) .panel-bar {
+  min-height: 40px;
+  row-gap: 6px;
+}
+html:not(.is-compact) .panel-bar h1 {
+  font-size: 14px;
+}
+/* Headers wrap instead of squeezing labels; long labels can break onto two lines. */
+html:not(.is-compact) .panel-bar-actions .bar-button {
+  white-space: normal;
+  text-align: center;
+  max-width: 100%;
+}
+html:not(.is-compact) .panel-detail {
+  font-size: 13px;
+  line-height: 1.45;
+}
+html:not(.is-compact) .chrome-profile-fan-actions .glass-button,
+html:not(.is-compact) .gpt-hologram-actions .glass-button,
+html:not(.is-compact) .m-actions .glass-button {
+  min-height: 40px;
+}
+/* Play pill inside the 220 px pet window: as large as fits without covering the pet. */
+html:not(.is-compact) .play-menu button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+html:not(.is-compact) .play-chip {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+/* Visible focus on every control, in both sizes. */
+.glass-button:focus-visible,
+.bar-button:focus-visible,
+.tab:focus-visible,
+.chip:focus-visible,
+.close:focus-visible,
+.icon-button:focus-visible,
+.m-icon:focus-visible,
+.help-tile:focus-visible,
+.setup-example:focus-visible,
+.play-menu button:focus-visible,
+.play-chip:focus-visible,
+.play-item:focus-visible,
+.pet-card:focus-visible {
+  outline: 2px solid #f3ce61;
+  outline-offset: 2px;
+}
+/* Small or scaled-up displays: let action rows wrap rather than clip. */
+.panel-inline,
+.panel-actions,
+.reply-actions,
+.mail-reader-actions,
+.chrome-profile-fan-actions,
+.gpt-hologram-actions {
+  flex-wrap: wrap;
+}
+/* The header keeps its full (possibly wrapped) height; it must never shrink under the card below it. */
+.panel-bar,
+.gpt-mode-banner {
+  flex-shrink: 0;
+}
+html:not(.is-compact) .mic {
+  min-height: 40px;
+  height: auto;
+  min-width: 64px;
+  font-size: 13.5px;
+}
+html:not(.is-compact) .panel-bar .icon-button {
+  font-size: 19px;
+}
+
+/* TL;DR card */
+.tldr-card {
+  display: grid;
+  gap: 6px;
+}
+.tldr-head {
+  margin: 0;
+  font-weight: 750;
+  color: #f3ce61;
+  letter-spacing: 0.02em;
+}
+.tldr-meta {
+  font-weight: 500;
+  color: #c9b6a4;
+  letter-spacing: 0;
+}
+.tldr-summary {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-size: 14px;
+  color: #f6efe6;
+}
+.tldr-original summary {
+  cursor: pointer;
+  color: #c9b6a4;
+  font-size: 12.5px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+.tldr-original p {
+  margin: 4px 0 0;
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  color: #d9c8b8;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+}

@@ -39,6 +39,12 @@ export interface TrayActions {
   choosePet?: (id: string) => void
   openPetChooser?: () => void
   openSetup?: () => void
+  /** Work (default: no games) or Casual (play and reactions). */
+  playMode?: () => 'work' | 'casual'
+  setPlayMode?: (mode: 'work' | 'casual') => void
+  openPlay?: () => void
+  /** Video projector: mirror a chosen window above MIKO. */
+  openProjector?: () => void
   /** Shows MIKO and starts the mic (works without any keyboard shortcut). */
   listen?: () => void
 }
@@ -109,7 +115,20 @@ function petMenu(): Electron.MenuItemConstructorOptions[] {
         { type: 'separator' },
         { label: 'Choose your pet…', click: () => actions.openPetChooser?.() }
       ]
-    }
+    },
+    ...(actions.playMode
+      ? ([
+          {
+            label: 'Mode',
+            submenu: [
+              { label: 'Work (no games)', type: 'radio', checked: actions.playMode() === 'work', click: () => actions.setPlayMode?.('work') },
+              { label: 'Casual (play)', type: 'radio', checked: actions.playMode() === 'casual', click: () => actions.setPlayMode?.('casual') }
+            ]
+          },
+          { label: 'Play…', enabled: actions.playMode() === 'casual', click: () => actions.openPlay?.() },
+          ...(actions.openProjector ? [{ label: 'Project video…', click: () => actions.openProjector?.() }] : [])
+        ] as Electron.MenuItemConstructorOptions[])
+      : [])
   ]
 }
 

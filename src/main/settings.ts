@@ -300,3 +300,14 @@ function writeKey(key: string, value: unknown): boolean {
     return false
   }
 }
+
+/** Play preferences (Casual mode, play sounds). Only these keys are allowed through the generic accessors. */
+const PLAY_KEYS = new Set(['playMode', 'playSound'])
+
+export function readSetting(key: 'playMode' | 'playSound'): unknown {
+  return PLAY_KEYS.has(key) ? readAll()[key] : undefined
+}
+
+export function writeSetting(key: 'playMode' | 'playSound', value: unknown): boolean {
+  return PLAY_KEYS.has(key) ? writeKey(key, value) : false
+}

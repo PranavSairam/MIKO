@@ -87,6 +87,7 @@ import { comeToFront, enableFollow } from './follow'
 import { requestClose, watchClose } from './quit'
 import {
   cancelListening,
+  cancelMicTest,
   listInputDevices,
   openVoicePrivacySettings,
   runMicTest,
@@ -94,7 +95,7 @@ import {
   stopListening,
   voicePermissionStatus
 } from './speech'
-import { openSwitcher, registerSwitcherIpc } from './switcher-window'
+import { registerSwitcherIpc, toggleSwitcherFromPet } from './switcher-window'
 import { registerMailIpc } from './mail/ipc'
 import { bridgeStatus, cancelBridge, newConversation, sendBridge, stopAllBridges } from './bridge'
 import {
@@ -163,6 +164,9 @@ import { refreshTrayMenu } from './tray'
 import { availablePets, currentPetChoice, flightInfo, isTreeSender, petModel, savePetChoice, setActivePet } from './pets'
 import { PETS, parsePetId } from '../shared/pets'
 import { closeWebsiteTabs } from './browser-tabs'
+import { openProjector, registerProjectorIpc } from './projector'
+import { openLogsFolder, setSystemOptions, systemOptions } from './system-options'
+import { hideToy, parseThrowRequest, playSettings, setPlayMode, setPlaySound, throwToy } from './play'
 import { lastExternalApp } from './foreground'
 import { launchChromeFallback, launchChromeProfile, listChromeProfiles } from './chrome-profiles'
 import { isValidChromeDirectoryId } from '../shared/chrome-profiles'
@@ -240,6 +244,22 @@ export function registerIpc(presence: {
   })
 
   ipcMain.handle(IPC.petFlight, (event) => (trusted(event) ? flightInfo() : null))
+  ipcMain.handle(IPC.playThrow, (event, raw: unknown) => {
+    if (!trusted(event)) return { ok: false, reason: 'Not allowed.', targetX: 0, seconds: 0 }
+    const request = parseThrowRequest(raw)
+    return request ? throwToy(request) : { ok: false, reason: 'That throw isn\u2019t valid.', targetX: 0, seconds: 0 }
+  })
+  ipcMain.on(IPC.playToyHide, (event) => {
+    if (trusted(event)) hideToy()
+  })
+  ipcMain.handle(IPC.playSettingsGet, (event) => (trusted(event) ? playSettings() : { mode: 'work', sound: false }))
+  ipcMain.handle(IPC.playSettingsSet, (event, raw: unknown) => {
+    if (!trusted(event)) return { mode: 'work', sound: false }
+    const next = raw as { mode?: unknown; sound?: unknown } | null
+    if (next?.mode === 'work' || next?.mode === 'casual') setPlayMode(next.mode)
+    if (typeof next?.sound === 'boolean') setPlaySound(next.sound)
+    return playSettings()
+  })
 
   ipcMain.handle(IPC.panelPreset, (event, preset: unknown): PanelLayout => {
     if (!trusted(event)) return currentLayout()
@@ -1072,10 +1092,15 @@ export function registerIpc(presence: {
 
   ipcMain.on(IPC.openSwitcher, (event) => {
     if (!trusted(event)) return
-    openSwitcher()
+    // Pet single click: open, or close when it's already open (never reopen on the closing click).
+    toggleSwitcherFromPet()
   })
 
   registerSwitcherIpc()
+  registerProjectorIpc()
+  ipcMain.on(IPC.projectorOpen, (event) => {
+    if (trusted(event)) openProjector()
+  })
   registerMailIpc()
 
   ipcMain.handle(IPC.bridgeStatus, (event) => (trusted(event) ? bridgeStatus() : null))
@@ -1152,8 +1177,27 @@ export function registerIpc(presence: {
       : false
   )
   ipcMain.handle(IPC.voiceInputDevices, (event) =>
-    trusted(event) ? listInputDevices() : { devices: [], detail: 'Not allowed.' }
+    trusted(event) ? listInputDevices() : { devices: [], defaultDevice: '', recognizers: [], detail: 'Not allowed.' }
   )
+  ipcMain.handle(IPC.systemOptionsGet, (event) =>
+    trusted(event)
+      ? systemOptions()
+      : { launchAtLogin: false, desktopShortcut: false, canLaunchAtLogin: false, canDesktopShortcut: false, detail: 'Not allowed.' }
+  )
+  ipcMain.handle(IPC.systemOptionsSet, (event, raw: unknown) => {
+    if (!trusted(event)) {
+      return { launchAtLogin: false, desktopShortcut: false, canLaunchAtLogin: false, canDesktopShortcut: false, detail: '', reason: 'Not allowed.' }
+    }
+    const next = raw as { launchAtLogin?: unknown; desktopShortcut?: unknown } | null
+    return setSystemOptions({
+      ...(typeof next?.launchAtLogin === 'boolean' ? { launchAtLogin: next.launchAtLogin } : {}),
+      ...(typeof next?.desktopShortcut === 'boolean' ? { desktopShortcut: next.desktopShortcut } : {})
+    })
+  })
+  ipcMain.handle(IPC.openLogsFolder, (event) => (trusted(event) ? openLogsFolder() : false))
+  ipcMain.on(IPC.voiceMicTestCancel, (event) => {
+    if (trusted(event)) cancelMicTest()
+  })
   ipcMain.handle(IPC.voiceMicTest, (event) =>
     trusted(event)
       ? runMicTest()
@@ -1304,7 +1348,7 @@ export function registerIpc(presence: {
 
   ipcMain.handle(IPC.listenStart, (event) => {
     if (!trusted(event)) return Promise.resolve({ ok: false, reason: 'Speech recognition is not available.' })
-    return startListening()
+    return startListening(false, 'panel')
   })
 
   ipcMain.on(IPC.listenStop, (event) => {

@@ -1,0 +1,18 @@
+MIKO for Windows - version {{VERSION}}
+======================================
+
+1. Double-click  {{INSTALLER}}
+
+   If Windows says "Windows protected your PC", click "More info",
+   then "Run anyway". (MIKO isn't signed by a big company yet, so
+   Windows doesn't recognise it. This is expected.)
+
+2. Wait for the green bar to finish. You don't need to click anything.
+   MIKO opens by itself when it's done.
+
+3. Follow the short "Meet MIKO" steps. You can skip any of them.
+   To open MIKO later: Start menu -> MIKO.
+
+Hide / show MIKO any time: Ctrl + Shift + R
+Talk to MIKO: hold Shift + A, speak, let go.
+Help: right-click the small MIKO icon near the clock -> "Help & Setup".

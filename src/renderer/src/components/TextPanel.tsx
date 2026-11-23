@@ -1,3 +1,4 @@
+import { MicTestCard } from './MicTestCard'
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { PetId, SavedChat } from '../../../shared/api'
 import {
@@ -28,6 +29,17 @@ export type PanelEntry =
   | { id: number; kind: 'note'; text: string }
   /** Mic couldn't start or heard nothing usable: plain reason, Retry, and the settings page that fixes it. */
   | { id: number; kind: 'voice-problem'; text: string; help?: VoiceHelp }
+  /** TL;DR of pasted text: the summary, with the original kept (collapsed) underneath. */
+  | {
+      id: number
+      kind: 'tldr'
+      requestId: string
+      status: 'running' | 'done' | 'failed' | 'cancelled'
+      style: import('../../../shared/tldr').TldrStyle
+      original: string
+      summary: string
+      detail: string
+    }
   | {
       id: number
       kind: 'handoff'
@@ -249,18 +261,27 @@ interface TextPanelProps {
   onListen?: () => void
   /** Opens the Windows/macOS settings page that fixes a voice problem. */
   onVoiceHelp?: (help: VoiceHelp) => void
+  /** TL;DR card actions. */
+  onTldr?: {
+    restyle: (id: number, style: import('../../../shared/tldr').TldrStyle) => void
+    cancel: (id: number) => void
+    copy: (id: number) => void
+  }
   onListenStop?: () => void
   onListenCancel?: () => void
   canSpeak?: boolean
   onSpeak?: (text: string) => void
   /** 'chats' swaps the conversation for the Saved chats manager; 'feedback' is the private report form; 'setup' is first-run / tutorial. */
-  view?: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup'
-  onView?: (view: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup') => void
+  view?: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help'
+  onView?: (view: 'log' | 'chats' | 'prefs' | 'feedback' | 'setup' | 'help') => void
   setup?: {
     platform: string
     pets?: ReactNode
     onOpenInteractiveGpt?: () => void
+    onRunExample?: (text: string) => void
   }
+  /** Help & Setup hub (tray “Help & Setup…”). */
+  help?: ReactNode
   feedback?: {
     lastCommand: string
     actionType?: string | null
@@ -304,9 +325,11 @@ interface TextPanelProps {
     onOpenChromeChooser?: () => void
     onOpenFeedback?: () => void
     onRunTutorial?: () => void
+    onOpenHelp?: () => void
     platform?: string
     selectionAvailable?: boolean
     pets?: PetChooserProps
+    play?: { mode: 'work' | 'casual'; sound: boolean; onMode: (mode: 'work' | 'casual') => void; onSound: (on: boolean) => void }
     versionLine?: string
     assistantStatus?: string
     update?: {
@@ -394,6 +417,7 @@ export function TextPanel({
   listenDetail = '',
   onListen,
   onVoiceHelp,
+  onTldr,
   onListenStop,
   onListenCancel,
   canSpeak = false,
@@ -419,6 +443,7 @@ export function TextPanel({
   assistantThread = '',
   prefs,
   setup,
+  help,
   feedback,
   tab = 'chat',
   onTab,
@@ -478,14 +503,14 @@ export function TextPanel({
           <button
             type="button"
             className="icon-button"
-            aria-label={view === 'prefs' || view === 'feedback' || view === 'setup' ? 'Back' : 'MIKO preferences'}
+            aria-label={view === 'prefs' || view === 'feedback' || view === 'setup' || view === 'help' ? 'Back' : 'MIKO preferences'}
             title="MIKO preferences"
-            onClick={() => onView(view === 'prefs' || view === 'feedback' || view === 'setup' ? 'log' : 'prefs')}
+            onClick={() => onView(view === 'prefs' || view === 'feedback' || view === 'setup' || view === 'help' ? 'log' : 'prefs')}
           >
-            {view === 'prefs' || view === 'feedback' || view === 'setup' ? '←' : '⚙'}
+            {view === 'prefs' || view === 'feedback' || view === 'setup' || view === 'help' ? '←' : '⚙'}
           </button>
         ) : null}
-        {onView && tab === 'chat' && view !== 'prefs' && view !== 'feedback' && view !== 'setup' ? (
+        {onView && tab === 'chat' && view !== 'prefs' && view !== 'feedback' && view !== 'setup' && view !== 'help' ? (
           <button
             type="button"
             className="text-button secondary bar-button"
@@ -615,11 +640,14 @@ export function TextPanel({
       ) : null}
       {tab === 'mail' && mail ? (
         mail
+      ) : view === 'help' && onView && help ? (
+        help
       ) : view === 'setup' && onView ? (
         <SetupTutorial
           platform={setup?.platform || 'darwin'}
           pets={setup?.pets}
           onOpenInteractiveGpt={setup?.onOpenInteractiveGpt}
+          onRunExample={setup?.onRunExample}
           onClose={() => onView('log')}
         />
       ) : view === 'feedback' && onView ? (
@@ -673,6 +701,45 @@ export function TextPanel({
                     ) : null}
                   </div>
                 </>
+              ) : null}
+              {entry.kind === 'tldr' ? (
+                <div className="tldr-card">
+                  <p className="tldr-head">
+                    {entry.style === 'brief' ? 'TL;DR' : entry.style === 'shorter' ? 'TL;DR · shorter' : entry.style === 'one-sentence' ? 'TL;DR · one sentence' : 'Action items'}
+                    <span className="tldr-meta"> of your text ({wordsIn(entry.original)} words)</span>
+                  </p>
+                  {entry.status === 'running' ? <p className="panel-detail">Summarising… (only the text you pasted; nothing in it is run)</p> : null}
+                  {entry.status === 'done' ? <p className="tldr-summary">{entry.summary}</p> : null}
+                  {entry.detail ? <p className="panel-detail">{entry.detail}</p> : null}
+                  {onTldr ? (
+                    <div className="panel-inline wrap">
+                      {entry.status === 'running' ? (
+                        <button type="button" className="text-button secondary" onClick={() => onTldr.cancel(entry.id)}>
+                          Cancel
+                        </button>
+                      ) : (
+                        <>
+                          {entry.status === 'done' ? (
+                            <button type="button" className="text-button secondary" onClick={() => onTldr.copy(entry.id)}>
+                              Copy
+                            </button>
+                          ) : null}
+                          {(['shorter', 'one-sentence', 'actions'] as const)
+                            .filter((style) => style !== entry.style)
+                            .map((style) => (
+                              <button key={style} type="button" className="text-button secondary" onClick={() => onTldr.restyle(entry.id, style)}>
+                                {style === 'shorter' ? 'Shorter' : style === 'one-sentence' ? 'One sentence' : 'Action items only'}
+                              </button>
+                            ))}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                  <details className="tldr-original">
+                    <summary>Your original text</summary>
+                    <p>{entry.original}</p>
+                  </details>
+                </div>
               ) : null}
               {entry.kind === 'handoff' ? (
                 <>
@@ -1029,6 +1096,7 @@ type PrefsProps = NonNullable<
     onOpenChromeChooser?: () => void
     onOpenFeedback?: () => void
     onRunTutorial?: () => void
+    onOpenHelp?: () => void
     platform?: string
     selectionAvailable?: boolean
     versionLine?: string
@@ -1049,6 +1117,8 @@ type PrefsProps = NonNullable<
     }
     /** Choose your pet: only pets whose assets exist are listed. */
     pets?: PetChooserProps
+    /** Work (no games) / Casual (play) and optional play sounds. */
+    play?: { mode: 'work' | 'casual'; sound: boolean; onMode: (mode: 'work' | 'casual') => void; onSound: (on: boolean) => void }
   }
 >
 
@@ -1127,12 +1197,14 @@ function Preferences({
   onOpenChromeChooser,
   onOpenFeedback,
   onRunTutorial,
+  onOpenHelp,
   platform = 'darwin',
   selectionAvailable = true,
   versionLine,
   assistantStatus,
   update,
-  pets
+  pets,
+  play
 }: PrefsProps) {
   const [draft, setDraft] = useState(text)
   const [key, setKey] = useState(shortcut)
@@ -1171,8 +1243,58 @@ function Preferences({
           <button type="button" className="text-button secondary" onClick={onRunTutorial}>
             Run tutorial again
           </button>
+          {onOpenHelp ? (
+            <button type="button" className="text-button secondary" onClick={onOpenHelp}>
+              Help &amp; Setup
+            </button>
+          ) : null}
         </div>
       ) : null}
+      {play ? (
+        <section className="prefs-mode" aria-label="Mode">
+          <p className="prefs-section">Mode</p>
+          <div className="panel-inline" role="radiogroup" aria-label="Mode">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={play.mode === 'work'}
+              className={play.mode === 'work' ? 'text-button' : 'text-button secondary'}
+              onClick={() => play.onMode('work')}
+            >
+              Work
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={play.mode === 'casual'}
+              className={play.mode === 'casual' ? 'text-button' : 'text-button secondary'}
+              onClick={() => play.onMode('casual')}
+            >
+              Casual
+            </button>
+          </div>
+          <p className="panel-detail">
+            {play.mode === 'work'
+              ? 'Work: MIKO stays as it is — no games, no interruptions.'
+              : 'Casual: a small Play button appears when you point at MIKO (Fetch, Feed, Pet). Stroke MIKO with the pointer to pet it. Commands, shortcuts and Interactive GPT work as usual and always come first.'}
+          </p>
+          {play.mode === 'casual' ? (
+            <label className="prefs-check">
+              <input type="checkbox" checked={play.sound} onChange={(event) => play.onSound(event.target.checked)} /> Play sounds (quiet, off by
+              default)
+            </label>
+          ) : null}
+        </section>
+      ) : null}
+      <label className="prefs-check">
+        <input
+          type="checkbox"
+          checked={structured.compactControls === true}
+          onChange={(event) => void onSaveStructured({ ...structured, compactControls: event.target.checked })}
+        />{' '}
+        Compact controls (smaller buttons)
+      </label>
+      <MicTestCard platform={platform} />
       {update ? (
         <>
           <p className="prefs-section">Updates (private beta)</p>
@@ -2079,4 +2201,8 @@ function WhatsAppChooser({
       </div>
     </div>
   )
+}
+
+function wordsIn(text: string): number {
+  return (text.trim().match(/\S+/g) ?? []).length
 }

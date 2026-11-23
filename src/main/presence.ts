@@ -18,6 +18,8 @@ import {
 } from './pet-window'
 import { hideChatGptWebSurfaces } from './chatgpt-web-window'
 import { cancelListening } from './speech'
+import { cancelToy } from './play'
+import { closeProjector } from './projector'
 
 const EXIT_FALLBACK_MS = 800
 
@@ -43,6 +45,9 @@ export function createPresence(onVisibility: () => void): {
   function dismissSurfaces(): void {
     // Hide pet companion surfaces together. Does not clear ChatGPT Web login/session.
     cancelListening()
+    cancelToy('dismiss')
+    // Dismiss stops any window capture too.
+    closeProjector()
     setPanelOpen(false)
     hideChatGptWebSurfaces()
     // hideChatGptWebSurfaces already restores pointer; call again so a tucked panel

@@ -15,7 +15,19 @@ export type WinSpeechLine =
   | { kind: 'ready'; recognizer: string }
   | { kind: 'text'; text: string }
   | { kind: 'error'; code: WinSpeechError; detail: string }
-  | { kind: 'devices'; devices: string[] }
+  | { kind: 'devices'; devices: string[]; defaultDevice: string; recognizers: string[] }
+  /** Startup timing from the helper (diagnostics only). */
+  | { kind: 'stage'; stage: WinSpeechStage; ms: number }
+  /** Speech detected (the user is talking); no words. */
+  | { kind: 'heard' }
+
+export type WinSpeechStage = 'speech-loaded' | 'recognizer' | 'input' | 'recognizing'
+const STAGES: readonly WinSpeechStage[] = ['speech-loaded', 'recognizer', 'input', 'recognizing']
+
+const strings = (value: unknown, max: number, count: number): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item) => item.slice(0, max)).slice(0, count)
+    : []
 
 const ERRORS: readonly WinSpeechError[] = ['cancelled', 'silence', 'no-audio', 'no-recognizer', 'no-device', 'denied', 'unavailable']
 
@@ -37,8 +49,15 @@ export function parseWinSpeechLine(line: string): WinSpeechLine | null {
   if (Array.isArray(record.devices)) {
     return {
       kind: 'devices',
-      devices: record.devices.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 120)).slice(0, 20)
+      devices: strings(record.devices, 120, 20),
+      defaultDevice: typeof record.default === 'string' ? record.default.slice(0, 120) : '',
+      recognizers: strings(record.recognizers, 20, 20)
     }
+  }
+  if (record.heard === true) return { kind: 'heard' }
+  if (typeof record.stage === 'string' && (STAGES as readonly string[]).includes(record.stage)) {
+    const ms = typeof record.ms === 'number' && Number.isFinite(record.ms) ? Math.max(0, Math.round(record.ms)) : 0
+    return { kind: 'stage', stage: record.stage as WinSpeechStage, ms }
   }
   if (typeof record.error === 'string') {
     const code = (ERRORS as readonly string[]).includes(record.error) ? (record.error as WinSpeechError) : 'unavailable'

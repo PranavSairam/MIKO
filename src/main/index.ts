@@ -14,6 +14,8 @@ import { IPC } from '../shared/api'
 import { startKeys } from './keys'
 import { postToPet } from './pet-window'
 import { startListening, stopListening } from './speech'
+import { destroyToy, playMode, setPlayMode } from './play'
+import { closeProjector, openProjector } from './projector'
 import { hideSwitcher, toggleSwitcher, warmSwitcher } from './switcher-window'
 import { enableGptMode, exitGptMode, getGptModeState, pauseGptMode, resumeGptMode } from './gpt-mode'
 import { assistantEnabled, chatgptAutoPaste, setAssistantEnabled, setChatgptAutoPaste, setVoiceAutoExecute, voiceAutoExecute } from './settings'
@@ -91,6 +93,8 @@ if (!gotLock) {
     stopSelection()
     disarmPaste()
     stopAllBridges()
+    destroyToy()
+    closeProjector()
   })
 
   app.on('window-all-closed', () => {
@@ -128,9 +132,22 @@ if (!gotLock) {
         presence.show()
         postToPet(IPC.petCommand, { kind: 'choose' })
       },
+      playMode,
+      setPlayMode: (mode) => {
+        setPlayMode(mode)
+        refresh()
+      },
+      openProjector: () => {
+        presence.show()
+        openProjector()
+      },
+      openPlay: () => {
+        presence.show()
+        postToPet(IPC.petCommand, { kind: 'play' })
+      },
       openSetup: () => {
         presence.show()
-        postToPet(IPC.uiHint, { openSetup: true })
+        postToPet(IPC.uiHint, { openHelp: true })
       },
       listen: () => {
         presence.show()
@@ -222,7 +239,7 @@ if (!gotLock) {
       // Caps Lock + A (Mac) / Shift + A (Windows) held: show MIKO, listen until release, words go to the chat box.
       talkStart: () => {
         presence.show()
-        void startListening(true).then((result) => {
+        void startListening(true, 'keys').then((result) => {
           if (result.ok) postToPet(IPC.keys, { kind: 'talk-start' })
           // Empty reason: keys let go before recognition started (quiet cancel).
           else if (result.reason || process.platform === 'darwin') {

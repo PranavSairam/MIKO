@@ -122,19 +122,46 @@ export function Switcher() {
     }
   }, [api])
 
+  // One fan-out per opening. While hidden the cards are reset to the collapsed pose, so a reopen
+  // never shows the old layout collapsing first, and a duplicate “opened” can't restart the animation.
+  const openSerial = useRef(0)
+  const isOpen = useRef(false)
   useEffect(() => {
-    const open = (): void => {
+    const reset = (): void => {
+      isOpen.current = false
+      openSerial.current += 1
       setQuery('')
       setTabsView(null)
       setNote('')
       setFanned(false)
+      setHovered(null)
       setDrag(null)
       dragRef.current = null
-      void refresh().then(() => requestAnimationFrame(() => setFanned(true)))
+      suppressClick.current = false
     }
+    const open = (): void => {
+      if (isOpen.current) return
+      reset()
+      isOpen.current = true
+      const serial = openSerial.current
+      void refresh().then(() => {
+        if (serial !== openSerial.current) return
+        requestAnimationFrame(() => {
+          if (serial === openSerial.current) setFanned(true)
+        })
+      })
+    }
+    const onVisibility = (): void => {
+      if (document.hidden) reset()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
     const stop = api.onOpen(open)
-    open()
-    return stop
+    // The window is built hidden ahead of time; only fan out if it's actually showing.
+    if (!document.hidden) open()
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [api, refresh])
 
   useEffect(() => {
@@ -228,6 +255,8 @@ export function Switcher() {
   async function onPointerUp(): Promise<void> {
     const current = dragRef.current
     updateDrag(null)
+    // A drag swallows exactly its own click; never the next real one.
+    if (current?.active) window.setTimeout(() => (suppressClick.current = false), 0)
     if (!current?.active) return
     if (!current.over) {
       setNote('Cancelled — nothing was closed.')
@@ -331,7 +360,10 @@ export function Switcher() {
       className={['switcher', drag?.active ? 'is-dragging' : ''].filter(Boolean).join(' ')}
       onPointerMove={onPointerMove}
       onPointerUp={() => void onPointerUp()}
-      onPointerCancel={() => updateDrag(null)}
+      onPointerCancel={() => {
+        updateDrag(null)
+        suppressClick.current = false
+      }}
     >
       <div className="glow" aria-hidden="true" />
       <div

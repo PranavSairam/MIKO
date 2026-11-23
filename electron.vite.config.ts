@@ -18,7 +18,8 @@ export default defineConfig({
           index: resolve('src/preload/index.ts'),
           switcher: resolve('src/preload/switcher.ts'),
           tree: resolve('src/preload/tree.ts'),
-          'chatgpt-web': resolve('src/preload/chatgpt-web.ts')
+          'chatgpt-web': resolve('src/preload/chatgpt-web.ts'),
+          projector: resolve('src/preload/projector.ts')
         }
       }
     }
@@ -41,7 +42,8 @@ export default defineConfig({
           switcher: resolve('src/renderer/switcher.html'),
           tree: resolve('src/renderer/tree.html'),
           'gpt-live': resolve('src/renderer/gpt-live.html'),
-          'chatgpt-web': resolve('src/renderer/chatgpt-web.html')
+          'chatgpt-web': resolve('src/renderer/chatgpt-web.html'),
+          projector: resolve('src/renderer/projector.html')
         }
       }
     }

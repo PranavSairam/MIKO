@@ -9,7 +9,23 @@ import {
   type PermissionState,
   type VoicePermissionStatus
 } from '../shared/setup'
-import { parseWinSpeechLine, speechHelpUrl, winSpeechProblem, type SpeechHelp, type WinSpeechLine } from '../shared/win-speech'
+import {
+  parseWinSpeechLine,
+  speechHelpUrl,
+  winSpeechProblem,
+  type SpeechHelp,
+  type WinSpeechError,
+  type WinSpeechLine
+} from '../shared/win-speech'
+import {
+  MicSessionLog,
+  micSessionLine,
+  micTestPhaseText,
+  type MicMode,
+  type MicOutcome,
+  type MicSource,
+  type MicTestPhase
+} from '../shared/mic-session'
 import { logDiag } from './diagnostics'
 import { compileHelper, launchHelper, sourcePath, type HelperSpec } from './helper-app'
 import { postToPet, restorePetPointerState } from './pet-window'
@@ -26,10 +42,18 @@ import { postToPet, restorePetPointerState } from './pet-window'
  * Read-aloud uses the renderer's local speechSynthesis voices.
  */
 
+/**
+ * One capture at a time. `cancel` ends this session exactly once (helper stopped,
+ * microphone released, panel told); later callbacks from its helper are logged as stale.
+ */
 interface Session {
+  kind: 'listen' | 'test'
+  id: number
   stop: () => void
-  kill: () => void
+  cancel: () => void
 }
+
+type StartResult = { ok: boolean; reason: string; help?: SpeechHelp }
 
 const LISTEN_MS = 12000
 /** Windows: the helper must report {"ready":true} within this time or the start fails. */
@@ -49,10 +73,37 @@ const LISTEN_HELPER: HelperSpec = {
 }
 
 let session: Session | null = null
-let cancelled = false
+/** Windows: a start that is still waiting for the helper's ready line. Repeated starts join it. */
+let starting: Promise<StartResult> | null = null
 let killTimer: NodeJS.Timeout | null = null
 /** Increments per listening session; sent with every speech event so a recording is handled once. */
 let sessionCount = 0
+const micLog = new MicSessionLog()
+/** Last default input device Windows reported (attached to new sessions for diagnostics). */
+let lastDefaultDevice = ''
+
+/** Session diagnostics: ids, steps and timings only. Never audio, never the words. */
+function diag(id: number, event: string, extra?: Record<string, unknown>): void {
+  logDiag('mic', `#${id} ${event}`, extra)
+}
+
+function closeLine(id: number): string {
+  const record = micLog.get(id)
+  return record ? micSessionLine(record) : ''
+}
+
+/** Recent capture sessions as transcript-free lines (Help & Setup, feedback diagnostics). */
+export function recentMicSessions(): string[] {
+  return micLog.recent().map(micSessionLine)
+}
+
+function testPhase(phase: MicTestPhase, detail?: string): void {
+  postToPet(IPC.voiceMicTestPhase, { phase, detail: detail ?? micTestPhaseText(phase, process.platform) })
+}
+
+function outcomeFor(code: WinSpeechError): MicOutcome {
+  return code
+}
 
 export function listeningDetail(hold = false): string {
   if (hold && process.platform === 'win32') return 'Listening… let go of Shift + A to stop.'
@@ -194,59 +245,69 @@ export async function openVoicePrivacySettings(help?: SpeechHelp): Promise<boole
 }
 
 /**
- * Explicit microphone check via the platform speech helper.
+ * Explicit microphone check via the platform speech helper. Shows its own progress
+ * (starting → listening → hearing → done) and never runs the words as a command.
  * Does not use browser getUserMedia; never claims Electron host permission.
  */
 export async function runMicTest(): Promise<MicTestStatus> {
-  if (session) {
+  if (session || starting) {
     return emptyMicTestStatus({
       outcome: 'unavailable',
-      detail: 'MIKO is already listening. Stop that first, then try again.'
+      detail:
+        session?.kind === 'test'
+          ? 'A microphone test is already running.'
+          : 'MIKO is already listening. Stop that first, then try again.'
     })
   }
+  testPhase('starting')
   if (process.platform === 'win32') return runWindowsMicTest()
   if (process.platform === 'darwin') {
     const status = await voicePermissionStatus(true)
     if (status.microphone === 'denied' || status.speechRecognition === 'denied') {
+      testPhase('error', status.detail)
       return emptyMicTestStatus({
         outcome: 'denied',
         detail: status.detail || 'Voice access is denied. Open System Settings to change it.'
       })
     }
     if (!status.supported || status.microphone === 'unavailable') {
+      testPhase('error', status.detail)
       return emptyMicTestStatus({
         outcome: 'unavailable',
         detail: status.detail || 'On-device speech recognition is unavailable.'
       })
     }
-    // Start a short listen; the tutorial also receives the normal speech IPC event.
-    const started = await startListening(false)
-    if (!started.ok) {
-      return emptyMicTestStatus({
-        outcome: 'unavailable',
-        detail: started.reason || 'Could not start the microphone test.'
-      })
-    }
-    return emptyMicTestStatus({
-      outcome: 'not-tested',
-      detail: 'Listening… say something. Recognition stays on this Mac and is not saved.'
-    })
+    return runMacMicTest()
   }
+  testPhase('error', 'Voice input is not available on this platform.')
   return emptyMicTestStatus({
     outcome: 'unavailable',
     detail: 'Voice input is not available on this platform.'
   })
 }
 
-export async function startListening(hold = false): Promise<{ ok: boolean; reason: string; help?: SpeechHelp }> {
+/** Cancel a running microphone test (Cancel button, closing the card). */
+export function cancelMicTest(): void {
+  if (session?.kind === 'test') session.cancel()
+}
+
+export async function startListening(hold = false, source: MicSource = 'unknown'): Promise<StartResult> {
+  if (session?.kind === 'test') {
+    return { ok: false, reason: 'The microphone test is using the microphone. Finish or cancel it, then try again.' }
+  }
+  if (starting) {
+    // A second click / key press while Windows is still starting: one helper, one answer.
+    diag(sessionCount, 'start request joined the start in progress', { source })
+    return starting
+  }
   if (session) return { ok: true, reason: listeningDetail(hold) }
   if (process.platform === 'darwin') {
     const helper = compileHelper(LISTEN_HELPER)
     if (!helper) return { ok: false, reason: 'On-device speech recognition is not available.' }
-    if (!launchMac(helper.root, hold)) return { ok: false, reason: 'On-device speech recognition is not available.' }
+    if (!launchMac(helper.root, hold, source)) return { ok: false, reason: 'On-device speech recognition is not available.' }
     return { ok: true, reason: listeningDetail(hold) }
   }
-  if (process.platform === 'win32') return startWindowsSession(hold)
+  if (process.platform === 'win32') return startWindowsSession(hold, source)
   return { ok: false, reason: 'Speech recognition is not available.' }
 }
 
@@ -259,16 +320,14 @@ export function stopListening(): void {
   }
 }
 
+/** Ends the current capture (listening or test). Safe to call at any time. */
 export function cancelListening(): void {
-  cancelled = true
   const current = session
-  session = null
-  clearKillTimer()
-  if (!current) return
-  current.kill()
-  postToPet(IPC.speech, { phase: 'cancelled', session: sessionCount })
-  // Mic cancel must not leave a stuck ignore/gesture lock on the pet window.
-  restorePetPointerState()
+  if (!current) {
+    clearKillTimer()
+    return
+  }
+  current.cancel()
 }
 
 function clearKillTimer(): void {
@@ -276,69 +335,183 @@ function clearKillTimer(): void {
   killTimer = null
 }
 
-/** One result per session, and a failure if the helper dies without one. */
-function track(current: Session, capMs: number): { line: (text: string) => void; ended: () => void } {
-  cancelled = false
-  session = current
-  sessionCount += 1
-  const id = sessionCount
-  let delivered = false
-  killTimer = setTimeout(() => {
-    if (session === current) cancelListening()
-  }, capMs)
-  return {
-    line: (text) => {
-      if (session !== current || delivered) return
-      if (deliver(text, id)) delivered = true
-    },
-    ended: () => {
-      if (session !== current) return
+function speechPhaseFor(error: unknown): 'denied' | 'silence' | 'unavailable' | 'cancelled' | 'failed' {
+  return error === 'denied' || error === 'silence' || error === 'unavailable' || error === 'cancelled' ? error : 'failed'
+}
+
+function parseMacLine(line: string): { text: string } | { error: string } | null {
+  if (!line) return null
+  try {
+    const record = JSON.parse(line) as { text?: unknown; error?: unknown }
+    if (typeof record.text === 'string' && record.text.trim()) return { text: record.text.trim().slice(0, 400) }
+    if (record.error !== undefined) return { error: String(record.error).slice(0, 24) }
+  } catch {
+    // Not a result line.
+  }
+  return null
+}
+
+/**
+ * A session's single end: clears the timer, frees the slot and records the outcome.
+ * Returns false when the session already ended (the caller drops the late callback).
+ */
+function makeCloser(id: number, current: () => Session): (outcome: MicOutcome, code?: string, chars?: number, extra?: Record<string, unknown>) => boolean {
+  return (outcome, code = '', chars = 0, extra) => {
+    if (!micLog.end(id, outcome, { code, chars })) return false
+    if (session === current()) {
       session = null
       clearKillTimer()
-      // Without this the panel would stay on "Listening…" after a crash.
-      if (!delivered && !cancelled) postToPet(IPC.speech, { phase: 'failed', session: id })
     }
-  }
-}
-
-function launchMac(root: string, hold: boolean): boolean {
-  let handle: { signal: (name: 'USR1' | 'TERM') => void } | null = null
-  const current: Session = {
-    stop: () => handle?.signal('USR1'),
-    kill: () => handle?.signal('TERM')
-  }
-  const hooks = track(current, hold ? HOLD_MS : LISTEN_MS)
-  handle = launchHelper(root, [...(hold ? ['--hold'] : []), '--parent', String(process.pid)], hooks.line, hooks.ended)
-  if (!handle) {
-    session = null
-    clearKillTimer()
-    return false
-  }
-  return true
-}
-
-/** Returns true when the line was a result (transcript or error). */
-function deliver(line: string, id: number): boolean {
-  if (cancelled || !line) return false
-  let payload: unknown
-  try {
-    payload = JSON.parse(line)
-  } catch {
-    return false
-  }
-  if (!payload || typeof payload !== 'object') return false
-  const record = payload as { text?: unknown; error?: unknown }
-  if (typeof record.text === 'string' && record.text.trim()) {
-    postToPet(IPC.speech, { phase: 'transcript', text: record.text.trim().slice(0, 400), session: id })
-    restorePetPointerState()
+    diag(id, 'end', { outcome, ...(code ? { code } : {}), ...(extra ?? {}), summary: closeLine(id) })
     return true
   }
-  if (record.error === undefined) return false
-  const error = record.error
-  const phase =
-    error === 'denied' || error === 'silence' || error === 'unavailable' || error === 'cancelled' ? error : 'failed'
-  postToPet(IPC.speech, { phase, session: id })
+}
+
+function launchMac(root: string, hold: boolean, source: MicSource): boolean {
+  const id = ++sessionCount
+  const mode: MicMode = hold ? 'hold' : 'tap'
+  micLog.start(id, mode, source, 'darwin')
+  diag(id, 'start', { mode, source })
+  let handle: { signal: (name: 'USR1' | 'TERM') => void } | null = null
+  const current: Session = {
+    kind: 'listen',
+    id,
+    stop: () => handle?.signal('USR1'),
+    cancel: () => {
+      handle?.signal('TERM')
+      if (!close('cancelled')) return
+      postToPet(IPC.speech, { phase: 'cancelled', session: id })
+      // Mic cancel must not leave a stuck ignore/gesture lock on the pet window.
+      restorePetPointerState()
+    }
+  }
+  const close = makeCloser(id, () => current)
+  session = current
+  clearKillTimer()
+  killTimer = setTimeout(() => {
+    if (session !== current) return
+    handle?.signal('TERM')
+    if (!close('safety-timeout')) return
+    postToPet(IPC.speech, {
+      phase: 'failed',
+      session: id,
+      detail: 'Listening stopped without a result. Retry; if it keeps happening, run the microphone test in Preferences.'
+    })
+    restorePetPointerState()
+  }, hold ? HOLD_MS : LISTEN_MS)
+  handle = launchHelper(
+    root,
+    [...(hold ? ['--hold'] : []), '--parent', String(process.pid)],
+    (line) => {
+      const parsed = parseMacLine(line)
+      if (!parsed) return
+      if ('text' in parsed) {
+        if (!close('transcript', '', parsed.text.length)) {
+          diag(id, 'stale transcript ignored')
+          return
+        }
+        postToPet(IPC.speech, { phase: 'transcript', text: parsed.text, session: id })
+        restorePetPointerState()
+        return
+      }
+      const phase = speechPhaseFor(parsed.error)
+      const outcome: MicOutcome = phase === 'denied' || phase === 'silence' || phase === 'unavailable' || phase === 'cancelled' ? phase : 'failed'
+      if (!close(outcome, parsed.error)) {
+        if (parsed.error !== 'cancelled') diag(id, 'stale result ignored', { code: parsed.error })
+        return
+      }
+      postToPet(IPC.speech, { phase, session: id })
+    },
+    () => {
+      // Without this the panel would stay on "Listening…" after a crash.
+      if (close('helper-exit')) postToPet(IPC.speech, { phase: 'failed', session: id })
+    }
+  )
+  if (!handle) {
+    close('failed', 'launch')
+    return false
+  }
+  diag(id, 'listening')
   return true
+}
+
+function runMacMicTest(): Promise<MicTestStatus> {
+  const helper = compileHelper(LISTEN_HELPER)
+  if (!helper) {
+    testPhase('error', 'On-device speech recognition is not available.')
+    return Promise.resolve(emptyMicTestStatus({ outcome: 'unavailable', detail: 'On-device speech recognition is not available.' }))
+  }
+  return new Promise((resolve) => {
+    const id = ++sessionCount
+    micLog.start(id, 'test', 'test', 'darwin')
+    diag(id, 'start', { mode: 'test' })
+    let handle: { signal: (name: 'USR1' | 'TERM') => void } | null = null
+    let settled = false
+    const finish = (status: MicTestStatus, outcome: MicOutcome, code = '', chars = 0): void => {
+      if (settled) return
+      settled = true
+      handle?.signal('TERM')
+      close(outcome, code, chars)
+      testPhase(status.outcome === 'transcript-confirmed' ? 'done' : status.outcome === 'cancelled' ? 'cancelled' : 'error', status.detail)
+      restorePetPointerState()
+      resolve(status)
+    }
+    const current: Session = {
+      kind: 'test',
+      id,
+      stop: () => handle?.signal('USR1'),
+      cancel: () => finish(emptyMicTestStatus({ outcome: 'cancelled', detail: micTestPhaseText('cancelled', 'darwin') }), 'cancelled')
+    }
+    const close = makeCloser(id, () => current)
+    session = current
+    clearKillTimer()
+    killTimer = setTimeout(() => {
+      finish(emptyMicTestStatus({ outcome: 'unavailable', detail: 'The microphone test didn’t finish. Retry.' }), 'safety-timeout')
+    }, LISTEN_MS + 3000)
+    handle = launchHelper(
+      helper.root,
+      ['--parent', String(process.pid)],
+      (line) => {
+        const parsed = parseMacLine(line)
+        if (!parsed) return
+        if ('text' in parsed) {
+          finish(
+            emptyMicTestStatus({
+              outcome: 'transcript-confirmed',
+              transcript: parsed.text,
+              detail: `Heard: “${parsed.text}”. Recognition stays on this Mac and is not saved.`
+            }),
+            'transcript',
+            '',
+            parsed.text.length
+          )
+          return
+        }
+        const code = parsed.error
+        finish(
+          emptyMicTestStatus({
+            outcome: code === 'denied' ? 'denied' : code === 'silence' ? 'silence' : code === 'cancelled' ? 'cancelled' : 'unavailable',
+            detail:
+              code === 'denied'
+                ? 'Voice access is denied. Open System Settings to change it.'
+                : code === 'silence'
+                  ? 'I didn’t catch any words. Retry and speak right after it says Listening.'
+                  : code === 'cancelled'
+                    ? micTestPhaseText('cancelled', 'darwin')
+                    : 'On-device speech recognition couldn’t start. Retry.'
+          }),
+          code === 'denied' || code === 'silence' || code === 'cancelled' ? code : 'unavailable',
+          code
+        )
+      },
+      () => finish(emptyMicTestStatus({ outcome: 'unavailable', detail: 'The speech helper stopped before it heard anything. Retry.' }), 'helper-exit')
+    )
+    if (!handle) {
+      finish(emptyMicTestStatus({ outcome: 'unavailable', detail: 'On-device speech recognition is not available.' }), 'failed', 'launch')
+      return
+    }
+    testPhase('listening')
+  })
 }
 
 // ---------------------------------------------------------------- Windows
@@ -379,6 +552,7 @@ function spawnWinHelper(
   let buffer = ''
   let stderr = ''
   let exited = false
+  let killTimerLocal: NodeJS.Timeout | null = null
   proc.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString('utf8')
     let at = buffer.indexOf('\n')
@@ -400,6 +574,7 @@ function spawnWinHelper(
     if (finished) return
     finished = true
     exited = true
+    if (killTimerLocal) clearTimeout(killTimerLocal)
     onExit(code, stderr.trim().slice(0, 400))
   }
   proc.once('error', (error) => {
@@ -419,7 +594,9 @@ function spawnWinHelper(
     send,
     cancel: () => {
       send('cancel')
-      setTimeout(() => {
+      if (killTimerLocal || exited) return
+      // The helper only reads stdin once it is listening; a slow start is ended here.
+      killTimerLocal = setTimeout(() => {
         if (!exited) {
           try {
             proc.kill()
@@ -432,153 +609,194 @@ function spawnWinHelper(
   }
 }
 
-function startWindowsSession(hold = false): Promise<{ ok: boolean; reason: string; help?: SpeechHelp }> {
-  return new Promise((resolve) => {
-    cancelled = false
-    sessionCount += 1
-    const id = sessionCount
-    let ready = false
-    let delivered = false
-    let started = false
-    let helper: WinHelper | null = null
-    const current: Session = {
-      stop: () => {
-        if (ready) helper?.send('stop')
-        else cancelListening()
-      },
-      kill: () => helper?.cancel()
-    }
-    const startDone = (result: { ok: boolean; reason: string; help?: SpeechHelp }): void => {
-      if (started) return
-      started = true
-      clearTimeout(readyTimer)
-      resolve(result)
-    }
-    const readyTimer = setTimeout(() => {
-      if (started) return
-      delivered = true
-      if (session === current) session = null
+function startWindowsSession(hold: boolean, source: MicSource): Promise<StartResult> {
+  const id = ++sessionCount
+  const mode: MicMode = hold ? 'hold' : 'tap'
+  micLog.start(id, mode, source, 'win32')
+  if (lastDefaultDevice) micLog.setDevice(id, lastDefaultDevice)
+  diag(id, 'start', { mode, source })
+  let ready = false
+  let started = false
+  let helper: WinHelper | null = null
+  let resolveStart: (result: StartResult) => void = () => undefined
+  const promise = new Promise<StartResult>((resolve) => {
+    resolveStart = resolve
+  })
+  const startDone = (result: StartResult): void => {
+    if (started) return
+    started = true
+    clearTimeout(readyTimer)
+    if (starting === promise) starting = null
+    resolveStart(result)
+  }
+  const current: Session = {
+    kind: 'listen',
+    id,
+    stop: () => {
+      // Shift + A let go before Windows was listening: nothing to transcribe, release quietly.
+      if (ready) helper?.send('stop')
+      else current.cancel()
+    },
+    cancel: () => {
       helper?.cancel()
-      logDiag('speech', 'helper did not report ready in time', { ms: WIN_READY_MS })
-      startDone({
-        ok: false,
-        reason: 'Windows speech recognition didn\u2019t start within 8 seconds. Retry, or run the microphone test in Setup.',
-        help: 'speech-language'
-      })
-    }, WIN_READY_MS)
+      if (!close('cancelled')) return
+      if (!started) startDone({ ok: false, reason: '' })
+      else postToPet(IPC.speech, { phase: 'cancelled', session: id })
+      restorePetPointerState()
+    }
+  }
+  const close = makeCloser(id, () => current)
+  const readyTimer = setTimeout(() => {
+    if (started) return
+    helper?.cancel()
+    close('ready-timeout', '', 0, { limitMs: WIN_READY_MS })
+    startDone({
+      ok: false,
+      reason:
+        'Windows speech recognition didn\u2019t start within 8 seconds. Retry (the first start after Windows boots can be slow). If it keeps happening, run the microphone test in Preferences.',
+      help: 'speech-language'
+    })
+  }, WIN_READY_MS)
 
-    helper = spawnWinHelper(
-      hold ? 'hold' : 'listen',
-      (line) => {
-        if (line.kind === 'ready') {
-          if (started || session !== current) return
-          ready = true
-          logDiag('speech', 'listening', { recognizer: line.recognizer })
-          clearKillTimer()
-          // The helper ends itself (11 s, or 58 s while Shift + A is held); this is only a safety net.
-          killTimer = setTimeout(() => {
-            if (session === current) cancelListening()
-          }, (hold ? HOLD_MS : LISTEN_MS) + 2000)
-          startDone({ ok: true, reason: listeningDetail(hold) })
+  helper = spawnWinHelper(
+    hold ? 'hold' : 'listen',
+    (line) => {
+      if (line.kind === 'stage') {
+        micLog.stage(id, line.stage)
+        return
+      }
+      if (line.kind === 'heard') {
+        micLog.heard(id)
+        return
+      }
+      if (line.kind === 'devices') return
+      if (line.kind === 'ready') {
+        if (started || session !== current) {
+          diag(id, 'stale ready ignored')
           return
         }
-        if (!ready) {
-          if (line.kind !== 'error') return
-          delivered = true
-          if (session === current) session = null
-          const problem = winSpeechProblem(line.code, line.detail)
-          logDiag('speech', 'could not start', { code: line.code, detail: line.detail })
-          startDone(
-            line.code === 'cancelled'
-              ? { ok: false, reason: '' }
-              : { ok: false, reason: problem.text, ...(problem.help ? { help: problem.help } : {}) }
-          )
-          return
-        }
-        if (delivered || cancelled || session !== current) return
-        if (line.kind === 'text') {
-          delivered = true
-          session = null
-          clearKillTimer()
-          logDiag('speech', 'transcript', { chars: line.text.length })
-          postToPet(IPC.speech, { phase: 'transcript', text: line.text, session: id })
-          restorePetPointerState()
-          return
-        }
-        if (line.kind === 'error') {
-          delivered = true
-          session = null
-          clearKillTimer()
-          const problem = winSpeechProblem(line.code, line.detail)
-          logDiag('speech', 'ended without transcript', { code: line.code, detail: line.detail })
+        ready = true
+        const ms = micLog.ready(id, line.recognizer)
+        diag(id, 'listening', { ms, recognizer: line.recognizer })
+        clearKillTimer()
+        // The helper ends itself (11 s, or 58 s while Shift + A is held); this is only a safety net.
+        killTimer = setTimeout(() => {
+          if (session !== current) return
+          helper?.cancel()
+          if (!close('safety-timeout')) return
           postToPet(IPC.speech, {
-            phase: problem.phase,
+            phase: 'failed',
             session: id,
-            ...(problem.phase === 'cancelled' ? {} : { detail: problem.text }),
-            ...(problem.help ? { help: problem.help } : {})
+            detail: 'Listening stopped without a result. Retry; if it keeps happening, run the microphone test in Preferences.'
           })
           restorePetPointerState()
-        }
-      },
-      (code, stderr) => {
-        if (!started) {
-          if (session === current) session = null
-          delivered = true
-          logDiag('speech', 'helper exited before ready', { code, stderr })
-          startDone(
-            cancelled
-              ? { ok: false, reason: '' }
-              : {
-                  ok: false,
-                  reason: `Windows speech helper stopped before it could listen${stderr ? ` (${stderr.split(/\r?\n/)[0]})` : ''}. Retry.`,
-                  help: 'speech-language'
-                }
-          )
+        }, (hold ? HOLD_MS : LISTEN_MS) + 2000)
+        startDone({ ok: true, reason: listeningDetail(hold) })
+        return
+      }
+      if (line.kind === 'text') {
+        if (!close('transcript', '', line.text.length)) {
+          diag(id, 'stale transcript ignored')
           return
         }
-        if (session !== current) return
-        session = null
-        clearKillTimer()
-        if (!delivered && !cancelled) {
-          logDiag('speech', 'helper exited without a result', { code, stderr })
-          postToPet(IPC.speech, { phase: 'failed', session: id, detail: 'Windows speech helper stopped unexpectedly. Retry.' })
-        }
+        postToPet(IPC.speech, { phase: 'transcript', text: line.text, session: id })
         restorePetPointerState()
+        return
       }
-    )
-    if (!helper) {
-      clearTimeout(readyTimer)
-      started = true
-      resolve({ ok: false, reason: 'MIKO\u2019s Windows speech helper is missing. Reinstall MIKO.' })
-      return
+      // error
+      const problem = winSpeechProblem(line.code, line.detail)
+      if (!close(outcomeFor(line.code), line.code, 0, line.detail ? { detail: line.detail.slice(0, 160) } : undefined)) {
+        if (line.code !== 'cancelled') diag(id, 'stale result ignored', { code: line.code })
+        return
+      }
+      if (!started) {
+        startDone(
+          line.code === 'cancelled'
+            ? { ok: false, reason: '' }
+            : { ok: false, reason: problem.text, ...(problem.help ? { help: problem.help } : {}) }
+        )
+        return
+      }
+      postToPet(IPC.speech, {
+        phase: problem.phase,
+        session: id,
+        ...(problem.phase === 'cancelled' ? {} : { detail: problem.text }),
+        ...(problem.help ? { help: problem.help } : {})
+      })
+      restorePetPointerState()
+    },
+    (code, stderr) => {
+      if (!close('helper-exit', code === null ? 'spawn' : String(code), 0, stderr ? { stderr: stderr.slice(0, 200) } : undefined)) return
+      if (!started) {
+        startDone({
+          ok: false,
+          reason: `Windows speech helper stopped before it could listen${stderr ? ` (${stderr.split(/\r?\n/)[0]})` : ''}. Retry.`,
+          help: 'speech-language'
+        })
+        return
+      }
+      postToPet(IPC.speech, { phase: 'failed', session: id, detail: 'Windows speech helper stopped unexpectedly. Retry.' })
+      restorePetPointerState()
     }
-    session = current
-  })
+  )
+  if (!helper) {
+    clearTimeout(readyTimer)
+    started = true
+    micLog.end(id, 'failed', { code: 'missing-helper' })
+    diag(id, 'end', { outcome: 'failed', code: 'missing-helper' })
+    return Promise.resolve({ ok: false, reason: 'MIKO\u2019s Windows speech helper is missing. Reinstall MIKO.' })
+  }
+  session = current
+  starting = promise
+  return promise
 }
 
 function runWindowsMicTest(): Promise<MicTestStatus> {
   return new Promise((resolve) => {
+    const id = ++sessionCount
+    micLog.start(id, 'test', 'test', 'win32')
+    if (lastDefaultDevice) micLog.setDevice(id, lastDefaultDevice)
+    diag(id, 'start', { mode: 'test' })
     let settled = false
     let helper: WinHelper | null = null
-    const finish = (status: MicTestStatus): void => {
+    const finish = (status: MicTestStatus, outcome: MicOutcome, code = '', chars = 0): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (session === testSession) session = null
       helper?.cancel()
+      close(outcome, code, chars)
+      testPhase(status.outcome === 'transcript-confirmed' ? 'done' : status.outcome === 'cancelled' ? 'cancelled' : 'error', status.detail)
+      restorePetPointerState()
       resolve(status)
     }
-    // Counts as "listening" so a mic click during the test doesn't open the mic twice.
-    const testSession: Session = { stop: () => helper?.send('stop'), kill: () => helper?.cancel() }
+    // Counts as the capture so a mic click during the test doesn't open the mic twice.
+    const testSession: Session = {
+      kind: 'test',
+      id,
+      stop: () => helper?.send('stop'),
+      cancel: () => finish(emptyMicTestStatus({ outcome: 'cancelled', detail: micTestPhaseText('cancelled', 'win32') }), 'cancelled')
+    }
+    const close = makeCloser(id, () => testSession)
     const timer = setTimeout(
-      () => finish(emptyMicTestStatus({ outcome: 'unavailable', detail: 'The microphone test didn\u2019t finish. Retry.' })),
+      () => finish(emptyMicTestStatus({ outcome: 'unavailable', detail: 'The microphone test didn\u2019t finish. Retry.' }), 'safety-timeout'),
       WIN_READY_MS + 12_000
     )
     helper = spawnWinHelper(
       'test',
       (line) => {
+        if (line.kind === 'stage') {
+          micLog.stage(id, line.stage)
+          return
+        }
         if (line.kind === 'ready') {
-          logDiag('speech', 'mic test listening', { recognizer: line.recognizer })
+          const ms = micLog.ready(id, line.recognizer)
+          diag(id, 'listening', { ms, recognizer: line.recognizer })
+          if (!settled) testPhase('listening')
+          return
+        }
+        if (line.kind === 'heard') {
+          micLog.heard(id)
+          if (!settled) testPhase('hearing')
           return
         }
         if (line.kind === 'text') {
@@ -587,19 +805,30 @@ function runWindowsMicTest(): Promise<MicTestStatus> {
               outcome: 'transcript-confirmed',
               transcript: line.text,
               detail: `Heard: \u201c${line.text}\u201d. Recognition stays on this PC and is not saved.`
-            })
+            }),
+            'transcript',
+            '',
+            line.text.length
           )
           return
         }
         if (line.kind === 'error') {
           const problem = winSpeechProblem(line.code, line.detail)
-          logDiag('speech', 'mic test ended', { code: line.code, detail: line.detail })
           finish(
             emptyMicTestStatus({
-              outcome: line.code === 'denied' ? 'denied' : line.code === 'silence' || line.code === 'no-audio' ? 'silence' : 'unavailable',
-              detail: problem.text,
+              outcome:
+                line.code === 'cancelled'
+                  ? 'cancelled'
+                  : line.code === 'denied'
+                    ? 'denied'
+                    : line.code === 'silence' || line.code === 'no-audio'
+                      ? 'silence'
+                      : 'unavailable',
+              detail: line.code === 'cancelled' ? micTestPhaseText('cancelled', 'win32') : problem.text,
               ...(problem.help ? { help: problem.help } : {})
-            })
+            }),
+            outcomeFor(line.code),
+            line.code
           )
         }
       },
@@ -611,13 +840,17 @@ function runWindowsMicTest(): Promise<MicTestStatus> {
             outcome: 'unavailable',
             detail: `Windows speech helper stopped${stderr ? ` (${stderr.split(/\r?\n/)[0]})` : ''}. Retry.`,
             help: 'speech-language'
-          })
+          }),
+          'helper-exit',
+          code === null ? 'spawn' : String(code)
         )
       }
     )
     if (!helper) {
       clearTimeout(timer)
       settled = true
+      micLog.end(id, 'failed', { code: 'missing-helper' })
+      testPhase('error', 'MIKO\u2019s Windows speech helper is missing. Reinstall MIKO.')
       resolve(emptyMicTestStatus({ outcome: 'unavailable', detail: 'MIKO\u2019s Windows speech helper is missing. Reinstall MIKO.' }))
       return
     }
@@ -625,25 +858,48 @@ function runWindowsMicTest(): Promise<MicTestStatus> {
   })
 }
 
+export interface InputDevices {
+  devices: string[]
+  /** The Windows default recording device (what System.Speech listens to). */
+  defaultDevice: string
+  /** Installed Windows speech recognizer languages. */
+  recognizers: string[]
+  detail: string
+}
+
 /** Windows input devices (names only). System.Speech always records from the Windows default input. */
-export function listInputDevices(): Promise<{ devices: string[]; detail: string }> {
-  if (process.platform !== 'win32') return Promise.resolve({ devices: [], detail: '' })
+export function listInputDevices(): Promise<InputDevices> {
+  if (process.platform !== 'win32') return Promise.resolve({ devices: [], defaultDevice: '', recognizers: [], detail: '' })
   return new Promise((resolve) => {
     let done = false
-    const finish = (value: { devices: string[]; detail: string }): void => {
+    const finish = (value: InputDevices): void => {
       if (done) return
       done = true
       clearTimeout(timer)
+      if (value.defaultDevice) lastDefaultDevice = value.defaultDevice
+      logDiag('mic', 'devices', {
+        count: value.devices.length,
+        defaultDevice: value.defaultDevice,
+        recognizers: value.recognizers
+      })
       resolve(value)
     }
-    const timer = setTimeout(() => finish({ devices: [], detail: 'Couldn\u2019t list microphones.' }), 10_000)
+    const empty = (detail: string): InputDevices => ({ devices: [], defaultDevice: '', recognizers: [], detail })
+    const timer = setTimeout(() => finish(empty('Couldn\u2019t list microphones.')), 15_000)
     const helper = spawnWinHelper(
       'devices',
       (line) => {
-        if (line.kind === 'devices') finish({ devices: line.devices, detail: '' })
+        if (line.kind === 'devices') {
+          finish({
+            devices: line.devices,
+            defaultDevice: line.defaultDevice,
+            recognizers: line.recognizers,
+            detail: line.recognizers.length ? '' : 'Windows has no speech recognizer installed. Add a speech language in Settings → Time & language → Speech.'
+          })
+        }
       },
-      () => finish({ devices: [], detail: 'Couldn\u2019t list microphones.' })
+      () => finish(empty('Couldn\u2019t list microphones.'))
     )
-    if (!helper) finish({ devices: [], detail: 'MIKO\u2019s Windows speech helper is missing.' })
+    if (!helper) finish(empty('MIKO\u2019s Windows speech helper is missing.'))
   })
 }

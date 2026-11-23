@@ -74,12 +74,19 @@ win:
         - x64
   artifactName: MIKO-${version}-win-${arch}.${ext}
   # Keep installer naming portable and version-derived (e.g. MIKO-0.1.1-win-x64.exe).
+# One-click, per-user install (no admin prompt): progress bar, then MIKO starts.
+# Start menu shortcut always; the desktop shortcut and start-at-sign-in are opt-in inside MIKO
+# (Help & Setup). Upgrades keep %APPDATA%\MIKO-Beta (settings, ChatGPT session); uninstall keeps it
+# too and says so (build/installer.nsh).
 nsis:
   oneClick: true
   perMachine: false
+  allowElevation: false
   allowToChangeInstallationDirectory: false
-  createDesktopShortcut: true
+  createDesktopShortcut: false
   createStartMenuShortcut: true
   shortcutName: MIKO
+  runAfterFinish: true
   deleteAppDataOnUninstall: false
+  include: build/installer.nsh
   # Never ship personal Application Support / AppData profiles inside the installer.

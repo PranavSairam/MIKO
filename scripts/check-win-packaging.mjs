@@ -28,9 +28,15 @@ if (!existsSync(join(root, 'resources', 'tray-win.png'))) errors.push('resources
 if (!existsSync(join(root, 'resources', 'listen-win.ps1'))) errors.push('resources/listen-win.ps1 missing')
 if (!existsSync(join(root, 'docs', 'WINDOWS_SETUP.md'))) errors.push('docs/WINDOWS_SETUP.md missing')
 if (!existsSync(join(root, 'docs', 'WINDOWS_USER_GUIDE.md'))) errors.push('docs/WINDOWS_USER_GUIDE.md missing')
+if (!existsSync(join(root, 'build', 'installer.nsh'))) errors.push('build/installer.nsh missing')
+if (!/include:\s*build\/installer\.nsh/.test(yml)) errors.push('nsis.include build/installer.nsh not set')
+if (!/perMachine:\s*false/.test(yml)) errors.push('nsis must stay per-user (perMachine: false)')
+for (const name of ['START-HERE.txt', 'TROUBLESHOOTING.txt']) {
+  if (!existsSync(join(root, 'docs', 'handoff', name))) errors.push(`docs/handoff/${name} missing`)
+}
 
 // Case-sensitive resource names used from code (must match on case-sensitive volumes).
-for (const name of ['tray-mac.png', 'tray-win.png', 'listen-win.ps1', 'listen-mac.swift', 'ax-mac.swift']) {
+for (const name of ['tray-mac.png', 'tray-win.png', 'listen-win.ps1', 'keys-win.ps1', 'whatsapp-win.ps1', 'listen-mac.swift', 'ax-mac.swift']) {
   const p = join(root, 'resources', name)
   if (!existsSync(p)) errors.push(`resources/${name} missing (case must match)`)
 }

@@ -18,6 +18,8 @@ export interface MikoStructuredPreferences {
   defaultChromeProfileName: string | null
   /** Owner-approved aliases → directory ids. */
   chromeProfileAliases: { alias: string; directoryId: string }[]
+  /** Smaller controls (optional). Off by default: buttons are large and readable. */
+  compactControls?: boolean
 }
 
 export interface CorrectionExample {
@@ -81,7 +83,8 @@ export function parsePreferences(raw: unknown): MikoStructuredPreferences {
     defaultChromeProfileDirectory: dir,
     defaultChromeProfileName:
       dir && typeof v.defaultChromeProfileName === 'string' ? v.defaultChromeProfileName.trim().slice(0, 80) || null : null,
-    chromeProfileAliases: parseChromeAliases(v.chromeProfileAliases)
+    chromeProfileAliases: parseChromeAliases(v.chromeProfileAliases),
+    ...(v.compactControls === true ? { compactControls: true } : {})
   }
 }
 

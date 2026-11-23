@@ -63,6 +63,13 @@ export interface PetSpec {
   feedDrop: { offsetX: number; offsetY: number; radius: number }
   /** Preferred reaction clip names when an app/tab is fed (first that exists wins). */
   feedClips: string[]
+  /**
+   * Casual-mode happy reaction (petting, a returned toy): first clip that exists wins.
+   * Empty: the pet does a short hop instead (no invented animation).
+   */
+  happyClips: string[]
+  /** How a fetched toy is carried: in the mouth (head anchor) or, for the bird, in its feet. */
+  carry?: 'mouth' | 'talons'
   /** Names used in typed or spoken commands. */
   aliases: string[]
 }
@@ -82,6 +89,7 @@ export const PETS: Record<PetId, PetSpec> = {
     flies: false,
     feedDrop: { offsetX: 0, offsetY: -52, radius: 78 },
     feedClips: [],
+    happyClips: [],
     aliases: ['doberman', 'dog', 'doggo', 'puppy', 'pup', 'miko']
   },
   cat: {
@@ -101,16 +109,18 @@ export const PETS: Record<PetId, PetSpec> = {
     flies: false,
     feedDrop: { offsetX: 0, offsetY: -48, radius: 74 },
     feedClips: ['LickPaw'],
+    happyClips: ['Stretch'],
     aliases: ['cat', 'kitty', 'kitten', 'tabby', 'ginger cat']
   },
   bird: {
     id: 'bird',
     name: 'Bird',
-    blurb: 'A little blue bird with its own tree. Hops, chirps and flies up to perch.',
+    blurb: 'A little blue bird with its own tree. Flies about, chirps and perches.',
     file: 'bird/bird.glb',
     // No sitting clips: resting is a peck, then standing, then a chirp to get going.
-    clips: { idle: ['Idle'], walk: ['Hop', 'Walk'], sit: ['Peck', 'Idle'], sitIdle: ['Idle'], standUp: ['Chirp', 'Idle'] },
-    walkUnitsPerSecond: 0.45,
+    // Travelling is flight (wing-flap Fly loop, lifted off the ground), never the quadruped-style hop.
+    clips: { idle: ['Idle'], walk: ['Fly'], sit: ['Peck', 'Idle'], sitIdle: ['Idle'], standUp: ['Chirp', 'Idle'] },
+    walkUnitsPerSecond: 0.7,
     fit: 'reference',
     size: 1,
     look: { neck: null, head: 'head', neckShare: 0 },
@@ -122,6 +132,8 @@ export const PETS: Record<PetId, PetSpec> = {
     flies: true,
     feedDrop: { offsetX: 0, offsetY: -44, radius: 70 },
     feedClips: ['Peck', 'Chirp'],
+    happyClips: ['Chirp'],
+    carry: 'talons',
     aliases: ['bird', 'birdie', 'blue bird', 'bluebird', 'birb']
   },
   koala: {
@@ -141,6 +153,7 @@ export const PETS: Record<PetId, PetSpec> = {
     flies: false,
     feedDrop: { offsetX: 0, offsetY: -50, radius: 76 },
     feedClips: ['Wave'],
+    happyClips: ['Wave'],
     aliases: ['koala', 'koala bear']
   }
 }

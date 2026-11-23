@@ -9,7 +9,21 @@ describe('Windows speech helper protocol', () => {
     assert.deepEqual(parseWinSpeechLine('﻿{"text":" open calculator ","level":30}'), { kind: 'text', text: 'open calculator' })
     assert.deepEqual(parseWinSpeechLine('{"error":"no-audio","detail":"x"}'), { kind: 'error', code: 'no-audio', detail: 'x' })
     assert.deepEqual(parseWinSpeechLine('{"error":"weird"}'), { kind: 'error', code: 'unavailable', detail: '' })
-    assert.deepEqual(parseWinSpeechLine('{"devices":["Microphone (USB)"]}'), { kind: 'devices', devices: ['Microphone (USB)'] })
+    assert.deepEqual(parseWinSpeechLine('{"devices":["Microphone (USB)"]}'), {
+      kind: 'devices',
+      devices: ['Microphone (USB)'],
+      defaultDevice: '',
+      recognizers: []
+    })
+    assert.deepEqual(parseWinSpeechLine('{"devices":[],"default":"Headset (BT)","recognizers":["en-US","en-IN"]}'), {
+      kind: 'devices',
+      devices: [],
+      defaultDevice: 'Headset (BT)',
+      recognizers: ['en-US', 'en-IN']
+    })
+    assert.deepEqual(parseWinSpeechLine('{"stage":"input","ms":2310.4}'), { kind: 'stage', stage: 'input', ms: 2310 })
+    assert.equal(parseWinSpeechLine('{"stage":"other","ms":1}'), null)
+    assert.deepEqual(parseWinSpeechLine('{"heard":true}'), { kind: 'heard' })
     assert.equal(parseWinSpeechLine('WARNING: something'), null)
     assert.equal(parseWinSpeechLine('{"text":"   "}'), null)
   })
@@ -59,5 +73,24 @@ describe('listen-win.ps1 (static guards against the old bugs)', () => {
   it('releases the microphone on cancel and at the end', () => {
     assert.match(code, /'cancel'\)\s*\{\s*Cleanup/)
     assert.match(code, /Dispose\(\)/)
+  })
+
+  it('reports startup stages and speech-detected without words', () => {
+    for (const stage of ['speech-loaded', 'recognizer', 'input', 'recognizing']) assert.match(code, new RegExp(`Stage '${stage}'`))
+    assert.match(code, /EventName SpeechDetected/)
+    assert.match(code, /Emit @\{ heard = \$true \}/)
+  })
+
+  it('reads the Windows default recording device with Core Audio (PreserveSig on every COM method)', () => {
+    const cs = code.slice(code.indexOf('public static class MikoDefaultMic'), code.indexOf("'@"))
+    assert.match(cs, /GetDefaultAudioEndpoint\(1, 0, out device\)/)
+    const methods = cs.match(/\bint \w+\(/g) ?? []
+    const preserved = cs.match(/\[PreserveSig\] int \w+\(/g) ?? []
+    assert.equal(preserved.length, methods.length)
+    assert.doesNotMatch(cs, /\$"|\?\.|nameof\(|=>/, 'C# 5 only (Windows PowerShell 5.1)')
+  })
+
+  it('is plain ASCII', () => {
+    assert.doesNotMatch(script, /[^\x00-\x7f]/)
   })
 })

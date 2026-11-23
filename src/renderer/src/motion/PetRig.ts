@@ -310,6 +310,28 @@ export class PetRig {
     if (this.pet) this.applyFit()
   }
 
+  private liftPx = 0
+  private liftPublished = 0
+
+  /**
+   * Raise the whole pet above its ground line (DIP). Used for the bird's flight while it
+   * travels. The click area follows, republished only when it moved enough to matter.
+   */
+  setLift(px: number): void {
+    const next = Number.isFinite(px) ? Math.max(0, Math.min(60, px)) : 0
+    if (Math.abs(next - this.liftPx) < 0.05) return
+    this.liftPx = next
+    this.orient.position.y = next / PIXELS_PER_METRE
+    if (Math.abs(next - this.liftPublished) >= 8 || (next === 0 && this.liftPublished !== 0)) {
+      this.liftPublished = next
+      this.publishHit()
+    }
+  }
+
+  lift(): number {
+    return this.liftPx
+  }
+
   /** Parent yaw. 0 faces screen-left, π faces screen-right, and the camera yaw faces the viewer. */
   setYaw(yaw: number): void {
     if (Math.abs(this.orient.rotation.y - yaw) < 1e-4) return

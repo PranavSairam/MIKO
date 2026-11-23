@@ -55,6 +55,28 @@ import {
 import { parseActionId } from '../shared/commands'
 import { parseListings } from '../shared/app-listing'
 
+function parseSystemOptions(raw: unknown): {
+  launchAtLogin: boolean
+  desktopShortcut: boolean
+  canLaunchAtLogin: boolean
+  canDesktopShortcut: boolean
+  detail: string
+} {
+  const p = raw as Record<string, unknown> | null
+  return {
+    launchAtLogin: p?.launchAtLogin === true,
+    desktopShortcut: p?.desktopShortcut === true,
+    canLaunchAtLogin: p?.canLaunchAtLogin === true,
+    canDesktopShortcut: p?.canDesktopShortcut === true,
+    detail: typeof p?.detail === 'string' ? p.detail.slice(0, 200) : ''
+  }
+}
+
+function parsePlaySettings(raw: unknown): { mode: 'work' | 'casual'; sound: boolean } {
+  const p = raw as { mode?: unknown; sound?: unknown } | null
+  return { mode: p?.mode === 'casual' ? 'casual' : 'work', sound: p?.sound === true }
+}
+
 const api: MikoApi = {
   moveBy: (delta: MoveDelta): void => {
     ipcRenderer.send(IPC.moveBy, delta)
@@ -77,10 +99,57 @@ const api: MikoApi = {
       const p = payload as { kind?: unknown; pet?: unknown } | null
       if (p?.kind === 'choose') listener({ kind: 'choose' })
       else if (p?.kind === 'feed') listener({ kind: 'feed' })
+      else if (p?.kind === 'play') listener({ kind: 'play' })
       else if (p?.kind === 'switch' && typeof p.pet === 'string') listener({ kind: 'switch', pet: p.pet as PetId })
     }
     ipcRenderer.on(IPC.petCommand, wrapped)
     return () => ipcRenderer.removeListener(IPC.petCommand, wrapped)
+  },
+  playThrow: async (request) => {
+    const raw = (await ipcRenderer.invoke(IPC.playThrow, {
+      toy: request.toy === 'stick' ? 'stick' : 'ball',
+      localX: Number(request.localX),
+      localY: Number(request.localY),
+      vx: Number(request.vx),
+      vy: Number(request.vy),
+      mouthDx: Number(request.mouthDx),
+      maxDistance: Number(request.maxDistance),
+      reduced: request.reduced === true
+    })) as { ok?: unknown; reason?: unknown; targetX?: unknown; seconds?: unknown } | null
+    return {
+      ok: raw?.ok === true,
+      reason: typeof raw?.reason === 'string' ? raw.reason.slice(0, 200) : '',
+      targetX: typeof raw?.targetX === 'number' && Number.isFinite(raw.targetX) ? raw.targetX : 0,
+      seconds: typeof raw?.seconds === 'number' && Number.isFinite(raw.seconds) ? raw.seconds : 0
+    }
+  },
+  projectorOpen: (): void => {
+    ipcRenderer.send(IPC.projectorOpen)
+  },
+  playToyHide: (): void => {
+    ipcRenderer.send(IPC.playToyHide)
+  },
+  onPlayToy: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const p = payload as { phase?: unknown; reason?: unknown } | null
+      if (p?.phase === 'landed') listener({ phase: 'landed' })
+      else if (p?.phase === 'cancelled') listener({ phase: 'cancelled', reason: typeof p.reason === 'string' ? p.reason.slice(0, 40) : '' })
+    }
+    ipcRenderer.on(IPC.playToy, wrapped)
+    return () => ipcRenderer.removeListener(IPC.playToy, wrapped)
+  },
+  playSettingsGet: async () => parsePlaySettings(await ipcRenderer.invoke(IPC.playSettingsGet)),
+  playSettingsSet: async (next) =>
+    parsePlaySettings(
+      await ipcRenderer.invoke(IPC.playSettingsSet, {
+        ...(next.mode === 'work' || next.mode === 'casual' ? { mode: next.mode } : {}),
+        ...(typeof next.sound === 'boolean' ? { sound: next.sound } : {})
+      })
+    ),
+  onPlaySettings: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => listener(parsePlaySettings(payload))
+    ipcRenderer.on(IPC.playSettings, wrapped)
+    return () => ipcRenderer.removeListener(IPC.playSettings, wrapped)
   },
   panelPreset: (preset: 'small' | 'medium' | 'large' | 'reset'): Promise<PanelLayout> =>
     ipcRenderer.invoke(IPC.panelPreset, String(preset)) as Promise<PanelLayout>,
@@ -240,6 +309,7 @@ const api: MikoApi = {
     tuckPanel?: boolean
     dictateToGpt?: boolean
     openSetup?: boolean
+    openHelp?: boolean
     runTutorial?: boolean
     listen?: boolean
   }) => void): (() => void) => {
@@ -249,6 +319,7 @@ const api: MikoApi = {
         tuckPanel?: boolean
         dictateToGpt?: boolean
         openSetup?: boolean
+        openHelp?: boolean
         runTutorial?: boolean
         listen?: boolean
       }
@@ -256,6 +327,7 @@ const api: MikoApi = {
         tuckPanel: p.tuckPanel === true,
         dictateToGpt: typeof p.dictateToGpt === 'boolean' ? p.dictateToGpt : undefined,
         openSetup: p.openSetup === true,
+        openHelp: p.openHelp === true,
         runTutorial: p.runTutorial === true,
         listen: p.listen === true
       })
@@ -622,12 +694,43 @@ const api: MikoApi = {
       help === 'microphone-privacy' || help === 'sound-input' || help === 'speech-language' ? help : undefined
     )) === true,
   voiceInputDevices: async () => {
-    const raw = (await ipcRenderer.invoke(IPC.voiceInputDevices)) as { devices?: unknown; detail?: unknown } | null
-    const devices = Array.isArray(raw?.devices) ? raw.devices.filter((item): item is string => typeof item === 'string').slice(0, 20) : []
-    return { devices, detail: typeof raw?.detail === 'string' ? raw.detail.slice(0, 300) : '' }
+    const raw = (await ipcRenderer.invoke(IPC.voiceInputDevices)) as
+      | { devices?: unknown; detail?: unknown; defaultDevice?: unknown; recognizers?: unknown }
+      | null
+    const list = (value: unknown, max: number): string[] =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, max)).slice(0, 20) : []
+    return {
+      devices: list(raw?.devices, 120),
+      defaultDevice: typeof raw?.defaultDevice === 'string' ? raw.defaultDevice.slice(0, 120) : '',
+      recognizers: list(raw?.recognizers, 20),
+      detail: typeof raw?.detail === 'string' ? raw.detail.slice(0, 300) : ''
+    }
   },
   voiceMicTest: async () =>
     (await ipcRenderer.invoke(IPC.voiceMicTest)) as Awaited<ReturnType<MikoApi['voiceMicTest']>>,
+  systemOptionsGet: async () => parseSystemOptions(await ipcRenderer.invoke(IPC.systemOptionsGet)),
+  systemOptionsSet: async (next) => {
+    const raw = (await ipcRenderer.invoke(IPC.systemOptionsSet, {
+      ...(typeof next.launchAtLogin === 'boolean' ? { launchAtLogin: next.launchAtLogin } : {}),
+      ...(typeof next.desktopShortcut === 'boolean' ? { desktopShortcut: next.desktopShortcut } : {})
+    })) as { reason?: unknown } | null
+    return { ...parseSystemOptions(raw), reason: typeof raw?.reason === 'string' ? raw.reason.slice(0, 200) : '' }
+  },
+  openLogsFolder: async () => (await ipcRenderer.invoke(IPC.openLogsFolder)) === true,
+  voiceMicTestCancel: (): void => {
+    ipcRenderer.send(IPC.voiceMicTestCancel)
+  },
+  onMicTestPhase: (listener) => {
+    const phases = ['starting', 'listening', 'hearing', 'processing', 'done', 'error', 'cancelled'] as const
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const p = payload as { phase?: unknown; detail?: unknown } | null
+      const phase = phases.find((item) => item === p?.phase)
+      if (!phase) return
+      listener({ phase, detail: typeof p?.detail === 'string' ? p.detail.slice(0, 400) : '' })
+    }
+    ipcRenderer.on(IPC.voiceMicTestPhase, wrapped)
+    return () => ipcRenderer.removeListener(IPC.voiceMicTestPhase, wrapped)
+  },
   summonShortcutGet: async () =>
     (await ipcRenderer.invoke(IPC.summonShortcutGet)) as Awaited<ReturnType<MikoApi['summonShortcutGet']>>,
   summonShortcutSet: async (accelerator: string) =>
