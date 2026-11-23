@@ -114,6 +114,12 @@ The app was built in Cursor. The current Doberman asset was made with Claude.
 7. Display scaling 125–150%: header (Chat/Mail/Knowledge + Interactive GPT + More) stays one row; composer usable; More menu keyboard (arrows/Esc).
 8. Report idle feel + any high CPU while Knowledge is idle vs indexing.
 
+### 2026-11-23 (handoff): Commit b577251 and Windows 0.1.3 package for Dad (built on Mac; not tested on Windows)
+- **Committed** b577251 (lag, Tab + Q, Talk to GPT, ChatGPT voice, voice phrasing) as PRANAV SAIRAM; not pushed. Left out: root `main` binary, `paused`, local `scripts/probe-*`, `scripts/live-chatgpt-web-acceptance.cjs`, and `test/outstanding-*.json` (verification output from another session).
+- **Version 0.1.3**, START-HERE adds “See your open apps: hold Tab, press Q.”
+- **Package:** `release/windows-handoff/MIKO-0.1.3/` → `MIKO-0.1.3-win-x64.exe` (153,408,219 bytes, SHA-256 6731307d6f5d96977afd9a4f88f5c2bf692dd927a1f421c4b39300d74a58d1d1), START-HERE.txt, TROUBLESHOOTING.txt, SHA256SUMS.txt. One-click, per-user, no admin, opens when done, keeps settings on upgrade/uninstall. Handoff checks: no personal/credential files; Windows helpers, pet models, pdfjs legacy build, mammoth, knowledge worker and sample doc present.
+- **Not verified:** installing and running on Windows (SmartScreen, voice, Tab + Q, Knowledge PDF/DOCX, Interactive GPT voice). Not sent to Dad — the owner sends it.
+
 ### 2026-11-23 (late night): Talk to GPT; ChatGPT voice mode; “open GPT mode” (Mac; not committed)
 - **Owner ask:** chat with Interactive GPT easily by voice. Chosen: both a Talk switch and ChatGPT’s own voice button; answers as text (no read-aloud).
 - **Talk to GPT switch:** “talk to GPT / start talking to chat GPT / chat with ChatGPT / talk mode on” (with lead-ins like “can you …”) and a **Talk** button on the Interactive GPT toolbar. While on, each final MIKO voice transcript is inserted into chatgpt.com and sent with the existing verified submit (never on a signed-out page; if it fails the words stay in the box). MIKO’s own Interactive GPT / GPT Mode / cancel controls are still checked first; typing in MIKO stays local. Off: “stop talking to GPT / talk mode off / end chat with GPT”, the toolbar button, the panel banner’s Stop, or closing Interactive GPT. Turning Talk on cancels a one-shot Dictate. Tests for on/off phrases and non-triggers (“talk to mom”, “should I chat with GPT about this?”).

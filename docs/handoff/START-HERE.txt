@@ -15,4 +15,5 @@ MIKO for Windows - version {{VERSION}}
 
 Hide / show MIKO any time: Ctrl + Shift + R
 Talk to MIKO: hold Shift + A, speak, let go.
+See your open apps: hold Tab, press Q.
 Help: right-click the small MIKO icon near the clock -> "Help & Setup".
